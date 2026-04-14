@@ -1,0 +1,22 @@
+# Environment & secrets
+.env
+.cache/
+
+# Virtual environment
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pytest
+.pytest_cache/

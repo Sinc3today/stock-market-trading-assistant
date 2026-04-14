@@ -1,0 +1,18 @@
+{
+  "swing": [
+    "MSFT",
+    "SPY",
+    "QQQ",
+    "NVDA",
+    "AAPL"
+  ],
+  "intraday": [
+    "SPY",
+    "QQQ",
+    "AAPL"
+  ],
+  "options_enabled": [
+    "SPY",
+    "QQQ"
+  ]
+}

@@ -1,0 +1,37 @@
+# ─────────────────────────────────────────
+# TRADING ASSISTANT — Python Dependencies
+# Install with: pip install -r requirements.txt
+# ─────────────────────────────────────────
+
+# Data
+polygon-api-client==1.13.3
+alpaca-trade-api==3.0.2
+pandas==2.1.4
+numpy==1.26.2
+
+# Environment
+python-dotenv==1.0.0
+
+# Discord Bot
+discord.py==2.3.2
+
+# Dashboard
+streamlit==1.29.0
+plotly==5.18.0
+
+# Scheduling
+apscheduler==3.10.4
+
+# Caching
+diskcache==5.6.3
+
+# Logging
+loguru==0.7.2
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+
+pytz==2024.1
+aiohttp==3.8.6
+multidict==6.0.4
