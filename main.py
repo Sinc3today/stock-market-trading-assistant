@@ -42,11 +42,13 @@ from scanners.swing_scanner import SwingScanner
 from scanners.intraday_scanner import IntradayScanner
 from scanners.premarket import PremarketScanner
 from scanners.news_scanner import NewsScanner
+from scanners.economic_scanner import EconomicScanner
 
 swing_scanner    = SwingScanner()
 intraday_scanner = IntradayScanner()
 premarket_scanner = PremarketScanner()
-news_scanner     = NewsScanner()
+news_scanner       = NewsScanner()
+economic_scanner   = EconomicScanner()
 
 # Inject Discord posting function into all scanners
 swing_scanner.set_discord_fn(post_alert_sync)
@@ -69,6 +71,23 @@ def run_morning_briefing():
         news_scanner.run(briefing_type="morning")
     except Exception as e:
         logger.error(f"Morning briefing failed: {e}")
+
+
+def run_economic_scan():
+    """Called hourly during market hours — checks for new releases."""
+    logger.info("📊 Economic scan starting...")
+    try:
+        releases = economic_scanner.scan_for_new_releases(days_back=1)
+        for release in releases:
+            if release.get("is_high_impact") and release.get("discord_alert"):
+                economic_scanner.post_economic_alert(release)
+                logger.info(f"Economic alert posted: {release['name']}")
+        if releases:
+            logger.info(f"Economic scan: {len(releases)} new release(s) found")
+        else:
+            logger.debug("Economic scan: no new releases")
+    except Exception as e:
+        logger.error(f"Economic scan failed: {e}")
 
 
 def run_midday_briefing():
@@ -193,6 +212,19 @@ def start_scheduler():
         name="EOD News Briefing",
     )
 
+    # Economic scan — every hour during market hours weekdays
+    scheduler.add_job(
+        run_economic_scan,
+        CronTrigger(
+            day_of_week="mon-fri",
+            hour="8-16",
+            minute=30,
+            timezone=eastern
+        ),
+        id="economic_scan",
+        name="Economic Data Scanner",
+    )
+
     scheduler.start()
     logger.info("✅ Scheduler started")
     logger.info("   Morning briefing: weekdays at 7:45 AM EST")
@@ -201,6 +233,7 @@ def start_scheduler():
     logger.info(f"  Intraday scan:    every {config.INTRADAY_SCAN_INTERVAL_MIN} minutes")
     logger.info("   Midday briefing:  weekdays at 12:00 PM EST")
     logger.info("   EOD briefing:     weekdays at 3:45 PM EST")
+    logger.info("   Economic scan:    weekdays hourly 8:30 AM - 4:30 PM EST")
     return scheduler
 
 

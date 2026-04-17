@@ -90,7 +90,7 @@ def render_sidebar():
 
     page = st.sidebar.radio(
         "Navigate",
-        ["📡 Live Alerts", "📰 News", "📋 Watchlist", "📓 Journal", "📊 Performance", "📒 Trade Recorder", "🧠 Lessons", "🤖 AI Advisor", "⚙️ Settings"],
+        ["📡 Live Alerts", "📰 News", "🏛️ Economic", "📋 Watchlist", "📓 Journal", "📊 Performance", "📒 Trade Recorder", "🧠 Lessons", "🤖 AI Advisor", "⚙️ Settings"],
         label_visibility="collapsed"
     )
 
@@ -1444,6 +1444,126 @@ def render_news():
                     else:
                         st.markdown(f"• {titl}")
 
+
+# ─────────────────────────────────────────
+# ECONOMIC DATA PAGE
+# ─────────────────────────────────────────
+
+def render_economic():
+    st.title("🏛️ Economic Data")
+    st.caption("Live FRED data — CPI, Jobs, Fed Rate, GDP and more")
+
+    from data.fred_client import FREDClient, TRACKED_SERIES
+    from scanners.economic_scanner import EconomicScanner
+
+    client  = FREDClient()
+    scanner = EconomicScanner()
+
+    # ── Snapshot ──────────────────────────────────────────────
+    st.subheader("Current Economic Snapshot")
+
+    with st.spinner("Fetching latest FRED data..."):
+        all_data = client.get_all_tracked()
+
+    if not all_data:
+        st.error("Could not fetch FRED data — check FRED_API_KEY in .env")
+        return
+
+    # High impact indicators as metric cards
+    st.markdown("**🔴 High Impact Indicators**")
+    high_impact = {k: v for k, v in all_data.items() if v.get("impact") == "HIGH"}
+
+    cols = st.columns(3)
+    for i, (sid, data) in enumerate(high_impact.items()):
+        col = cols[i % 3]
+        val = data["current_value"]
+        chg = data.get("change")
+        delta = f"{chg:+.3f}" if chg else None
+        col.metric(
+            label=f"{data['emoji']} {data['short']}",
+            value=f"{val} {data['unit']}",
+            delta=delta,
+            help=f"{data['description']} | As of {data['current_date']}"
+        )
+
+    st.divider()
+
+    # Medium impact
+    st.markdown("**🟡 Other Indicators**")
+    medium = {k: v for k, v in all_data.items() if v.get("impact") != "HIGH"}
+    med_cols = st.columns(2)
+    for i, (sid, data) in enumerate(medium.items()):
+        col = med_cols[i % 2]
+        val = data["current_value"]
+        chg = data.get("change")
+        delta = f"{chg:+.3f}" if chg else None
+        col.metric(
+            label=f"{data['emoji']} {data['short']}",
+            value=f"{val} {data['unit']}",
+            delta=delta,
+            help=f"{data['description']} | As of {data['current_date']}"
+        )
+
+    st.divider()
+
+    # ── Recent Releases ───────────────────────────────────────
+    st.subheader("📅 Recent Releases (Last 7 Days)")
+    recent = client.get_recent_releases(days_back=7)
+
+    if recent:
+        for r in recent:
+            impact_color = "🔴" if r["impact"] == "HIGH" else "🟡"
+            with st.expander(
+                f"{impact_color} {r['name']} — "
+                f"{r['current_value']} {r['unit']} ({r['current_date']})",
+                expanded=True
+            ):
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Current",  f"{r['current_value']} {r['unit']}")
+                col2.metric("Previous", f"{r['previous_value']} {r['unit']}")
+                chg = r.get("change")
+                col3.metric("Change", f"{chg:+.3f}" if chg else "—")
+    else:
+        st.info("No major economic releases in the last 7 days.")
+
+    st.divider()
+
+    # ── AI Analysis ───────────────────────────────────────────
+    st.subheader("🤖 AI Economic Analysis")
+
+    if st.button("Get AI Market Impact Analysis", use_container_width=True):
+        with st.spinner("Analyzing economic conditions..."):
+            try:
+                snapshot = client.get_economic_snapshot()
+                analysis = scanner._analyze_with_ai(
+                    snapshot,
+                    context="dashboard",
+                    question="What is the current economic environment and how should it affect trading decisions today?"
+                )
+                st.markdown(analysis)
+            except Exception as e:
+                st.error(f"Analysis failed: {e}")
+
+    st.divider()
+
+    # ── Scan for New Releases ─────────────────────────────────
+    st.subheader("🔍 Scan for New Releases")
+    st.caption("Check if any major reports came out today")
+
+    if st.button("Scan Now", use_container_width=True):
+        with st.spinner("Scanning FRED for recent releases..."):
+            releases = scanner.scan_for_new_releases(days_back=1)
+        if releases:
+            st.success(f"Found {len(releases)} new release(s)")
+            for r in releases:
+                impact = "🔴 HIGH IMPACT" if r["is_high_impact"] else "🟡 Medium"
+                st.markdown(f"**{impact} — {r['name']}**")
+                st.markdown(r.get("ai_analysis", ""))
+                st.divider()
+        else:
+            st.info("No new economic releases today.")
+
+
 def main():
     page = render_sidebar()
 
@@ -1451,6 +1571,8 @@ def main():
         render_live_alerts()
     elif page == "📰 News":
         render_news()
+    elif page == "🏛️ Economic":
+        render_economic()
     elif page == "📋 Watchlist":
         render_watchlist()
     elif page == "📓 Journal":

@@ -74,10 +74,23 @@ class NewsScanner:
             hours_back, already_fetched=list(ticker_news.keys())
         )
 
+        # Fetch economic context for morning and EOD briefings
+        economic_context = ""
+        if briefing_type in ("morning", "eod"):
+            try:
+                from scanners.economic_scanner import EconomicScanner
+                ec      = EconomicScanner()
+                eco_data = ec.get_morning_context()
+                economic_context = eco_data.get("formatted", "")
+                logger.info("Economic context added to briefing")
+            except Exception as e:
+                logger.warning(f"Economic context unavailable: {type(e).__name__}")
+
         # Build briefing
         briefing = self._build_briefing(
             briefing_type, ticker_news, market_news, all_tickers
         )
+        briefing["economic_context"] = economic_context
 
         # AI synthesis
         api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -347,6 +360,10 @@ Flag anything that could override a technical signal (earnings, major catalyst).
 
         if briefing.get("ai_synthesis") and "unavailable" not in briefing["ai_synthesis"].lower():
             lines.append(f"\n🤖 **AI Analysis:**\n{briefing['ai_synthesis']}")
+
+        # Economic context (morning and EOD only)
+        if briefing.get("economic_context"):
+            lines.append(briefing["economic_context"])
 
         lines.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         return "\n".join(lines)
