@@ -52,7 +52,6 @@ economic_scanner   = EconomicScanner()
 
 # Inject Discord posting function into all scanners
 swing_scanner.set_discord_fn(post_alert_sync)
-news_scanner.set_discord_fn(post_alert_sync)
 intraday_scanner.set_discord_fn(post_alert_sync)
 premarket_scanner.set_discord_fn(post_alert_sync)
 
