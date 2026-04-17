@@ -20,6 +20,7 @@ ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_CHANNEL_ID_STANDARD = int(os.getenv("DISCORD_CHANNEL_ID_STANDARD", 0))
 DISCORD_CHANNEL_ID_HIGH_CONVICTION = int(os.getenv("DISCORD_CHANNEL_ID_HIGH_CONVICTION", 0))
+DISCORD_CHANNEL_ID_NEWS = int(os.getenv("DISCORD_CHANNEL_ID_NEWS", 0))
 
 # ─────────────────────────────────────────
 # SCORING THRESHOLDS

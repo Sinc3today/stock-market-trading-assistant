@@ -90,7 +90,7 @@ def render_sidebar():
 
     page = st.sidebar.radio(
         "Navigate",
-        ["📡 Live Alerts", "📋 Watchlist", "📓 Journal", "📊 Performance", "📒 Trade Recorder", "🧠 Lessons", "🤖 AI Advisor", "⚙️ Settings"],
+        ["📡 Live Alerts", "📰 News", "📋 Watchlist", "📓 Journal", "📊 Performance", "📒 Trade Recorder", "🧠 Lessons", "🤖 AI Advisor", "⚙️ Settings"],
         label_visibility="collapsed"
     )
 
@@ -1326,11 +1326,131 @@ def render_ai_advisor():
                 st.markdown("**🤖 AI Response:**")
                 st.markdown(entry.get("ai_response", ""))
 
+
+# ─────────────────────────────────────────
+# NEWS BRIEFINGS PAGE
+# ─────────────────────────────────────────
+
+def render_news():
+    st.title("📰 News Briefings")
+    st.caption("AI-synthesized market news delivered 3x daily")
+
+    from scanners.news_scanner import NewsScanner
+    ns = NewsScanner()
+
+    # ── Manual trigger ───────────────────────────────────────
+    st.subheader("Run a Briefing Now")
+    st.caption("Saves briefing here AND posts to Discord #news-briefings automatically.")
+
+    col1, col2, col3 = st.columns(3)
+
+    if col1.button("🌅 Morning Briefing", use_container_width=True):
+        with st.spinner("Fetching news and synthesizing..."):
+            result = ns.run(briefing_type="morning", post_to_discord=False)
+        if result:
+            st.success(f"✅ Done — {result.get('total_articles',0)} articles found")
+            st.rerun()
+
+    if col2.button("☀️ Midday Update", use_container_width=True):
+        with st.spinner("Fetching news and synthesizing..."):
+            result = ns.run(briefing_type="midday", post_to_discord=False)
+        if result:
+            st.success(f"✅ Done — {result.get('total_articles',0)} articles found")
+            st.rerun()
+
+    if col3.button("🌆 End of Day Wrap", use_container_width=True):
+        with st.spinner("Fetching news and synthesizing..."):
+            result = ns.run(briefing_type="eod", post_to_discord=False)
+        if result:
+            st.success(f"✅ Done — {result.get('total_articles',0)} articles found")
+            st.rerun()
+
+    st.caption("Scheduled: 🌅 7:45 AM  •  ☀️ 12:00 PM  •  🌆 3:45 PM  (weekdays EST)")
+    st.info("💡 Discord: use **/news** to post directly to #news-briefings from your phone")
+
+
+    st.divider()
+
+    # ── Recent briefings ─────────────────────────────────────
+    briefings = ns.get_recent_briefings(limit=15)
+
+    if not briefings:
+        st.info(
+            "No briefings yet. Click a button above to run one now, "
+            "or they will run automatically on schedule:\n\n"
+            "• 🌅 Morning: 7:45 AM EST\n"
+            "• ☀️ Midday: 12:00 PM EST\n"
+            "• 🌆 EOD: 3:45 PM EST"
+        )
+        return
+
+    # Filter
+    filter_type = st.selectbox(
+        "Filter", ["All", "Morning", "Midday", "EOD"], key="news_filter"
+    )
+
+    filtered = briefings
+    if filter_type != "All":
+        type_map = {"Morning": "morning", "Midday": "midday", "EOD": "eod"}
+        filtered = [b for b in briefings if b.get("type") == type_map[filter_type]]
+
+    for briefing in filtered:
+        emoji    = briefing.get("emoji", "📰")
+        btype    = briefing.get("type", "").upper()
+        ts       = briefing.get("timestamp", "")
+        n_tickers = len(briefing.get("tickers_with_news", []))
+        n_articles = briefing.get("total_articles", 0)
+
+        title_map = {"MORNING": "Morning Briefing", "MIDDAY": "Midday Update", "EOD": "End of Day Wrap"}
+        title = title_map.get(btype, "Briefing")
+
+        with st.expander(
+            f"{emoji} {title} — {ts} | {n_tickers} tickers | {n_articles} articles",
+            expanded=False
+        ):
+            # AI synthesis
+            ai_text = briefing.get("ai_synthesis", "")
+            if ai_text and "unavailable" not in ai_text.lower():
+                st.subheader("🤖 AI Analysis")
+                st.markdown(ai_text)
+                st.divider()
+
+            # Headlines by ticker
+            ticker_news = briefing.get("ticker_news", {})
+            if ticker_news:
+                st.subheader("📰 Headlines")
+                for ticker, articles in ticker_news.items():
+                    if articles:
+                        st.markdown(f"**{ticker}**")
+                        for a in articles[:3]:
+                            pub   = f" — _{a.get('publisher', '')}_" if a.get('publisher') else ""
+                            url   = a.get("url", "")
+                            title_text = a.get("title", "")
+                            if url:
+                                st.markdown(f"• [{title_text}]({url}){pub}")
+                            else:
+                                st.markdown(f"• {title_text}{pub}")
+
+            # Market news
+            market_news = briefing.get("market_news", [])
+            if market_news:
+                st.divider()
+                st.subheader("🌍 Market-Wide")
+                for a in market_news[:5]:
+                    url  = a.get("url", "")
+                    titl = a.get("title", "")
+                    if url:
+                        st.markdown(f"• [{titl}]({url})")
+                    else:
+                        st.markdown(f"• {titl}")
+
 def main():
     page = render_sidebar()
 
     if page == "📡 Live Alerts":
         render_live_alerts()
+    elif page == "📰 News":
+        render_news()
     elif page == "📋 Watchlist":
         render_watchlist()
     elif page == "📓 Journal":

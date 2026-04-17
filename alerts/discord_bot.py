@@ -15,6 +15,7 @@ Slash Commands:
     /log TICKER ...       → log a trade entry
     /exit                 → close an open trade (select from list)
     /trades               → show open trades + stats
+    /news                 → run a news briefing
 """
 
 import json
@@ -46,6 +47,10 @@ scanner_status = {
     "last_scan":    None,
     "alerts_today": 0,
 }
+
+# Module-level event loop — set when bot connects
+# Used by non-async code (scanners) to post messages
+_bot_loop = None
 
 # ─────────────────────────────────────────
 # WATCHLIST HELPERS
@@ -87,7 +92,7 @@ async def ticker_autocomplete(
     tickers = get_all_tickers()
     # Add common tickers not in watchlist as suggestions
     common  = ["AAPL", "MSFT", "NVDA", "SPY", "QQQ", "TSLA", "AMZN", "GOOGL", "META"]
-    all_tickers = list(dict.fromkeys(tickers + common))  # Watchlist first, no duplicates
+    all_tickers = list(dict.fromkeys(tickers + common))
     filtered = [t for t in all_tickers if current.upper() in t][:10]
     return [app_commands.Choice(name=t, value=t) for t in filtered]
 
@@ -121,6 +126,9 @@ async def open_trade_autocomplete(
 
 @bot.event
 async def on_ready():
+    """Store event loop and sync commands after all decorators are loaded."""
+    global _bot_loop
+    _bot_loop = asyncio.get_event_loop()
     logger.info(f"Discord bot connected as {bot.user}")
     try:
         synced = await tree.sync()
@@ -396,15 +404,15 @@ async def scanner_status_cmd(interaction: discord.Interaction):
 @app_commands.autocomplete(ticker=ticker_autocomplete)
 @app_commands.choices(
     direction=[
-        app_commands.Choice(name="📈 Bullish",       value="bullish"),
-        app_commands.Choice(name="📉 Bearish",       value="bearish"),
+        app_commands.Choice(name="📈 Bullish", value="bullish"),
+        app_commands.Choice(name="📉 Bearish", value="bearish"),
     ],
     strategy=[
-        app_commands.Choice(name="Stock",            value="stock"),
-        app_commands.Choice(name="Debit Spread",     value="debit_spread"),
-        app_commands.Choice(name="Credit Spread",    value="credit_spread"),
-        app_commands.Choice(name="Iron Condor",      value="iron_condor"),
-        app_commands.Choice(name="Single Leg Option",value="single_leg"),
+        app_commands.Choice(name="Stock",             value="stock"),
+        app_commands.Choice(name="Debit Spread",      value="debit_spread"),
+        app_commands.Choice(name="Credit Spread",     value="credit_spread"),
+        app_commands.Choice(name="Iron Condor",       value="iron_condor"),
+        app_commands.Choice(name="Single Leg Option", value="single_leg"),
     ]
 )
 async def log_trade(
@@ -439,14 +447,14 @@ async def log_trade(
             color=discord.Color.green(),
             timestamp=datetime.utcnow()
         )
-        embed.add_field(name="Trade ID",    value=f"`{trade_id}`",             inline=True)
+        embed.add_field(name="Trade ID",    value=f"`{trade_id}`",                    inline=True)
         embed.add_field(name="Direction",   value=f"{dir_emoji} {direction.upper()}", inline=True)
-        embed.add_field(name="Strategy",    value=strategy.replace("_"," ").title(), inline=True)
-        embed.add_field(name="Entry Price", value=f"${entry}",                 inline=True)
-        embed.add_field(name="Size",        value=str(size),                   inline=True)
-        embed.add_field(name="Entry Value", value=f"${round(entry*size, 2)}",  inline=True)
+        embed.add_field(name="Strategy",    value=strategy.replace("_"," ").title(),  inline=True)
+        embed.add_field(name="Entry Price", value=f"${entry}",                        inline=True)
+        embed.add_field(name="Size",        value=str(size),                          inline=True)
+        embed.add_field(name="Entry Value", value=f"${round(entry*size, 2)}",         inline=True)
         if notes:
-            embed.add_field(name="Notes",   value=notes, inline=False)
+            embed.add_field(name="Notes", value=notes, inline=False)
         embed.set_footer(text="Use /exit to close this trade — it will appear in /trades")
         await interaction.response.send_message(embed=embed)
         logger.info(f"Trade logged via Discord: [{trade_id}] {ticker} @ ${entry}")
@@ -483,7 +491,7 @@ async def exit_trade(
             )
             return
 
-        t = tr.get_trade_by_id(trade_id)
+        t             = tr.get_trade_by_id(trade_id)
         outcome       = t["outcome"]
         pnl_d         = t["pnl_dollars"]
         pnl_p         = t["pnl_pct"]
@@ -497,14 +505,14 @@ async def exit_trade(
             color=color,
             timestamp=datetime.utcnow()
         )
-        embed.add_field(name="Outcome",   value=outcome.upper(),        inline=True)
-        embed.add_field(name="Strategy",  value=t.get("strategy","stock").replace("_"," ").title(), inline=True)
-        embed.add_field(name="Direction", value=t["direction"],         inline=True)
-        embed.add_field(name="Entry",     value=f"${t['entry_price']}", inline=True)
-        embed.add_field(name="Exit",      value=f"${exit_price}",       inline=True)
-        embed.add_field(name="Size",      value=str(t["size"]),         inline=True)
-        embed.add_field(name="P&L $",     value=f"${pnl_d}",            inline=True)
-        embed.add_field(name="P&L %",     value=f"{pnl_p}%",            inline=True)
+        embed.add_field(name="Outcome",   value=outcome.upper(),                                       inline=True)
+        embed.add_field(name="Strategy",  value=t.get("strategy","stock").replace("_"," ").title(),   inline=True)
+        embed.add_field(name="Direction", value=t["direction"],                                        inline=True)
+        embed.add_field(name="Entry",     value=f"${t['entry_price']}",                               inline=True)
+        embed.add_field(name="Exit",      value=f"${exit_price}",                                     inline=True)
+        embed.add_field(name="Size",      value=str(t["size"]),                                       inline=True)
+        embed.add_field(name="P&L $",     value=f"${pnl_d}",                                         inline=True)
+        embed.add_field(name="P&L %",     value=f"{pnl_p}%",                                         inline=True)
         if notes:
             embed.add_field(name="Notes", value=notes, inline=False)
         embed.set_footer(text="Log a lesson in the dashboard → 🧠 Lessons")
@@ -530,9 +538,9 @@ async def show_trades(interaction: discord.Interaction):
             color=discord.Color.blue(),
             timestamp=datetime.utcnow()
         )
-        embed.add_field(name="Total",    value=stats["total"],              inline=True)
-        embed.add_field(name="Win Rate", value=f"{stats['win_rate']}%",     inline=True)
-        embed.add_field(name="P&L",      value=f"${stats['total_pnl']}",   inline=True)
+        embed.add_field(name="Total",    value=stats["total"],            inline=True)
+        embed.add_field(name="Win Rate", value=f"{stats['win_rate']}%",   inline=True)
+        embed.add_field(name="P&L",      value=f"${stats['total_pnl']}",  inline=True)
 
         if open_trades:
             lines = []
@@ -557,6 +565,79 @@ async def show_trades(interaction: discord.Interaction):
     except Exception as e:
         logger.error(f"Discord trades error: {e}")
         await interaction.response.send_message(f"❌ Error: {e}")
+
+
+# ─────────────────────────────────────────
+# NEWS COMMAND
+# ─────────────────────────────────────────
+
+@tree.command(name="news", description="Run a news briefing right now")
+@app_commands.describe(briefing_type="Which briefing to run")
+@app_commands.choices(briefing_type=[
+    app_commands.Choice(name="🌅 Morning Briefing", value="morning"),
+    app_commands.Choice(name="☀️  Midday Update",   value="midday"),
+    app_commands.Choice(name="🌆 End of Day Wrap",  value="eod"),
+])
+async def run_news(
+    interaction: discord.Interaction,
+    briefing_type: str = "morning",
+):
+    await interaction.response.defer()
+    try:
+        from scanners.news_scanner import NewsScanner
+        ns       = NewsScanner()
+        # post_to_discord=False because we post directly below
+        briefing = ns.run(briefing_type=briefing_type, post_to_discord=False)
+
+        if not briefing:
+            await interaction.followup.send("📰 No briefing data returned.")
+            return
+
+        # Post the full briefing message to the news channel directly
+        # We are inside the bot's async context so we can post directly
+        channel_id  = getattr(config, "DISCORD_CHANNEL_ID_NEWS", 0)                       or config.DISCORD_CHANNEL_ID_STANDARD
+        news_channel = bot.get_channel(channel_id)
+
+        discord_msg = briefing.get("discord_message", "")
+        if discord_msg and news_channel:
+            # Split into chunks if needed
+            chunks = []
+            if len(discord_msg) <= 1900:
+                chunks = [discord_msg]
+            else:
+                current = ""
+                for line in discord_msg.split("\n"):
+                    if len(current) + len(line) + 1 > 1900:
+                        if current:
+                            chunks.append(current)
+                        current = line
+                    else:
+                        current = current + "\n" + line if current else line
+                if current:
+                    chunks.append(current)
+
+            for chunk in chunks:
+                await news_channel.send(chunk)
+            logger.info(f"News briefing posted to #{news_channel.name} from /news command")
+
+        # Confirm to the user who ran the command
+        total    = briefing.get("total_articles", 0)
+        tickers  = len(briefing.get("tickers_with_news", []))
+        channel_mention = f"<#{channel_id}>" if channel_id else "#news-briefings"
+
+        if total > 0:
+            await interaction.followup.send(
+                f"✅ {briefing_type.title()} briefing posted to {channel_mention}\n"
+                f"📰 {total} articles across {tickers} tickers"
+            )
+        else:
+            await interaction.followup.send(
+                f"📰 Briefing posted to {channel_mention} — no significant news today."
+            )
+
+    except Exception as e:
+        logger.error(f"News command error: {e}")
+        await interaction.followup.send(f"❌ Error running briefing: {e}")
 
 
 # ─────────────────────────────────────────
@@ -585,10 +666,15 @@ async def post_alert(alert: dict, message: str):
 
 
 def post_alert_sync(alert: dict, message: str):
-    if bot.loop and bot.loop.is_running():
-        asyncio.run_coroutine_threadsafe(post_alert(alert, message), bot.loop)
+    if _bot_loop and _bot_loop.is_running():
+        asyncio.run_coroutine_threadsafe(post_alert(alert, message), _bot_loop)
     else:
         logger.warning("Discord bot loop not running — alert not posted")
+
+
+def get_bot_loop():
+    """Return the bot event loop for use by other modules."""
+    return _bot_loop
 
 
 # ─────────────────────────────────────────

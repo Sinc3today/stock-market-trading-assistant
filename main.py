@@ -41,13 +41,16 @@ from alerts.discord_bot import scanner_status, post_alert_sync
 from scanners.swing_scanner import SwingScanner
 from scanners.intraday_scanner import IntradayScanner
 from scanners.premarket import PremarketScanner
+from scanners.news_scanner import NewsScanner
 
 swing_scanner    = SwingScanner()
 intraday_scanner = IntradayScanner()
 premarket_scanner = PremarketScanner()
+news_scanner     = NewsScanner()
 
 # Inject Discord posting function into all scanners
 swing_scanner.set_discord_fn(post_alert_sync)
+news_scanner.set_discord_fn(post_alert_sync)
 intraday_scanner.set_discord_fn(post_alert_sync)
 premarket_scanner.set_discord_fn(post_alert_sync)
 
@@ -58,6 +61,33 @@ swing_scanner.premarket_scanner = premarket_scanner
 # ─────────────────────────────────────────
 # SCANNER JOBS
 # ─────────────────────────────────────────
+
+def run_morning_briefing():
+    """Called at 7:45 AM EST — before premarket scan."""
+    logger.info("📰 Morning briefing starting...")
+    try:
+        news_scanner.run(briefing_type="morning")
+    except Exception as e:
+        logger.error(f"Morning briefing failed: {e}")
+
+
+def run_midday_briefing():
+    """Called at 12:00 PM EST."""
+    logger.info("📰 Midday briefing starting...")
+    try:
+        news_scanner.run(briefing_type="midday")
+    except Exception as e:
+        logger.error(f"Midday briefing failed: {e}")
+
+
+def run_eod_briefing():
+    """Called at 3:45 PM EST."""
+    logger.info("📰 End of day briefing starting...")
+    try:
+        news_scanner.run(briefing_type="eod")
+    except Exception as e:
+        logger.error(f"EOD briefing failed: {e}")
+
 
 def run_premarket_scan():
     """Called at 8:00 AM EST — 90 min before open."""
@@ -115,6 +145,14 @@ def start_scheduler():
     eastern = pytz.timezone("US/Eastern")
     scheduler = BackgroundScheduler(timezone=eastern)
 
+    # Morning briefing — 7:45 AM EST weekdays
+    scheduler.add_job(
+        run_morning_briefing,
+        CronTrigger(day_of_week="mon-fri", hour=7, minute=45, timezone=eastern),
+        id="morning_briefing",
+        name="Morning News Briefing",
+    )
+
     # Premarket — 8:00 AM EST weekdays
     scheduler.add_job(
         run_premarket_scan,
@@ -139,11 +177,30 @@ def start_scheduler():
         name="Intraday Scanner",
     )
 
+    # Midday briefing — 12:00 PM EST weekdays
+    scheduler.add_job(
+        run_midday_briefing,
+        CronTrigger(day_of_week="mon-fri", hour=12, minute=0, timezone=eastern),
+        id="midday_briefing",
+        name="Midday News Briefing",
+    )
+
+    # End of day briefing — 3:45 PM EST weekdays
+    scheduler.add_job(
+        run_eod_briefing,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=45, timezone=eastern),
+        id="eod_briefing",
+        name="EOD News Briefing",
+    )
+
     scheduler.start()
     logger.info("✅ Scheduler started")
-    logger.info("   Premarket scan: weekdays at 8:00 AM EST")
-    logger.info("   Swing scan:     weekdays at 9:00 AM EST")
-    logger.info(f"  Intraday scan:  every {config.INTRADAY_SCAN_INTERVAL_MIN} minutes")
+    logger.info("   Morning briefing: weekdays at 7:45 AM EST")
+    logger.info("   Premarket scan:   weekdays at 8:00 AM EST")
+    logger.info("   Swing scan:       weekdays at 9:00 AM EST")
+    logger.info(f"  Intraday scan:    every {config.INTRADAY_SCAN_INTERVAL_MIN} minutes")
+    logger.info("   Midday briefing:  weekdays at 12:00 PM EST")
+    logger.info("   EOD briefing:     weekdays at 3:45 PM EST")
     return scheduler
 
 
@@ -189,9 +246,9 @@ if __name__ == "__main__":
     # Keep main thread alive + hourly heartbeat
     try:
         while True:
-            time_module.sleep(1)
+            time_module.sleep(60)
             now = datetime.now()
-            if now.second == 0 and now.minute == 0:
+            if now.minute == 0:
                 logger.info(
                     f"💓 Heartbeat — {now.strftime('%I:%M %p')} | "
                     f"Alerts today: {scanner_status['alerts_today']}"
