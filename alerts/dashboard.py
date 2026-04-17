@@ -1444,6 +1444,13 @@ def render_news():
                     else:
                         st.markdown(f"• {titl}")
 
+            # Economic context (morning and EOD only)
+            eco_context = briefing.get("economic_context", "")
+            if eco_context and len(eco_context) > 10:
+                st.divider()
+                st.subheader("🏛️ Economic Conditions")
+                st.markdown(eco_context)
+
 
 # ─────────────────────────────────────────
 # ECONOMIC DATA PAGE

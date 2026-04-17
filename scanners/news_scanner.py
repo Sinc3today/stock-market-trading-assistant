@@ -78,13 +78,17 @@ class NewsScanner:
         economic_context = ""
         if briefing_type in ("morning", "eod"):
             try:
+                logger.info("Fetching economic context from FRED...")
                 from scanners.economic_scanner import EconomicScanner
-                ec      = EconomicScanner()
+                ec       = EconomicScanner()
                 eco_data = ec.get_morning_context()
                 economic_context = eco_data.get("formatted", "")
-                logger.info("Economic context added to briefing")
+                if economic_context:
+                    logger.info(f"Economic context added ({len(economic_context)} chars)")
+                else:
+                    logger.warning("Economic context returned empty formatted string")
             except Exception as e:
-                logger.warning(f"Economic context unavailable: {type(e).__name__}")
+                logger.warning(f"Economic context unavailable: {type(e).__name__} — {e}")
 
         # Build briefing
         briefing = self._build_briefing(
