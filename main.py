@@ -16,9 +16,13 @@ from datetime import datetime
 from loguru import logger
 import pytz
 import os
-
 import config
-
+from alerts.discord_bot           import post_message_sync
+from scheduler.spy_daily_scheduler import register_spy_jobs
+from data.vix_client              import VIXClient
+from data.ivr_client              import IVRClient
+from alerts.discord_bot           import post_message_sync
+from scheduler.spy_daily_scheduler import register_spy_jobs
 # ── Logging setup ────────────────────────────────────────────
 os.makedirs(config.LOG_DIR, exist_ok=True)
 
@@ -263,6 +267,14 @@ if __name__ == "__main__":
     # Start scheduler
     scheduler = start_scheduler()
 
+    register_spy_jobs(
+        scheduler      = scheduler,
+        polygon_client = PolygonClient(),  # already imported at top
+        vix_client     = None,             # swap in VIXClient() when built
+        ivr_client     = None,             # swap in IVRClient() when built
+        post_fn        = post_message_sync,
+        event_calendar = [],
+    )
     # Start Discord bot in background thread
     discord_thread = threading.Thread(target=start_discord, daemon=True)
     discord_thread.start()
