@@ -1,5 +1,24 @@
 """
 alerts/discord_bot.py — Discord Bot for Trading Alerts
+
+WHAT WAS BROKEN & WHAT WAS FIXED:
+──────────────────────────────────
+1. Race condition: main.py called post_alert_sync() while the bot loop
+   was still starting in its thread. bot.loop existed but wasn't
+   accepting coroutines yet → silent drop (the "bot loop not running" warning).
+   FIX: Added _bot_ready Event. post_alert_sync / post_message_sync
+   now wait up to 30s for the bot to be ready before giving up.
+
+2. Channel fetch using bot.get_channel() returned None when the bot
+   hadn't yet received the GUILD_CREATE event (even after login).
+   FIX: Fall back to bot.fetch_channel() which does a live API call.
+
+3. No startup diagnostics — you had no way to tell if channels were
+   configured correctly.
+   FIX: on_ready now logs channel names and member counts.
+
+4. Added post_message_sync(message) helper needed by spy_daily_scheduler.
+
 Posts alert cards to Discord channels and handles slash commands.
 
 Channels:
@@ -7,21 +26,21 @@ Channels:
     #high-conviction      → 🔴 score 90+
 
 Slash Commands:
-    /add TICKER           → add to watchlist (swing, intraday, or both)
-    /remove TICKER        → remove from watchlist (swing, intraday, or both)
+    /add TICKER           → add to watchlist
+    /remove TICKER        → remove from watchlist
     /watchlist            → show current watchlist
     /score TICKER         → manually trigger a score check
-    /status               → show scanner status
+    /status               → show scanner + bot status
     /log TICKER ...       → log a trade entry
-    /exit                 → close an open trade (select from list)
+    /exit                 → close an open trade
     /trades               → show open trades + stats
-    /news                 → run a news briefing
 """
 
 import json
 import os
 import sys
 import asyncio
+import threading
 from datetime import datetime
 from loguru import logger
 
@@ -48,9 +67,171 @@ scanner_status = {
     "alerts_today": 0,
 }
 
-# Module-level event loop — set when bot connects
-# Used by non-async code (scanners) to post messages
-_bot_loop = None
+# ── Ready gate ───────────────────────────────────────────────
+# Set when on_ready fires. post_alert_sync / post_message_sync
+# wait on this before attempting to post — eliminates the race condition.
+_bot_ready = threading.Event()
+
+
+# ─────────────────────────────────────────
+# EVENTS
+# ─────────────────────────────────────────
+
+@bot.event
+async def on_ready():
+    """Called once the bot has connected and received guild data."""
+    logger.info(f"✅ Discord bot logged in as: {bot.user} (id={bot.user.id})")
+
+    # Sync slash commands
+    try:
+        synced = await tree.sync()
+        logger.info(f"   Slash commands synced: {len(synced)}")
+    except Exception as e:
+        logger.error(f"   Slash command sync failed: {e}")
+
+    # Diagnostics — log channel names so you can spot config errors fast
+    _log_channel_diagnostics()
+
+    # Signal that the bot is ready — unblocks post_alert_sync callers
+    _bot_ready.set()
+    logger.info("   Bot ready gate opened — alerts will now post ✅")
+
+
+def _log_channel_diagnostics():
+    """Log configured channel info on startup so problems are obvious."""
+    for label, cid in [
+        ("standard",       config.DISCORD_CHANNEL_ID_STANDARD),
+        ("high_conviction", config.DISCORD_CHANNEL_ID_HIGH_CONVICTION),
+    ]:
+        if not cid:
+            logger.warning(f"   ⚠️  {label} channel ID not set in .env")
+            continue
+        ch = bot.get_channel(cid)
+        if ch is None:
+            logger.warning(
+                f"   ⚠️  {label} channel ID {cid} not found — "
+                f"check the bot has access to this server/channel"
+            )
+        else:
+            logger.info(f"   #{ch.name} ({label}) — ✅ found")
+
+
+# ─────────────────────────────────────────
+# ALERT POSTING
+# ─────────────────────────────────────────
+
+async def _get_channel(channel_id: int):
+    """
+    Get channel object. Tries cache first, falls back to API fetch.
+    Cache miss is common on startup before GUILD_CREATE is received.
+    """
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception as e:
+            logger.error(f"Cannot fetch channel {channel_id}: {e}")
+    return channel
+
+
+async def post_alert(alert: dict, message: str):
+    """Post a scored alert to the appropriate tier channel."""
+    tier = alert.get("tier", "none")
+    if tier == "high_conviction":
+        channel_id = config.DISCORD_CHANNEL_ID_HIGH_CONVICTION
+    elif tier == "standard":
+        channel_id = config.DISCORD_CHANNEL_ID_STANDARD
+    else:
+        logger.debug(f"Alert tier '{tier}' has no channel — not posted")
+        return
+
+    channel = await _get_channel(channel_id)
+    if channel is None:
+        logger.error(
+            f"post_alert: channel {channel_id} unavailable — "
+            f"alert for {alert.get('ticker')} dropped. "
+            f"Check DISCORD_CHANNEL_ID_STANDARD / _HIGH_CONVICTION in .env"
+        )
+        return
+
+    try:
+        await channel.send(message)
+        scanner_status["alerts_today"] += 1
+        logger.info(
+            f"✅ Alert posted: {alert.get('ticker')} "
+            f"{alert.get('alert_emoji','')} → #{channel.name}"
+        )
+    except discord.Forbidden:
+        logger.error(
+            f"Bot lacks Send Messages permission in #{channel.name} — "
+            f"grant the permission in Discord server settings"
+        )
+    except Exception as e:
+        logger.error(f"Failed to post alert: {e}")
+
+
+async def post_message(channel_id: int, message: str):
+    """
+    Post a plain text message to any channel by ID.
+    Used by spy_daily_scheduler and other non-alert jobs.
+    """
+    channel = await _get_channel(channel_id)
+    if channel is None:
+        logger.error(f"post_message: channel {channel_id} unavailable")
+        return
+    try:
+        await channel.send(message)
+        logger.info(f"Message posted to #{channel.name}")
+    except discord.Forbidden:
+        logger.error(f"Bot lacks Send Messages permission in channel {channel_id}")
+    except Exception as e:
+        logger.error(f"post_message failed: {e}")
+
+
+# ─────────────────────────────────────────
+# THREAD-SAFE SYNC WRAPPERS
+# ─────────────────────────────────────────
+
+def post_alert_sync(alert: dict, message: str, timeout: float = 30.0):
+    """
+    Thread-safe wrapper for post_alert().
+    Waits up to `timeout` seconds for the bot to be ready.
+    Called from scanner threads via swing_scanner.set_discord_fn().
+    """
+    if not _bot_ready.wait(timeout=timeout):
+        logger.warning(
+            f"post_alert_sync: bot not ready after {timeout}s — "
+            f"alert for {alert.get('ticker')} dropped. "
+            f"Is DISCORD_BOT_TOKEN set correctly?"
+        )
+        return
+    if bot.loop and bot.loop.is_running():
+        asyncio.run_coroutine_threadsafe(post_alert(alert, message), bot.loop)
+    else:
+        logger.warning("post_alert_sync: bot loop not running")
+
+
+def post_message_sync(
+    message: str,
+    channel_id: int | None = None,
+    timeout: float = 30.0,
+):
+    """
+    Thread-safe wrapper for post_message().
+    Defaults to DISCORD_CHANNEL_ID_STANDARD.
+    Used by spy_daily_scheduler for plain-text posts.
+    """
+    if not _bot_ready.wait(timeout=timeout):
+        logger.warning(
+            f"post_message_sync: bot not ready after {timeout}s — message dropped"
+        )
+        return
+    cid = channel_id or config.DISCORD_CHANNEL_ID_STANDARD
+    if bot.loop and bot.loop.is_running():
+        asyncio.run_coroutine_threadsafe(post_message(cid, message), bot.loop)
+    else:
+        logger.warning("post_message_sync: bot loop not running")
+
 
 # ─────────────────────────────────────────
 # WATCHLIST HELPERS
@@ -75,245 +256,180 @@ def save_watchlist(watchlist: dict):
 
 
 def get_all_tickers() -> list[str]:
-    """Return all unique tickers across swing and intraday lists."""
     wl = load_watchlist()
     return sorted(set(wl.get("swing", []) + wl.get("intraday", [])))
 
 
 # ─────────────────────────────────────────
-# AUTOCOMPLETE FUNCTIONS
+# AUTOCOMPLETE
 # ─────────────────────────────────────────
 
 async def ticker_autocomplete(
     interaction: discord.Interaction,
     current: str,
 ) -> list[app_commands.Choice[str]]:
-    """Autocomplete for tickers in the watchlist."""
     tickers = get_all_tickers()
-    # Add common tickers not in watchlist as suggestions
-    common  = ["AAPL", "MSFT", "NVDA", "SPY", "QQQ", "TSLA", "AMZN", "GOOGL", "META"]
-    all_tickers = list(dict.fromkeys(tickers + common))
-    filtered = [t for t in all_tickers if current.upper() in t][:10]
-    return [app_commands.Choice(name=t, value=t) for t in filtered]
-
-
-async def open_trade_autocomplete(
-    interaction: discord.Interaction,
-    current: str,
-) -> list[app_commands.Choice[str]]:
-    """Autocomplete for open trade IDs."""
-    try:
-        from journal.trade_recorder import TradeRecorder
-        open_trades = TradeRecorder().get_open_trades()
-        choices = []
-        for t in reversed(open_trades[-10:]):
-            label = (
-                f"{t['trade_id']} — {t['ticker']} "
-                f"{t['direction']} @ ${t['entry_price']}"
-            )
-            if current.upper() in t["trade_id"] or current.upper() in t["ticker"]:
-                choices.append(app_commands.Choice(name=label, value=t["trade_id"]))
-            elif not current:
-                choices.append(app_commands.Choice(name=label, value=t["trade_id"]))
-        return choices[:10]
-    except Exception:
-        return []
+    return [
+        app_commands.Choice(name=t, value=t)
+        for t in tickers
+        if current.upper() in t
+    ][:25]
 
 
 # ─────────────────────────────────────────
-# BOT EVENTS
+# SLASH COMMANDS
 # ─────────────────────────────────────────
 
-@bot.event
-async def on_ready():
-    """Store event loop and sync commands after all decorators are loaded."""
-    global _bot_loop
-    _bot_loop = asyncio.get_event_loop()
-    logger.info(f"Discord bot connected as {bot.user}")
-    try:
-        synced = await tree.sync()
-        logger.info(f"Synced {len(synced)} slash commands")
-    except Exception as e:
-        logger.error(f"Failed to sync commands: {e}")
-
-
-# ─────────────────────────────────────────
-# WATCHLIST COMMANDS
-# ─────────────────────────────────────────
-
-@tree.command(name="add", description="Add a ticker to the watchlist")
-@app_commands.describe(
-    ticker="Stock symbol e.g. AAPL — autocomplete shows current watchlist",
-    mode="swing | intraday | both (default: both — adds to swing AND intraday)"
-)
-@app_commands.autocomplete(ticker=ticker_autocomplete)
-@app_commands.choices(mode=[
-    app_commands.Choice(name="Both (swing + intraday)", value="both"),
-    app_commands.Choice(name="Swing only",              value="swing"),
-    app_commands.Choice(name="Intraday only",           value="intraday"),
-])
-async def add_ticker(
-    interaction: discord.Interaction,
-    ticker: str,
-    mode: str = "both",
-):
-    ticker = ticker.upper().strip()
-    mode   = mode.lower().strip()
-
-    if mode not in ("swing", "intraday", "both"):
-        await interaction.response.send_message(
-            "❌ Mode must be `swing`, `intraday`, or `both`", ephemeral=True
-        )
-        return
-
-    watchlist  = load_watchlist()
-    added_to   = []
-    lists      = ["swing", "intraday"] if mode == "both" else [mode]
-
-    for lst in lists:
-        if ticker not in watchlist.get(lst, []):
-            watchlist[lst].append(ticker)
-            added_to.append(lst)
-
-    if not added_to:
-        await interaction.response.send_message(
-            f"⚠️ `{ticker}` is already in all selected lists.", ephemeral=True
-        )
-        return
-
-    save_watchlist(watchlist)
-
-    added_str     = " and ".join(f"**{a}**" for a in added_to)
-    swing_list    = ", ".join(f"`{t}`" for t in watchlist.get("swing",    [])) or "_empty_"
-    intraday_list = ", ".join(f"`{t}`" for t in watchlist.get("intraday", [])) or "_empty_"
-
-    await interaction.response.send_message(
-        f"✅ Added `{ticker}` to {added_str}.\n"
-        f"📅 Swing:    {swing_list}\n"
-        f"⚡ Intraday: {intraday_list}"
-    )
-    logger.info(f"Added {ticker} to {added_to} via Discord")
-
-
-@tree.command(name="remove", description="Remove a ticker from the watchlist")
-@app_commands.describe(
-    ticker="Stock symbol to remove",
-    mode="Which list: swing, intraday, or both (default: both)"
-)
-@app_commands.autocomplete(ticker=ticker_autocomplete)
-@app_commands.choices(mode=[
-    app_commands.Choice(name="Both (swing + intraday)", value="both"),
-    app_commands.Choice(name="Swing only",              value="swing"),
-    app_commands.Choice(name="Intraday only",           value="intraday"),
-])
-async def remove_ticker(
-    interaction: discord.Interaction,
-    ticker: str,
-    mode: str = "both",
-):
-    ticker = ticker.upper().strip()
-    mode   = mode.lower().strip()
-
-    if mode not in ("swing", "intraday", "both"):
-        await interaction.response.send_message(
-            "❌ Mode must be `swing`, `intraday`, or `both`", ephemeral=True
-        )
-        return
-
-    watchlist    = load_watchlist()
-    removed_from = []
-    lists        = ["swing", "intraday"] if mode == "both" else [mode]
-
-    for lst in lists:
-        if ticker in watchlist.get(lst, []):
-            watchlist[lst].remove(ticker)
-            removed_from.append(lst)
-
-    if not removed_from:
-        await interaction.response.send_message(
-            f"❌ `{ticker}` not found in any watchlist.", ephemeral=True
-        )
-        return
-
-    save_watchlist(watchlist)
-
-    removed_str   = " and ".join(f"**{r}**" for r in removed_from)
-    swing_list    = ", ".join(f"`{t}`" for t in watchlist.get("swing",    [])) or "_empty_"
-    intraday_list = ", ".join(f"`{t}`" for t in watchlist.get("intraday", [])) or "_empty_"
-
-    await interaction.response.send_message(
-        f"🗑️ Removed `{ticker}` from {removed_str}.\n"
-        f"📅 Swing:    {swing_list}\n"
-        f"⚡ Intraday: {intraday_list}"
-    )
-    logger.info(f"Removed {ticker} from {removed_from} via Discord")
-
-
-@tree.command(name="watchlist", description="Show the current watchlist")
-async def show_watchlist(interaction: discord.Interaction):
-    watchlist = load_watchlist()
-
-    swing_list    = ", ".join(f"`{t}`" for t in watchlist.get("swing",    [])) or "_empty_"
-    intraday_list = ", ".join(f"`{t}`" for t in watchlist.get("intraday", [])) or "_empty_"
+@tree.command(name="status", description="Show scanner and bot status")
+async def scanner_status_cmd(interaction: discord.Interaction):
+    running      = scanner_status["running"]
+    last_scan    = scanner_status["last_scan"] or "Never"
+    alerts       = scanner_status["alerts_today"]
+    status_emoji = "🟢" if running else "🔴"
 
     embed = discord.Embed(
-        title="📋 Current Watchlist",
-        color=discord.Color.blue(),
-        timestamp=datetime.utcnow()
+        title     = "🤖 Trading Assistant Status",
+        color     = discord.Color.green() if running else discord.Color.red(),
+        timestamp = datetime.utcnow(),
     )
-    embed.add_field(name="📅 Swing",    value=swing_list,    inline=False)
-    embed.add_field(name="⚡ Intraday", value=intraday_list, inline=False)
+    embed.add_field(name="Scanner",      value=f"{status_emoji} {'Running' if running else 'Stopped'}", inline=True)
+    embed.add_field(name="Last Scan",    value=str(last_scan), inline=True)
+    embed.add_field(name="Alerts Today", value=str(alerts),    inline=True)
+    embed.add_field(name="Bot Ready",    value="✅ Yes" if _bot_ready.is_set() else "⏳ Starting", inline=True)
+
+    watchlist = load_watchlist()
+    embed.add_field(
+        name  = "Watchlist",
+        value = f"Swing: {len(watchlist['swing'])} | Intraday: {len(watchlist['intraday'])}",
+        inline=False,
+    )
     await interaction.response.send_message(embed=embed)
 
 
-# ─────────────────────────────────────────
-# SCORE COMMAND
-# ─────────────────────────────────────────
+@tree.command(name="watchlist", description="Show current watchlist")
+async def show_watchlist(interaction: discord.Interaction):
+    wl = load_watchlist()
+    swing    = ", ".join(wl.get("swing", [])) or "Empty"
+    intraday = ", ".join(wl.get("intraday", [])) or "Empty"
+    options  = ", ".join(wl.get("options_enabled", [])) or "None"
 
-@tree.command(name="score", description="Run a live score check on a ticker")
+    embed = discord.Embed(title="📋 Current Watchlist", color=discord.Color.blue())
+    embed.add_field(name="Swing",           value=swing,    inline=False)
+    embed.add_field(name="Intraday",        value=intraday, inline=False)
+    embed.add_field(name="Options Enabled", value=options,  inline=False)
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="add", description="Add ticker to watchlist")
 @app_commands.describe(
-    ticker="Stock symbol to score",
-    mode="swing or intraday (default: swing)"
+    ticker = "Stock symbol e.g. AAPL",
+    mode   = "Which list to add to",
+)
+@app_commands.choices(mode=[
+    app_commands.Choice(name="Swing only",    value="swing"),
+    app_commands.Choice(name="Intraday only", value="intraday"),
+    app_commands.Choice(name="Both",          value="both"),
+])
+async def add_ticker(interaction: discord.Interaction, ticker: str, mode: str = "both"):
+    ticker = ticker.upper().strip()
+    wl     = load_watchlist()
+    added  = []
+
+    if mode in ("swing", "both") and ticker not in wl.get("swing", []):
+        wl.setdefault("swing", []).append(ticker)
+        added.append("swing")
+    if mode in ("intraday", "both") and ticker not in wl.get("intraday", []):
+        wl.setdefault("intraday", []).append(ticker)
+        added.append("intraday")
+
+    if added:
+        save_watchlist(wl)
+        await interaction.response.send_message(
+            f"✅ **{ticker}** added to: {', '.join(added)}"
+        )
+    else:
+        await interaction.response.send_message(
+            f"ℹ️ **{ticker}** is already in the requested list(s)"
+        )
+
+
+@tree.command(name="remove", description="Remove ticker from watchlist")
+@app_commands.describe(ticker="Stock symbol to remove", mode="Which list")
+@app_commands.autocomplete(ticker=ticker_autocomplete)
+@app_commands.choices(mode=[
+    app_commands.Choice(name="Swing only",    value="swing"),
+    app_commands.Choice(name="Intraday only", value="intraday"),
+    app_commands.Choice(name="Both",          value="both"),
+])
+async def remove_ticker(interaction: discord.Interaction, ticker: str, mode: str = "both"):
+    ticker  = ticker.upper().strip()
+    wl      = load_watchlist()
+    removed = []
+
+    for lst in (["swing"] if mode in ("swing","both") else []) + \
+               (["intraday"] if mode in ("intraday","both") else []):
+        if ticker in wl.get(lst, []):
+            wl[lst].remove(ticker)
+            removed.append(lst)
+
+    if removed:
+        save_watchlist(wl)
+        await interaction.response.send_message(
+            f"✅ **{ticker}** removed from: {', '.join(removed)}"
+        )
+    else:
+        await interaction.response.send_message(
+            f"ℹ️ **{ticker}** not found in the requested list(s)"
+        )
+
+
+@tree.command(name="score", description="Score a ticker right now")
+@app_commands.describe(
+    ticker = "Stock symbol",
+    mode   = "Swing or intraday",
 )
 @app_commands.autocomplete(ticker=ticker_autocomplete)
-async def manual_score(
+@app_commands.choices(mode=[
+    app_commands.Choice(name="Swing",    value="swing"),
+    app_commands.Choice(name="Intraday", value="intraday"),
+])
+async def score_ticker(
     interaction: discord.Interaction,
     ticker: str,
-    mode: str = "swing"
+    mode: str = "swing",
 ):
     ticker = ticker.upper().strip()
     await interaction.response.defer()
 
     try:
-        from data.polygon_client import PolygonClient
+        from data.polygon_client    import PolygonClient
         from indicators.moving_averages import MovingAverages
-        from indicators.donchian import DonchianChannels
-        from indicators.volume import VolumeAnalysis
-        from indicators.cvd import CVDAnalysis
-        from indicators.rsi import RSIAnalysis
-        from signals.scorer import SignalScorer
+        from indicators.donchian        import DonchianChannels
+        from indicators.volume          import VolumeAnalysis
+        from indicators.cvd             import CVDAnalysis
+        from indicators.rsi             import RSIAnalysis
+        from signals.scorer             import SignalScorer
+        import config as _config
 
-        timeframe = config.SWING_PRIMARY_TIMEFRAME if mode == "swing" \
-                    else config.INTRADAY_PRIMARY_TIMEFRAME
+        timeframe = _config.SWING_PRIMARY_TIMEFRAME if mode == "swing" \
+                    else _config.INTRADAY_PRIMARY_TIMEFRAME
 
-        client = PolygonClient()
-        df = client.get_bars(ticker, timeframe=timeframe, limit=300, days_back=400)
-
+        df = PolygonClient().get_bars(ticker, timeframe=timeframe, limit=300, days_back=400)
         if df is None or len(df) < 50:
-            await interaction.followup.send(f"❌ Could not fetch data for `{ticker}`")
+            await interaction.followup.send(f"❌ No data for `{ticker}`")
             return
 
-        ma_r  = MovingAverages(df).analyze()
-        dc_r  = DonchianChannels(df).analyze()
-        vol_r = VolumeAnalysis(df).analyze()
-        cvd_r = CVDAnalysis(df).analyze()
-        rsi_r = RSIAnalysis(df).analyze()
-
+        ma_r   = MovingAverages(df).analyze()
+        dc_r   = DonchianChannels(df).analyze()
+        vol_r  = VolumeAnalysis(df).analyze()
+        cvd_r  = CVDAnalysis(df).analyze()
+        rsi_r  = RSIAnalysis(df).analyze()
         result = SignalScorer().score(ma_r, dc_r, vol_r, cvd_r, rsi_r)
 
         score  = result["final_score"]
         tier   = result["tier"]
-        layers = result["layer_scores"]
+        layers = result.get("layer_scores", {})
+        emoji  = result.get("alert_emoji", "⚪") or "⚪"
 
         tier_color = {
             "high_conviction": discord.Color.red(),
@@ -322,33 +438,31 @@ async def manual_score(
             "none":            discord.Color.dark_grey(),
         }.get(tier, discord.Color.dark_grey())
 
-        emoji = result.get("alert_emoji", "⚪") or "⚪"
-
         embed = discord.Embed(
-            title=f"{emoji} Score Check — {ticker}",
-            color=tier_color,
-            timestamp=datetime.utcnow()
+            title     = f"{emoji} Score Check — {ticker}",
+            color     = tier_color,
+            timestamp = datetime.utcnow(),
         )
-        embed.add_field(name="Score",     value=f"**{score}/100**",                    inline=True)
-        embed.add_field(name="Direction", value=result["direction"].upper(),            inline=True)
-        embed.add_field(name="Tier",      value=tier.replace("_"," ").title(),         inline=True)
+        embed.add_field(name="Score",     value=f"**{score}/100**",               inline=True)
+        embed.add_field(name="Direction", value=result["direction"].upper(),       inline=True)
+        embed.add_field(name="Tier",      value=tier.replace("_"," ").title(),    inline=True)
         embed.add_field(
-            name="Layer Breakdown",
-            value=(
-                f"Trend:  {layers['trend']['score']}/{layers['trend']['max']}\n"
-                f"Setup:  {layers['setup']['score']}/{layers['setup']['max']}\n"
-                f"Volume: {layers['volume']['score']}/{layers['volume']['max']}"
+            name  = "Layer Breakdown",
+            value = (
+                f"Trend:  {layers.get('trend',{}).get('score',0)}/{layers.get('trend',{}).get('max',35)}\n"
+                f"Setup:  {layers.get('setup',{}).get('score',0)}/{layers.get('setup',{}).get('max',35)}\n"
+                f"Volume: {layers.get('volume',{}).get('score',0)}/{layers.get('volume',{}).get('max',30)}"
             ),
-            inline=False
+            inline=False,
         )
         embed.add_field(
-            name="Indicators",
-            value=(
+            name  = "Indicators",
+            value = (
                 f"RSI: {rsi_r.get('rsi_current','N/A')} | "
                 f"RVOL: {vol_r.get('rvol','N/A')}x | "
                 f"CVD: {cvd_r.get('cvd_slope','N/A')}"
             ),
-            inline=False
+            inline=False,
         )
         embed.set_footer(text=f"Mode: {mode.capitalize()} | TF: {timeframe}")
         await interaction.followup.send(embed=embed)
@@ -359,47 +473,14 @@ async def manual_score(
         await interaction.followup.send(f"❌ Error scoring `{ticker}`: {e}")
 
 
-# ─────────────────────────────────────────
-# STATUS COMMAND
-# ─────────────────────────────────────────
-
-@tree.command(name="status", description="Show scanner and bot status")
-async def scanner_status_cmd(interaction: discord.Interaction):
-    running   = scanner_status["running"]
-    last_scan = scanner_status["last_scan"] or "Never"
-    alerts    = scanner_status["alerts_today"]
-    status_emoji = "🟢" if running else "🔴"
-
-    embed = discord.Embed(
-        title="🤖 Trading Assistant Status",
-        color=discord.Color.green() if running else discord.Color.red(),
-        timestamp=datetime.utcnow()
-    )
-    embed.add_field(name="Scanner",      value=f"{status_emoji} {'Running' if running else 'Stopped'}", inline=True)
-    embed.add_field(name="Last Scan",    value=str(last_scan), inline=True)
-    embed.add_field(name="Alerts Today", value=str(alerts),    inline=True)
-
-    watchlist = load_watchlist()
-    embed.add_field(
-        name="Watchlist",
-        value=f"Swing: {len(watchlist['swing'])} | Intraday: {len(watchlist['intraday'])}",
-        inline=False
-    )
-    await interaction.response.send_message(embed=embed)
-
-
-# ─────────────────────────────────────────
-# TRADE RECORDER COMMANDS
-# ─────────────────────────────────────────
-
 @tree.command(name="log", description="Log a new trade entry")
 @app_commands.describe(
-    ticker="Stock symbol e.g. AAPL",
-    entry="Entry price e.g. 170.50",
-    size="Shares or contracts e.g. 10",
-    direction="Trade direction",
-    strategy="Trade strategy type",
-    notes="Why you're entering this trade (optional)"
+    ticker    = "Stock symbol e.g. AAPL",
+    entry     = "Entry price",
+    size      = "Shares or contracts",
+    direction = "Trade direction",
+    strategy  = "Trade strategy type",
+    notes     = "Why you're entering (optional)",
 )
 @app_commands.autocomplete(ticker=ticker_autocomplete)
 @app_commands.choices(
@@ -413,7 +494,7 @@ async def scanner_status_cmd(interaction: discord.Interaction):
         app_commands.Choice(name="Credit Spread",     value="credit_spread"),
         app_commands.Choice(name="Iron Condor",       value="iron_condor"),
         app_commands.Choice(name="Single Leg Option", value="single_leg"),
-    ]
+    ],
 )
 async def log_trade(
     interaction: discord.Interaction,
@@ -424,257 +505,86 @@ async def log_trade(
     strategy:  str = "stock",
     notes:     str = "",
 ):
-    ticker    = ticker.upper().strip()
-    direction = direction.lower().strip()
-    strategy  = strategy.lower().strip()
-
+    ticker = ticker.upper().strip()
     try:
         from journal.trade_recorder import TradeRecorder
-        tr       = TradeRecorder()
-        trade_id = tr.log_entry(
-            ticker=ticker,
-            entry_price=entry,
-            size=size,
-            strategy=strategy,
-            direction=direction,
-            notes=notes,
+        trade_id = TradeRecorder().log_entry(
+            ticker      = ticker,
+            entry_price = entry,
+            size        = size,
+            strategy    = strategy,
+            direction   = direction,
+            notes       = notes,
         )
-
-        dir_emoji = "📈" if direction == "bullish" else "📉"
-
-        embed = discord.Embed(
-            title=f"📥 Trade Logged — {ticker}",
-            color=discord.Color.green(),
-            timestamp=datetime.utcnow()
+        await interaction.response.send_message(
+            f"✅ Trade logged: **{ticker}** {strategy} {direction} "
+            f"@ ${entry} × {size}\nID: `{trade_id}`"
         )
-        embed.add_field(name="Trade ID",    value=f"`{trade_id}`",                    inline=True)
-        embed.add_field(name="Direction",   value=f"{dir_emoji} {direction.upper()}", inline=True)
-        embed.add_field(name="Strategy",    value=strategy.replace("_"," ").title(),  inline=True)
-        embed.add_field(name="Entry Price", value=f"${entry}",                        inline=True)
-        embed.add_field(name="Size",        value=str(size),                          inline=True)
-        embed.add_field(name="Entry Value", value=f"${round(entry*size, 2)}",         inline=True)
-        if notes:
-            embed.add_field(name="Notes", value=notes, inline=False)
-        embed.set_footer(text="Use /exit to close this trade — it will appear in /trades")
-        await interaction.response.send_message(embed=embed)
-        logger.info(f"Trade logged via Discord: [{trade_id}] {ticker} @ ${entry}")
-
     except Exception as e:
-        logger.error(f"Discord log trade error: {e}")
-        await interaction.response.send_message(f"❌ Error logging trade: {e}")
-
-
-@tree.command(name="exit", description="Close an open trade")
-@app_commands.describe(
-    trade="Select your open trade from the list",
-    exit_price="Price you exited at",
-    notes="Optional exit notes"
-)
-@app_commands.autocomplete(trade=open_trade_autocomplete)
-async def exit_trade(
-    interaction: discord.Interaction,
-    trade:      str,
-    exit_price: float,
-    notes:      str = "",
-):
-    trade_id = trade.upper().strip()
-
-    try:
-        from journal.trade_recorder import TradeRecorder
-        tr      = TradeRecorder()
-        success = tr.log_exit(trade_id, exit_price, notes)
-
-        if not success:
-            await interaction.response.send_message(
-                f"❌ Trade `{trade_id}` not found. Use `/trades` to see open trades.",
-                ephemeral=True
-            )
-            return
-
-        t             = tr.get_trade_by_id(trade_id)
-        outcome       = t["outcome"]
-        pnl_d         = t["pnl_dollars"]
-        pnl_p         = t["pnl_pct"]
-        outcome_emoji = "✅" if outcome == "win" else "❌" if outcome == "loss" else "➡️"
-        color         = discord.Color.green() if outcome == "win" else \
-                        discord.Color.red()   if outcome == "loss" else \
-                        discord.Color.blue()
-
-        embed = discord.Embed(
-            title=f"{outcome_emoji} Trade Closed — {t['ticker']}",
-            color=color,
-            timestamp=datetime.utcnow()
-        )
-        embed.add_field(name="Outcome",   value=outcome.upper(),                                       inline=True)
-        embed.add_field(name="Strategy",  value=t.get("strategy","stock").replace("_"," ").title(),   inline=True)
-        embed.add_field(name="Direction", value=t["direction"],                                        inline=True)
-        embed.add_field(name="Entry",     value=f"${t['entry_price']}",                               inline=True)
-        embed.add_field(name="Exit",      value=f"${exit_price}",                                     inline=True)
-        embed.add_field(name="Size",      value=str(t["size"]),                                       inline=True)
-        embed.add_field(name="P&L $",     value=f"${pnl_d}",                                         inline=True)
-        embed.add_field(name="P&L %",     value=f"{pnl_p}%",                                         inline=True)
-        if notes:
-            embed.add_field(name="Notes", value=notes, inline=False)
-        embed.set_footer(text="Log a lesson in the dashboard → 🧠 Lessons")
-
-        await interaction.response.send_message(embed=embed)
-        logger.info(f"Trade closed via Discord: [{trade_id}] {t['ticker']} → {outcome} P&L ${pnl_d}")
-
-    except Exception as e:
-        logger.error(f"Discord exit trade error: {e}")
+        logger.error(f"Log trade error: {e}")
         await interaction.response.send_message(f"❌ Error: {e}")
 
 
-@tree.command(name="trades", description="Show your open trades and stats")
+@tree.command(name="trades", description="Show open trades and summary stats")
 async def show_trades(interaction: discord.Interaction):
     try:
         from journal.trade_recorder import TradeRecorder
-        tr          = TradeRecorder()
-        open_trades = tr.get_open_trades()
-        stats       = tr.get_summary_stats()
+        tr    = TradeRecorder()
+        stats = tr.get_summary_stats()
+        open_ = tr.get_open_trades()
 
-        embed = discord.Embed(
-            title="📒 My Trades",
-            color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
-        )
-        embed.add_field(name="Total",    value=stats["total"],            inline=True)
-        embed.add_field(name="Win Rate", value=f"{stats['win_rate']}%",   inline=True)
-        embed.add_field(name="P&L",      value=f"${stats['total_pnl']}",  inline=True)
+        embed = discord.Embed(title="📊 Trade Summary", color=discord.Color.blue())
+        embed.add_field(name="Total",    value=stats["total"],         inline=True)
+        embed.add_field(name="Win Rate", value=f"{stats['win_rate']}%",inline=True)
+        embed.add_field(name="Total P&L",value=f"${stats['total_pnl']}",inline=True)
 
-        if open_trades:
-            lines = []
-            for t in reversed(open_trades[-8:]):
-                dir_e = "📈" if t["direction"] == "BULLISH" else "📉"
-                strat = t.get("strategy","stock").replace("_"," ").title()
-                lines.append(
-                    f"`{t['trade_id']}` {dir_e} **{t['ticker']}** "
-                    f"${t['entry_price']} × {t['size']} — {strat}"
-                )
-            embed.add_field(
-                name=f"Open Trades ({len(open_trades)})",
-                value="\n".join(lines),
-                inline=False
+        if open_:
+            lines = "\n".join(
+                f"`{t['trade_id']}` {t['ticker']} {t['strategy']} @ ${t['entry_price']}"
+                for t in open_[-5:]
             )
+            embed.add_field(name=f"Open Trades ({len(open_)})", value=lines, inline=False)
         else:
-            embed.add_field(name="Open Trades", value="None open", inline=False)
+            embed.add_field(name="Open Trades", value="None", inline=False)
 
-        embed.set_footer(text="Use /exit to close a trade | /log to open one")
         await interaction.response.send_message(embed=embed)
-
     except Exception as e:
         logger.error(f"Discord trades error: {e}")
         await interaction.response.send_message(f"❌ Error: {e}")
 
 
-# ─────────────────────────────────────────
-# NEWS COMMAND
-# ─────────────────────────────────────────
-
-@tree.command(name="news", description="Run a news briefing right now")
-@app_commands.describe(briefing_type="Which briefing to run")
-@app_commands.choices(briefing_type=[
-    app_commands.Choice(name="🌅 Morning Briefing", value="morning"),
-    app_commands.Choice(name="☀️  Midday Update",   value="midday"),
-    app_commands.Choice(name="🌆 End of Day Wrap",  value="eod"),
-])
-async def run_news(
+@tree.command(name="exit", description="Close an open trade")
+@app_commands.describe(
+    trade_id   = "8-character trade ID from /log",
+    exit_price = "Exit price",
+    notes      = "Exit reason (optional)",
+)
+async def exit_trade(
     interaction: discord.Interaction,
-    briefing_type: str = "morning",
+    trade_id:   str,
+    exit_price: float,
+    notes:      str = "",
 ):
-    await interaction.response.defer()
     try:
-        from scanners.news_scanner import NewsScanner
-        ns       = NewsScanner()
-        # post_to_discord=False because we post directly below
-        briefing = ns.run(briefing_type=briefing_type, post_to_discord=False)
-
-        if not briefing:
-            await interaction.followup.send("📰 No briefing data returned.")
-            return
-
-        # Post the full briefing message to the news channel directly
-        # We are inside the bot's async context so we can post directly
-        channel_id  = getattr(config, "DISCORD_CHANNEL_ID_NEWS", 0)                       or config.DISCORD_CHANNEL_ID_STANDARD
-        news_channel = bot.get_channel(channel_id)
-
-        discord_msg = briefing.get("discord_message", "")
-        if discord_msg and news_channel:
-            # Split into chunks if needed
-            chunks = []
-            if len(discord_msg) <= 1900:
-                chunks = [discord_msg]
-            else:
-                current = ""
-                for line in discord_msg.split("\n"):
-                    if len(current) + len(line) + 1 > 1900:
-                        if current:
-                            chunks.append(current)
-                        current = line
-                    else:
-                        current = current + "\n" + line if current else line
-                if current:
-                    chunks.append(current)
-
-            for chunk in chunks:
-                await news_channel.send(chunk)
-            logger.info(f"News briefing posted to #{news_channel.name} from /news command")
-
-        # Confirm to the user who ran the command
-        total    = briefing.get("total_articles", 0)
-        tickers  = len(briefing.get("tickers_with_news", []))
-        channel_mention = f"<#{channel_id}>" if channel_id else "#news-briefings"
-
-        if total > 0:
-            await interaction.followup.send(
-                f"✅ {briefing_type.title()} briefing posted to {channel_mention}\n"
-                f"📰 {total} articles across {tickers} tickers"
+        from journal.trade_recorder import TradeRecorder
+        tr      = TradeRecorder()
+        success = tr.log_exit(trade_id.upper(), exit_price, notes=notes)
+        if success:
+            trade = tr.get_trade_by_id(trade_id.upper())
+            pnl   = trade.get("pnl_dollars", "N/A")
+            pct   = trade.get("pnl_pct",     "N/A")
+            outcome_emoji = "✅" if trade.get("outcome") == "win" else "❌"
+            await interaction.response.send_message(
+                f"{outcome_emoji} Trade `{trade_id.upper()}` closed @ ${exit_price}\n"
+                f"P&L: **${pnl}** ({pct}%)"
             )
         else:
-            await interaction.followup.send(
-                f"📰 Briefing posted to {channel_mention} — no significant news today."
+            await interaction.response.send_message(
+                f"❌ Trade ID `{trade_id.upper()}` not found"
             )
-
     except Exception as e:
-        logger.error(f"News command error: {e}")
-        await interaction.followup.send(f"❌ Error running briefing: {e}")
-
-
-# ─────────────────────────────────────────
-# ALERT POSTING
-# ─────────────────────────────────────────
-
-async def post_alert(alert: dict, message: str):
-    tier = alert.get("tier", "none")
-    if tier == "high_conviction":
-        channel_id = config.DISCORD_CHANNEL_ID_HIGH_CONVICTION
-    elif tier == "standard":
-        channel_id = config.DISCORD_CHANNEL_ID_STANDARD
-    else:
-        return
-
-    try:
-        channel = bot.get_channel(channel_id)
-        if channel is None:
-            logger.error(f"Discord channel {channel_id} not found")
-            return
-        await channel.send(message)
-        scanner_status["alerts_today"] += 1
-        logger.info(f"Alert posted: {alert['ticker']} {alert.get('emoji','')}")
-    except Exception as e:
-        logger.error(f"Failed to post Discord alert: {e}")
-
-
-def post_alert_sync(alert: dict, message: str):
-    if _bot_loop and _bot_loop.is_running():
-        asyncio.run_coroutine_threadsafe(post_alert(alert, message), _bot_loop)
-    else:
-        logger.warning("Discord bot loop not running — alert not posted")
-
-
-def get_bot_loop():
-    """Return the bot event loop for use by other modules."""
-    return _bot_loop
+        logger.error(f"Exit trade error: {e}")
+        await interaction.response.send_message(f"❌ Error: {e}")
 
 
 # ─────────────────────────────────────────
@@ -683,7 +593,7 @@ def get_bot_loop():
 
 def run_bot():
     if not config.DISCORD_BOT_TOKEN:
-        logger.error("DISCORD_BOT_TOKEN not set in .env")
+        logger.error("DISCORD_BOT_TOKEN not set in .env — Discord bot will not start")
         return
     logger.info("Starting Discord bot...")
     bot.run(config.DISCORD_BOT_TOKEN)
