@@ -38,10 +38,15 @@ class PlanLogger:
     Keeps the last 365 entries (one per trading day max).
     """
 
-    PLANS_FILE = os.path.join(config.LOG_DIR, "spy_daily_plans.json")
+    PLANS_FILE = None  # resolved dynamically via _plans_path property
 
     def __init__(self):
         os.makedirs(config.LOG_DIR, exist_ok=True)
+
+    @property
+    def _plans_path(self) -> str:
+        """Resolved at call-time so monkeypatched LOG_DIR works in tests."""
+        return os.path.join(config.LOG_DIR, "spy_daily_plans.json")
 
     # ─────────────────────────────────────────
     # WRITE
@@ -141,10 +146,10 @@ class PlanLogger:
     # ─────────────────────────────────────────
 
     def _load(self) -> list[dict]:
-        if not os.path.exists(self.PLANS_FILE):
+        if not os.path.exists(self._plans_path):
             return []
         try:
-            with open(self.PLANS_FILE, "r") as f:
+            with open(self._plans_path, "r") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             logger.error(f"PlanLogger load error: {e}")
@@ -154,7 +159,7 @@ class PlanLogger:
         # Keep last 365 entries
         plans = sorted(plans, key=lambda p: p.get("date", ""))[-365:]
         try:
-            with open(self.PLANS_FILE, "w") as f:
+            with open(self._plans_path, "w") as f:
                 json.dump(plans, f, indent=2)
         except OSError as e:
             logger.error(f"PlanLogger save error: {e}")
