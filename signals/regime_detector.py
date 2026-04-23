@@ -74,9 +74,9 @@ class RegimeResult:
 # ─────────────────────────────────────────
 # THRESHOLDS — tune via backtest, not vibes
 # ─────────────────────────────────────────
-VIX_CALM_MAX     = 18.0   # Below this = calm
+VIX_CALM_MAX     = 17.0   # Below this = calm
 VIX_ELEVATED_MAX = 22.0   # Above this = skip condors / reduce size
-ADX_TREND_MIN    = 20.0   # Above this = trending market
+ADX_TREND_MIN    = 25.0   # Above this = trending market
 TREND_MA_PERIOD  = 200
 ADX_PERIOD       = 14
 
@@ -218,9 +218,9 @@ class RegimeDetector:
             if is_elevated:
                 reasons.append(f"VIX {vix_current:.1f} elevated — 50% size, widen stops")
                 return RegimeResult(
-                    Regime.TRENDING_HIGH_VOL, True,
-                    "BULL DEBIT SPREAD — half size (elevated vol)",
-                    0.65, reasons, metrics,
+                    Regime.TRENDING_HIGH_VOL, False,
+                    "SKIP -- elevated vol in trending market, no edge on debit spreads",
+                    0.9, reasons, metrics,
                 )
             play = (
                 "BULL PUT CREDIT SPREAD — IVR elevated, sell the put side"
@@ -231,10 +231,24 @@ class RegimeDetector:
                 f"IVR {ivr_current:.0f} {'≥' if ivr_current >= 50 else '<'} 50 "
                 f"→ {'sell premium' if ivr_current >= 50 else 'buy directional'}"
             )
+            if ma_dist_pct < 1.5:
+                reasons.append(f"SPY only {ma_dist_pct:.1f}% above 200MA -- too close, no edge")
+                return RegimeResult(
+                    Regime.UNKNOWN  , False,
+                    "SKIP -- SPY too close to 200MA, direction unclear",
+                    0.4, reasons, metrics,
+        )
             return RegimeResult(
                 Regime.TRENDING_UP_CALM, True, play, 0.85, reasons, metrics,
             )
-
+            # Require SPY to be at least 2% above 200MA for debit spreads
+            if ma_dist_pct < 2.0 and ivr_current < 50:
+                reasons.append(f"SPY only {ma_dist_pct:.1f}% above 200MA -- insufficient trend separation")
+                return RegimeResult(
+                    Regime.UNKNOWN, False,
+                    "SKIP -- trend too weak for debit spread",
+                    0.4, reasons, metrics,
+                )
         # TRENDING DOWN
         if is_trending and not above_ma:
             reasons += [
@@ -244,9 +258,9 @@ class RegimeDetector:
             if is_elevated:
                 reasons.append(f"VIX {vix_current:.1f} elevated — 50% size, widen stops")
                 return RegimeResult(
-                    Regime.TRENDING_HIGH_VOL, True,
-                    "BEAR DEBIT SPREAD — half size (elevated vol)",
-                    0.65, reasons, metrics,
+                    Regime.TRENDING_HIGH_VOL, False,
+                    "SKIP -- elevated vol in trending market, no edge on debit spreads",
+                    0.9, reasons, metrics,
                 )
             play = (
                 "BEAR CALL CREDIT SPREAD — IVR elevated, sell the call side"
