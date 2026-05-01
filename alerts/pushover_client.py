@@ -19,7 +19,9 @@ Pushover limits:
 Requires in .env:
     PUSHOVER_USER_KEY   = your Pushover user key  (from pushover.net → Your Account)
     PUSHOVER_API_TOKEN  = your app API token       (from pushover.net → Create Application)
-    DASHBOARD_BASE_URL  = http://your-host:8501    (optional — enables detail-page links)
+    PUSHOVER_BASE_URL   = https://alerts.example   (public host that fronts the
+                                                    per-alert FastAPI app via
+                                                    Cloudflare Tunnel)
 """
 
 from __future__ import annotations
@@ -244,10 +246,10 @@ def _build_alert_url(alert_id: str | None) -> tuple[str | None, str | None]:
     """Build the FastAPI detail-page URL for a Pushover notification."""
     if not alert_id:
         return None, None
-    base = getattr(config, "DASHBOARD_BASE_URL", "").rstrip("/")
+    base = (getattr(config, "PUSHOVER_BASE_URL", "") or "").rstrip("/")
     if not base:
         return None, None
-    return f"{base}/alert/{alert_id}", "View Full Analysis + Ask Claude"
+    return f"{base}/alerts/{alert_id}", "View Trade + Chat"
 
 
 # ─────────────────────────────────────────

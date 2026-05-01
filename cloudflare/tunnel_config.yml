@@ -1,0 +1,23 @@
+# Cloudflare Tunnel config for the per-alert web app.
+# Replace TUNNEL_ID_PLACEHOLDER with the UUID returned by:
+#   cloudflared tunnel create trading-assistant
+#
+# Then start the tunnel with:
+#   cloudflared tunnel --config cloudflare/tunnel_config.yml run
+
+tunnel: TUNNEL_ID_PLACEHOLDER
+credentials-file: C:\Users\alexr\.cloudflared\TUNNEL_ID_PLACEHOLDER.json
+
+ingress:
+  - hostname: alerts.nexus-lab.work
+    path: /alerts
+    service: http://localhost:8000
+
+  - hostname: alerts.nexus-lab.work
+    path: /health
+    service: http://localhost:8000
+
+  - hostname: alerts.nexus-lab.work
+    service: http://localhost:8000
+
+  - service: http_status:404

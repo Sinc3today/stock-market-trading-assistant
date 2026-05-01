@@ -50,12 +50,9 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 WEB_SERVER_HOST = os.getenv("WEB_SERVER_HOST", "0.0.0.0")
 WEB_SERVER_PORT = int(os.getenv("WEB_SERVER_PORT", "8000"))
 
-# Base URL embedded in Pushover notification links.
-# Set to your machine's LAN IP (or public hostname) so the link works on your phone.
-# Example: http://192.168.1.100:8000   (LAN, simplest)
-#          https://alerts.yourdomain.com  (if you expose it publicly)
-# Leave blank to omit links from Pushover notifications.
-DASHBOARD_BASE_URL = os.getenv("DASHBOARD_BASE_URL", "")
+# PUSHOVER_BASE_URL (above) is the single source of truth for the public host
+# embedded in Pushover notification links. Cloudflare Tunnel routes that
+# hostname to http://localhost:WEB_SERVER_PORT where alerts/web_app.py runs.
 
 # ─────────────────────────────────────────
 # SCORING THRESHOLDS

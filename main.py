@@ -9,6 +9,7 @@ Dashboard runs separately:
     python -m streamlit run alerts/dashboard.py
 """
 
+import subprocess
 import sys
 import threading
 import time as time_module
@@ -283,26 +284,6 @@ def start_discord():
     run_bot()
 
 
-def start_web_server():
-    """Start the FastAPI alert detail server (blocking — run in a daemon thread)."""
-    import uvicorn
-    from web.app import app as fastapi_app
-
-    server_cfg = uvicorn.Config(
-        fastapi_app,
-        host      = config.WEB_SERVER_HOST,
-        port      = config.WEB_SERVER_PORT,
-        log_level = "warning",   # suppress uvicorn access logs from console
-    )
-    server = uvicorn.Server(server_cfg)
-    server.install_signal_handlers = lambda: None   # don't steal signals from main thread
-    logger.info(
-        f"Web server starting on "
-        f"http://{config.WEB_SERVER_HOST}:{config.WEB_SERVER_PORT}"
-    )
-    server.run()
-
-
 # ─────────────────────────────────────────
 # ENTRY POINT
 # ─────────────────────────────────────────
@@ -316,7 +297,7 @@ if __name__ == "__main__":
     logger.info(f"Discord token: {'✅ Set' if config.DISCORD_BOT_TOKEN else '❌ Missing'}")
     logger.info(f"Alpaca key:    {'✅ Set' if config.ALPACA_API_KEY    else '❌ Missing'}")
     logger.info(f"Pushover:      {'✅ Set' if config.PUSHOVER_API_TOKEN else '❌ Missing'}")
-    logger.info(f"Detail page:   {config.DASHBOARD_BASE_URL or '⚠️  DASHBOARD_BASE_URL not set — links disabled'}")
+    logger.info(f"Detail page:   {config.PUSHOVER_BASE_URL or '⚠️  PUSHOVER_BASE_URL not set — links disabled'}")
     logger.info("-" * 52)
 
     # Start scheduler
@@ -344,19 +325,30 @@ if __name__ == "__main__":
         logger.info("   19:00 ET -- Reflection prompt")
     except Exception as e:
         logger.error(f"SPY daily jobs failed to register: {e}")
+    # Start alert web app (subprocess so uvicorn owns its own event loop)
+    logger.info(
+        f"Starting alert web app on "
+        f"http://{config.WEB_SERVER_HOST}:{config.WEB_SERVER_PORT}"
+    )
+    web_app_process = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn",
+         "alerts.web_app:app",
+         "--host", str(config.WEB_SERVER_HOST),
+         "--port", str(config.WEB_SERVER_PORT),
+         "--log-level", "warning"],
+        cwd = os.path.dirname(os.path.abspath(__file__)),
+    )
+    logger.info(f"   Alert web app: running on port {config.WEB_SERVER_PORT}")
+
     # Start Discord bot in background thread
     discord_thread = threading.Thread(target=start_discord, daemon=True)
     discord_thread.start()
-
-    # Start FastAPI alert detail server in background thread
-    web_thread = threading.Thread(target=start_web_server, daemon=True)
-    web_thread.start()
 
     logger.info("-" * 52)
     logger.info("✅ All systems running")
     logger.info("   Scanners:  scheduled and waiting")
     logger.info("   Discord:   online")
-    logger.info(f"  Web server: http://localhost:{config.WEB_SERVER_PORT}/alert/<id>")
+    logger.info(f"  Web app:   http://localhost:{config.WEB_SERVER_PORT}/alerts/<id>")
     logger.info("   Dashboard: python -m streamlit run alerts/dashboard.py")
     logger.info("   Stop:      Ctrl+C")
     logger.info("=" * 52)
@@ -373,5 +365,9 @@ if __name__ == "__main__":
                 )
     except KeyboardInterrupt:
         logger.info("Shutting down Trading Assistant...")
+        try:
+            web_app_process.terminate()
+        except Exception:
+            pass
         scheduler.shutdown()
         logger.info("Goodbye.")
