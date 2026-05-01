@@ -35,6 +35,10 @@ DISCORD_CHANNEL_ID_HIGH_CONVICTION = int(os.getenv("DISCORD_CHANNEL_ID_HIGH_CONV
 PUSHOVER_USER_KEY  = os.getenv("PUSHOVER_USER_KEY")
 PUSHOVER_API_TOKEN = os.getenv("PUSHOVER_API_TOKEN")
 
+# Base URL used to build per-alert links inside Pushover notifications.
+# Points at the Cloudflare-fronted host that serves the per-alert web app.
+PUSHOVER_BASE_URL  = os.getenv("PUSHOVER_BASE_URL", "https://alerts.nexus-lab.work")
+
 # ─────────────────────────────────────────
 # CLAUDE API  (for the alert detail chat page)
 # ─────────────────────────────────────────
