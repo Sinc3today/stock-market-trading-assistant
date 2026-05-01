@@ -285,6 +285,86 @@ def start_discord():
 
 
 # ─────────────────────────────────────────
+# CHILD-PROCESS LIFETIME (Windows)
+# ─────────────────────────────────────────
+#
+# Subprocesses on Windows survive their parent on a hard kill (Stop-Process,
+# taskkill /F, crash). Bind the uvicorn child to a Job Object with
+# JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE so the kernel kills it whenever this
+# process exits, by any path. No-op on non-Windows platforms.
+_job_handles: list = []  # keep job handles alive for the parent's lifetime
+
+
+def _bind_to_job_object(proc: subprocess.Popen) -> None:
+    if sys.platform != "win32":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+    JobObjectExtendedLimitInformation  = 9
+
+    class IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount",  ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount",   ctypes.c_ulonglong),
+            ("WriteTransferCount",  ctypes.c_ulonglong),
+            ("OtherTransferCount",  ctypes.c_ulonglong),
+        ]
+
+    class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit",     ctypes.c_int64),
+            ("LimitFlags",              wintypes.DWORD),
+            ("MinimumWorkingSetSize",   ctypes.c_size_t),
+            ("MaximumWorkingSetSize",   ctypes.c_size_t),
+            ("ActiveProcessLimit",      wintypes.DWORD),
+            ("Affinity",                ctypes.c_size_t),
+            ("PriorityClass",           wintypes.DWORD),
+            ("SchedulingClass",         wintypes.DWORD),
+        ]
+
+    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ("IoInfo",                IO_COUNTERS),
+            ("ProcessMemoryLimit",    ctypes.c_size_t),
+            ("JobMemoryLimit",        ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed",     ctypes.c_size_t),
+        ]
+
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        logger.warning(f"CreateJobObjectW failed: {ctypes.get_last_error()}")
+        return
+
+    info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+
+    if not kernel32.SetInformationJobObject(
+        job,
+        JobObjectExtendedLimitInformation,
+        ctypes.byref(info),
+        ctypes.sizeof(info),
+    ):
+        logger.warning(f"SetInformationJobObject failed: {ctypes.get_last_error()}")
+        return
+
+    if not kernel32.AssignProcessToJobObject(job, int(proc._handle)):
+        logger.warning(f"AssignProcessToJobObject failed: {ctypes.get_last_error()}")
+        return
+
+    # Hold the job handle for the lifetime of this process so its handle
+    # close (when we exit) is what triggers the kernel to kill the child.
+    _job_handles.append(job)
+
+
+# ─────────────────────────────────────────
 # ENTRY POINT
 # ─────────────────────────────────────────
 
@@ -338,6 +418,7 @@ if __name__ == "__main__":
          "--log-level", "warning"],
         cwd = os.path.dirname(os.path.abspath(__file__)),
     )
+    _bind_to_job_object(web_app_process)
     logger.info(f"   Alert web app: running on port {config.WEB_SERVER_PORT}")
 
     # Start Discord bot in background thread
