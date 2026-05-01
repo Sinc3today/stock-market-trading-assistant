@@ -5,7 +5,18 @@ the public internet at `https://alerts.nexus-lab.work`. Cloudflare handles
 HTTPS, the domain, and the inbound connection — no Railway, no VPS, no
 open inbound port on your router.
 
-## One-time setup
+## Current status (verified 2026-04-30)
+
+- cloudflared installed: `C:\Program Files (x86)\cloudflared\cloudflared.exe`
+- Authenticated: `~/.cloudflared/cert.pem` present
+- Tunnel `trading-alerts` (UUID `e8b94fb3-1227-4958-9d26-a57c6952adbd`) created
+- DNS: `alerts.nexus-lab.work` → Cloudflare edge → tunnel
+- Credentials file: `~/.cloudflared/e8b94fb3-1227-4958-9d26-a57c6952adbd.json`
+
+If you're on this machine, the one-time setup below is already done.
+Skip to "Daily startup".
+
+## One-time setup (already done on alexr's box)
 
 1. Install cloudflared:
 
@@ -17,15 +28,15 @@ open inbound port on your router.
 
 3. Create the tunnel:
 
-       cloudflared tunnel create trading-assistant
+       cloudflared tunnel create trading-alerts
 
-4. Copy the tunnel UUID printed in the output and replace
-   `TUNNEL_ID_PLACEHOLDER` in `cloudflare/tunnel_config.yml`
-   (both the `tunnel:` line and the `credentials-file:` path).
+4. Copy the tunnel UUID printed in the output and update
+   `cloudflare/tunnel_config.yml` — replace the UUID in both the
+   `tunnel:` line and the `credentials-file:` path.
 
 5. Point DNS at the tunnel:
 
-       cloudflared tunnel route dns trading-assistant alerts.nexus-lab.work
+       cloudflared tunnel route dns trading-alerts alerts.nexus-lab.work
 
 ## Daily startup
 

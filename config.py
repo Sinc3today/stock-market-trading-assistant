@@ -47,7 +47,9 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 # ─────────────────────────────────────────
 # WEB SERVER  (FastAPI alert detail page)
 # ─────────────────────────────────────────
-WEB_SERVER_HOST = os.getenv("WEB_SERVER_HOST", "0.0.0.0")
+# Bind to localhost only — Cloudflare Tunnel is the intended public ingress.
+# Override to 0.0.0.0 in .env if you need LAN access during dev.
+WEB_SERVER_HOST = os.getenv("WEB_SERVER_HOST", "127.0.0.1")
 WEB_SERVER_PORT = int(os.getenv("WEB_SERVER_PORT", "8000"))
 
 # PUSHOVER_BASE_URL (above) is the single source of truth for the public host
