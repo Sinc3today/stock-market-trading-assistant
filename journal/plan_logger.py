@@ -26,7 +26,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from loguru import logger
 
 import config

@@ -14,7 +14,7 @@ Usage:
     passed, reason = gates.check(score_result, ticker, entry, stop, target)
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from loguru import logger
 from polygon import RESTClient
 import config

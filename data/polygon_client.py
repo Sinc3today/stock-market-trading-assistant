@@ -128,6 +128,7 @@ class PolygonClient:
     # ─────────────────────────────────────────
 
     def get_ticker_details(self, ticker: str) -> Optional[dict]:
+        """Return Polygon ticker details dict, or None on error."""
         try:
             details = self.client.get_ticker_details(ticker)
             logger.debug(f"Fetched details for {ticker}")
@@ -141,6 +142,7 @@ class PolygonClient:
     # ─────────────────────────────────────────
 
     def get_latest_price(self, ticker: str) -> Optional[float]:
+        """Return the most recent closing price for a ticker."""
         df = self.get_bars(ticker, timeframe="day", limit=1, days_back=5)
         if df is not None and not df.empty:
             return float(df["close"].iloc[-1])

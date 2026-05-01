@@ -12,17 +12,16 @@ Dashboard runs separately:
 import sys
 import threading
 import time as time_module
-from datetime import datetime
+from datetime import datetime, timedelta
 from loguru import logger
 import pytz
 import os
 import config
-from alerts.discord_bot           import post_message_sync
-from scheduler.spy_daily_scheduler import register_spy_jobs
-from data.vix_client              import VIXClient
-from data.ivr_client              import IVRClient
-from alerts.discord_bot           import post_message_sync
-from scheduler.spy_daily_scheduler import register_spy_jobs
+from data.polygon_client             import PolygonClient
+from data.vix_client                 import VIXClient
+from data.ivr_client                 import IVRClient
+from data.event_calendar             import EventCalendar
+from scheduler.spy_daily_scheduler   import register_spy_jobs
 # ── Logging setup ────────────────────────────────────────────
 os.makedirs(config.LOG_DIR, exist_ok=True)
 
@@ -41,23 +40,38 @@ logger.add(
 )
 
 # ── Shared state ─────────────────────────────────────────────
-from alerts.discord_bot import scanner_status, post_alert_sync
-from scanners.swing_scanner import SwingScanner
-from scanners.intraday_scanner import IntradayScanner
-from scanners.premarket import PremarketScanner
-from scanners.news_scanner import NewsScanner
-from scanners.economic_scanner import EconomicScanner
+from alerts.discord_bot         import post_message_sync, scanner_status, post_alert_sync
+from alerts.pushover_client     import PushoverClient
+from alerts.notifier            import Notifier
+from scanners.swing_scanner     import SwingScanner
+from scanners.intraday_scanner  import IntradayScanner
+from scanners.premarket         import PremarketScanner
+from scanners.news_scanner      import NewsScanner
+from scanners.economic_scanner  import EconomicScanner
+from scanners.options_flow_scanner import OptionsFlowScanner
 
-swing_scanner    = SwingScanner()
-intraday_scanner = IntradayScanner()
-premarket_scanner = PremarketScanner()
-news_scanner       = NewsScanner()
-economic_scanner   = EconomicScanner()
+# ── Notification router (Pushover primary, Discord secondary) ─
+pushover = PushoverClient()
+notifier = Notifier(
+    pushover           = pushover,
+    discord_alert_fn   = post_alert_sync,
+    discord_message_fn = post_message_sync,
+)
 
-# Inject Discord posting function into all scanners
-swing_scanner.set_discord_fn(post_alert_sync)
-intraday_scanner.set_discord_fn(post_alert_sync)
-premarket_scanner.set_discord_fn(post_alert_sync)
+swing_scanner        = SwingScanner()
+intraday_scanner     = IntradayScanner()
+premarket_scanner    = PremarketScanner()
+news_scanner         = NewsScanner()
+economic_scanner     = EconomicScanner()
+options_flow_scanner = OptionsFlowScanner()
+
+# Wire notifier into all scanners
+# notifier.alert   → Pushover short summary + Discord full card  (scanner alerts)
+# notifier.message → Pushover stripped summary + Discord full msg (plain messages)
+swing_scanner.set_discord_fn(notifier.alert)
+intraday_scanner.set_discord_fn(notifier.alert)
+premarket_scanner.set_discord_fn(notifier.message)
+options_flow_scanner.set_discord_fn(notifier.message)
 
 # Wire premarket priority list into swing scanner
 swing_scanner.premarket_scanner = premarket_scanner
@@ -191,12 +205,29 @@ def start_scheduler():
         name="Swing Scanner",
     )
 
-    # Intraday — every 5 minutes
+    # Intraday — every 5 minutes, starting at next 9:30 AM ET
+    now_et    = datetime.now(eastern)
+    next_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    if now_et >= next_open:
+        next_open = next_open + timedelta(days=1)
+
     scheduler.add_job(
         run_intraday_scan,
-        IntervalTrigger(minutes=config.INTRADAY_SCAN_INTERVAL_MIN),
-        id="intraday_scan",
-        name="Intraday Scanner",
+        IntervalTrigger(
+            minutes    = config.INTRADAY_SCAN_INTERVAL_MIN,
+            start_date = next_open,
+            timezone   = eastern,
+        ),
+        id   = "intraday_scan",
+        name = "Intraday Scanner",
+    )
+
+    # Options flow scan — 9:35 AM ET weekdays
+    scheduler.add_job(
+        lambda: options_flow_scanner.run(),
+        CronTrigger(day_of_week="mon-fri", hour=9, minute=35, timezone=eastern),
+        id   = "options_flow_scan",
+        name = "Options Flow Scanner",
     )
 
     # Midday briefing — 12:00 PM EST weekdays
@@ -234,6 +265,7 @@ def start_scheduler():
     logger.info("   Premarket scan:   weekdays at 8:00 AM EST")
     logger.info("   Swing scan:       weekdays at 9:00 AM EST")
     logger.info(f"  Intraday scan:    every {config.INTRADAY_SCAN_INTERVAL_MIN} minutes")
+    logger.info("   Options flow scan: weekdays at 9:35 AM EST")
     logger.info("   Midday briefing:  weekdays at 12:00 PM EST")
     logger.info("   EOD briefing:     weekdays at 3:45 PM EST")
     logger.info("   Economic scan:    weekdays hourly 8:30 AM - 4:30 PM EST")
@@ -245,9 +277,30 @@ def start_scheduler():
 # ─────────────────────────────────────────
 
 def start_discord():
+    """Start the Discord bot (blocking — run in a daemon thread)."""
     from alerts.discord_bot import run_bot
     logger.info("Starting Discord bot thread...")
     run_bot()
+
+
+def start_web_server():
+    """Start the FastAPI alert detail server (blocking — run in a daemon thread)."""
+    import uvicorn
+    from web.app import app as fastapi_app
+
+    server_cfg = uvicorn.Config(
+        fastapi_app,
+        host      = config.WEB_SERVER_HOST,
+        port      = config.WEB_SERVER_PORT,
+        log_level = "warning",   # suppress uvicorn access logs from console
+    )
+    server = uvicorn.Server(server_cfg)
+    server.install_signal_handlers = lambda: None   # don't steal signals from main thread
+    logger.info(
+        f"Web server starting on "
+        f"http://{config.WEB_SERVER_HOST}:{config.WEB_SERVER_PORT}"
+    )
+    server.run()
 
 
 # ─────────────────────────────────────────
@@ -262,27 +315,48 @@ if __name__ == "__main__":
     logger.info(f"Polygon key:   {'✅ Set' if config.POLYGON_API_KEY   else '❌ Missing'}")
     logger.info(f"Discord token: {'✅ Set' if config.DISCORD_BOT_TOKEN else '❌ Missing'}")
     logger.info(f"Alpaca key:    {'✅ Set' if config.ALPACA_API_KEY    else '❌ Missing'}")
+    logger.info(f"Pushover:      {'✅ Set' if config.PUSHOVER_API_TOKEN else '❌ Missing'}")
+    logger.info(f"Detail page:   {config.DASHBOARD_BASE_URL or '⚠️  DASHBOARD_BASE_URL not set — links disabled'}")
     logger.info("-" * 52)
 
     # Start scheduler
     scheduler = start_scheduler()
 
-    register_spy_jobs(
-        scheduler      = scheduler,
-        polygon_client = PolygonClient(),  # already imported at top
-        vix_client     = None,             # swap in VIXClient() when built
-        ivr_client     = None,             # swap in IVRClient() when built
-        post_fn        = post_message_sync,
-        event_calendar = [],
-    )
+    # Wire SPY daily strategy jobs
+    try:
+        event_cal  = EventCalendar()
+        vix_client = VIXClient()
+        ivr_client = IVRClient(
+            polygon_client = PolygonClient(),
+            vix_client     = vix_client,
+        )
+        register_spy_jobs(
+            scheduler      = scheduler,
+            polygon_client = PolygonClient(),
+            vix_client     = vix_client,
+            ivr_client     = ivr_client,
+            post_fn        = notifier.message,
+            event_calendar = event_cal.get_block_dates(),
+        )
+        logger.info("✅ SPY daily strategy jobs registered")
+        logger.info("   09:15 ET -- Pre-market play")
+        logger.info("   16:30 ET -- Close snapshot")
+        logger.info("   19:00 ET -- Reflection prompt")
+    except Exception as e:
+        logger.error(f"SPY daily jobs failed to register: {e}")
     # Start Discord bot in background thread
     discord_thread = threading.Thread(target=start_discord, daemon=True)
     discord_thread.start()
+
+    # Start FastAPI alert detail server in background thread
+    web_thread = threading.Thread(target=start_web_server, daemon=True)
+    web_thread.start()
 
     logger.info("-" * 52)
     logger.info("✅ All systems running")
     logger.info("   Scanners:  scheduled and waiting")
     logger.info("   Discord:   online")
+    logger.info(f"  Web server: http://localhost:{config.WEB_SERVER_PORT}/alert/<id>")
     logger.info("   Dashboard: python -m streamlit run alerts/dashboard.py")
     logger.info("   Stop:      Ctrl+C")
     logger.info("=" * 52)

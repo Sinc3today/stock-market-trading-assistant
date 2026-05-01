@@ -32,6 +32,7 @@ LOOKBACK_HOURS = {
 
 
 class NewsScanner:
+    """Generates morning / midday / EOD market briefings from Polygon news."""
 
     def __init__(self):
         self.eastern        = pytz.timezone("US/Eastern")
@@ -43,6 +44,7 @@ class NewsScanner:
     # ─────────────────────────────────────────
 
     def run(self, briefing_type: str = "morning", post_to_discord: bool = True) -> dict:
+        """Build and (optionally) post a briefing of type 'morning' | 'midday' | 'eod'."""
         now_est = datetime.now(self.eastern).strftime("%I:%M %p EST")
         logger.info(f"📰 {briefing_type.upper()} news briefing starting at {now_est}")
 
@@ -390,6 +392,7 @@ Flag anything that could override a technical signal (earnings, major catalyst).
             logger.error(f"Failed to save briefing: {e}")
 
     def get_recent_briefings(self, limit: int = 10) -> list:
+        """Return the most recent N briefings from the news log."""
         try:
             if not os.path.exists(self._news_log_path):
                 return []

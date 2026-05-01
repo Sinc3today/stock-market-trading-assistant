@@ -29,10 +29,10 @@ from signals.alert_builder import AlertBuilder
 @pytest.fixture(scope="module")
 def indicator_results():
     """Run all indicators on AAPL daily data once.
-    Waits 15s for Polygon rate limit to reset after test_indicators.py
+    Waits 65s for Polygon rate limit to reset after test_indicators.py
     """
     import time
-    time.sleep(15)
+    time.sleep(65)
     client = PolygonClient()
     df = client.get_bars("AAPL", timeframe="day", limit=300, days_back=400)
     assert df is not None
@@ -150,17 +150,21 @@ def test_gates_fail_with_bad_rr(score_result):
     assert any("R/R" in f for f in failures)
     print(f"\n✅ Bad R/R correctly blocked: {gate_data['rr_ratio']:.2f}:1")
 
-def test_gates_fail_with_low_score():
+def test_gates_fail_with_low_score(monkeypatch):
     """Score below minimum should fail the gate."""
+    import config
+    from unittest.mock import patch
+    monkeypatch.setattr(config, "SCORE_ALERT_MINIMUM", 75)
     gates = AlertGates()
     mock_score = {
         "final_score": 50, "direction": "bullish",
         "tier": "watchlist", "alert_emoji": None
     }
-    passed, failures, gate_data = gates.check(
-        mock_score, "AAPL",
-        entry=170.0, stop=166.0, target=182.0
-    )
+    with patch.object(gates, "_check_earnings", return_value=(False, "", None)):
+        passed, failures, gate_data = gates.check(
+            mock_score, "AAPL",
+            entry=170.0, stop=166.0, target=182.0
+        )
     assert not passed
     assert any("Score" in f for f in failures)
     print(f"\n✅ Low score correctly blocked: {failures}")

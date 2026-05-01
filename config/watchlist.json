@@ -1,18 +1,38 @@
 {
   "swing": [
-    "MSFT",
     "SPY",
     "QQQ",
+    "IWM",
+    "MSFT",
     "NVDA",
-    "AAPL"
+    "AAPL",
+    "AMD",
+    "META",
+    "TSLA",
+    "AMZN"
   ],
   "intraday": [
     "SPY",
     "QQQ",
-    "AAPL"
+    "IWM",
+    "AAPL",
+    "NVDA"
   ],
   "options_enabled": [
     "SPY",
-    "QQQ"
-  ]
+    "QQQ",
+    "IWM",
+    "AAPL",
+    "NVDA",
+    "MSFT",
+    "TSLA",
+    "AMD"
+  ],
+  "spy_focus": true,
+  "_notes": {
+    "swing": "Scanned at 9AM daily for swing setups",
+    "intraday": "Scanned every 5min during market hours",
+    "options_enabled": "Tickers where options layer is activated",
+    "spy_focus": "When true, SPY gets full options engine analysis"
+  }
 }

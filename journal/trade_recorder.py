@@ -307,19 +307,30 @@ class TradeRecorder:
     # RETRIEVAL
     # ─────────────────────────────────────────
 
-    def get_all_trades(self)         -> list: return self._load()
-    def get_open_trades(self)        -> list:
+    def get_all_trades(self) -> list:
+        """Return every recorded trade."""
+        return self._load()
+
+    def get_open_trades(self) -> list:
+        """Return trades with outcome == 'open'."""
         return [t for t in self._load() if t.get("outcome") == "open"]
-    def get_closed_trades(self)      -> list:
+
+    def get_closed_trades(self) -> list:
+        """Return trades with outcome != 'open' (win / loss / breakeven)."""
         return [t for t in self._load() if t.get("outcome") != "open"]
-    def get_trade_by_id(self, tid)   -> dict | None:
+
+    def get_trade_by_id(self, tid) -> dict | None:
+        """Look up a trade by its trade_id (case-insensitive); returns None if missing."""
         for t in self._load():
             if t.get("trade_id") == tid.upper(): return t
         return None
+
     def get_trades_for_ticker(self, ticker: str) -> list:
+        """Return all trades matching the given ticker (case-insensitive)."""
         return [t for t in self._load() if t.get("ticker") == ticker.upper()]
 
     def get_summary_stats(self) -> dict:
+        """Aggregate win rate, P&L, and breakdown across all closed trades."""
         all_trades = self._load()
         closed     = [t for t in all_trades if t.get("outcome") != "open"]
         open_t     = [t for t in all_trades if t.get("outcome") == "open"]

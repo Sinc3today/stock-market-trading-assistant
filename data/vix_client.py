@@ -28,7 +28,6 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import io
-import time
 from datetime import datetime, timedelta, date
 from typing import Optional
 

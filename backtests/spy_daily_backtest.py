@@ -8,7 +8,6 @@
 from __future__ import annotations
 import os, sys, argparse
 from datetime import date, timedelta
-from typing import Optional
 import pandas as pd
 import numpy as np
 from loguru import logger
@@ -42,10 +41,13 @@ PNL = {
 
 
 class BacktestDataLoader:
+    """Loads SPY and VIX historical data from Polygon or a local CSV."""
+
     def __init__(self):
         self.vix_client = VIXClient()
 
     def load(self, years=3, source='polygon'):
+        """Fetch or load SPY + VIX DataFrames for the given number of years."""
         logger.info(f'Loading {years} years of SPY + VIX (source={source})...')
         if source == 'local':
             spy_df = self._load_local(years)
@@ -97,6 +99,8 @@ class BacktestDataLoader:
 
 
 class SPYBacktest:
+    """Runs the SPY daily strategy against historical data and reports performance."""
+
     def __init__(self, spy_df, vix_df, event_cal, years=3):
         self.spy_df    = spy_df
         self.vix_df    = vix_df
@@ -106,6 +110,7 @@ class SPYBacktest:
         self.results   = []
 
     def run(self):
+        """Iterate over all historical trading days and record strategy outcomes."""
         spy_dates = sorted(self.spy_df.index)
         start_idx = 210
         logger.info(f'Running backtest: {spy_dates[start_idx]} -> {spy_dates[-1]} ({len(spy_dates)-start_idx} days)')
@@ -228,6 +233,7 @@ def _worst_streak(df):
 
 
 def print_report(df, years, source='polygon'):
+    """Print a formatted performance summary for the backtest results DataFrame."""
     if df.empty:
         print('No results.'); return
     traded  = df[df['tradeable'] == True]
@@ -312,6 +318,7 @@ def print_report(df, years, source='polygon'):
 
 
 def run_threshold_tune(spy_df, vix_df):
+    """Grid-search ADX and VIX thresholds and print performance for each combination."""
     import signals.regime_detector as rd
     orig_adx, orig_vix = rd.ADX_TREND_MIN, rd.VIX_CALM_MAX
     results = []

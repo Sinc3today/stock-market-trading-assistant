@@ -43,6 +43,8 @@ from signals.options_layer   import OptionsLayer
 
 @dataclass
 class PlayCard:
+    """Unified output of the daily SPY strategy run — what to trade, why, and how to log it."""
+
     date:             str
     tradeable:        bool
     regime:           str

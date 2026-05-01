@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>{{ alert.ticker }} — {{ alert.direction }} {{ alert.mode }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="page">
+
+  <!-- ── Alert Header ──────────────────────────────── -->
+  <header class="alert-header {{ alert._dir_class }}">
+    <div class="header-top">
+      <span class="ticker">{{ alert.ticker }}</span>
+      <span class="direction-label">
+        {% if alert._dir_class == 'bullish' %}📈{% else %}📉{% endif %}
+        {{ alert.direction }}
+      </span>
+    </div>
+
+    <div class="score-row">
+      <span class="score-badge {{ 'high' if alert.tier == 'high_conviction' else 'standard' }}">
+        {{ alert.final_score }}/100 · {{ alert._tier_label }}
+      </span>
+      <span class="mode-badge">{{ alert.mode }}</span>
+      {% if alert.strategy %}
+      <span class="mode-badge">{{ alert.strategy | replace('_', ' ') | title }}</span>
+      {% endif %}
+    </div>
+
+    <div class="timestamp">⏰ {{ alert.timestamp }}</div>
+  </header>
+
+  <!-- ── Tabs ──────────────────────────────────────── -->
+  <nav class="tabs">
+    <button class="tab-btn active" onclick="switchTab('alert', this)">Alert</button>
+    <button class="tab-btn"        onclick="switchTab('chat',  this)">💬 Ask Claude</button>
+  </nav>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- ALERT TAB                                      -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="tab-alert" class="tab-panel active">
+
+    <!-- Trade Levels — always shown -->
+    {% if alert.entry %}
+    <div class="card">
+      <h3>Trade Levels</h3>
+      <div class="levels-grid">
+        <div class="level-item">
+          <span class="level-label">Entry</span>
+          <span class="level-value entry">${{ "%.2f"|format(alert.entry) }}</span>
+        </div>
+        <div class="level-item">
+          <span class="level-label">Stop Loss</span>
+          <span class="level-value stop">${{ "%.2f"|format(alert.stop) }}</span>
+        </div>
+        <div class="level-item">
+          <span class="level-label">Target</span>
+          <span class="level-value target">${{ "%.2f"|format(alert.target) }}</span>
+        </div>
+        <div class="level-item">
+          <span class="level-label">Risk / Reward</span>
+          <span class="level-value rr">{{ alert.rr_ratio }}:1</span>
+        </div>
+      </div>
+      {% if alert.exit_type %}
+      <div style="margin-top:10px; font-size:12px; color:var(--text-muted)">
+        Exit: {{ alert.exit_type }}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- SPY Options Legs — only for strategy alerts -->
+    {% if alert._is_spy_opts %}
+    <div class="card">
+      <h3>{{ alert.strategy | replace('_', ' ') | upper }}</h3>
+
+      {% if alert.strategy == 'iron_condor' %}
+      <table class="legs-table">
+        <tr><td class="leg-buy">BUY&nbsp; PUT</td>
+            <td>lower wing protection</td>
+            <td>${{ alert.get('ic_put_long',  '—') }}</td></tr>
+        <tr><td class="leg-sell">SELL PUT</td>
+            <td>collect premium</td>
+            <td>${{ alert.get('ic_put_short', '—') }}</td></tr>
+        <tr><td class="leg-sell">SELL CALL</td>
+            <td>collect premium</td>
+            <td>${{ alert.get('ic_call_short','—') }}</td></tr>
+        <tr><td class="leg-buy">BUY&nbsp; CALL</td>
+            <td>upper wing protection</td>
+            <td>${{ alert.get('ic_call_long', '—') }}</td></tr>
+      </table>
+      {% if alert.get('ic_credit') %}
+      <div style="margin-top:10px;font-size:13px;color:var(--text-muted)">
+        Est. credit: <strong style="color:var(--bullish)">${{ "%.2f"|format(alert.ic_credit) }}/share per side</strong>
+      </div>
+      {% endif %}
+
+      {% else %}
+      {% set opt = 'CALL' if 'call' in alert.strategy else 'PUT' %}
+      <table class="legs-table">
+        <tr><td class="leg-buy">BUY&nbsp; {{ opt }}</td>
+            <td>directional exposure</td>
+            <td>${{ alert.get('long_strike', '—') }}</td></tr>
+        <tr><td class="leg-sell">SELL {{ opt }}</td>
+            <td>reduces net cost</td>
+            <td>${{ alert.get('short_strike', '—') }}</td></tr>
+      </table>
+      {% if alert.get('est_debit') %}
+      <div style="margin-top:10px;font-size:13px;color:var(--text-muted)">
+        Est. debit: <strong style="color:var(--bearish)">${{ "%.2f"|format(alert.est_debit) }}/share</strong>
+        &nbsp;·&nbsp;
+        Max profit: <strong style="color:var(--bullish)">${{ alert.get('max_profit', '—') }}/contract</strong>
+        {% if alert.get('spread_rr') %}
+        &nbsp;·&nbsp; R/R {{ "%.1f"|format(alert.spread_rr) }}:1
+        {% endif %}
+      </div>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Setup Tags -->
+    {% if alert.setup_tags %}
+    <div class="card">
+      <h3>Setup Triggers</h3>
+      <div class="tags-list">
+        {% for tag in alert.setup_tags %}
+        <div class="tag-item">{{ tag }}</div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Score Breakdown -->
+    {% if alert.layer_scores %}
+    <div class="card">
+      <h3>Score Breakdown</h3>
+      <div class="score-breakdown">
+        {% set layers = alert.layer_scores %}
+        {% for name, data in layers.items() %}
+        {% set pct = (data.score / data.max * 100) | int if data.max else 0 %}
+        <div class="score-row-item">
+          <span class="s-label">{{ name | title }}</span>
+          <div class="score-bar-bg">
+            <div class="score-bar-fill" style="width:{{ pct }}%"></div>
+          </div>
+          <span class="s-val">{{ data.score }}/{{ data.max }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Indicators -->
+    {% if alert.rsi or alert.rvol %}
+    <div class="card">
+      <h3>Indicators</h3>
+      <div class="indicators-grid">
+        {% if alert.rsi %}
+        <div class="ind-item">
+          <span class="ind-label">RSI</span>
+          <span class="ind-value">{{ "%.1f"|format(alert.rsi) }}</span>
+        </div>
+        {% endif %}
+        {% if alert.rvol %}
+        <div class="ind-item">
+          <span class="ind-label">RVOL</span>
+          <span class="ind-value">{{ "%.1f"|format(alert.rvol) }}x</span>
+        </div>
+        {% endif %}
+        {% if alert.cvd_slope %}
+        <div class="ind-item">
+          <span class="ind-label">CVD</span>
+          <span class="ind-value" style="font-size:13px">{{ alert.cvd_slope }}</span>
+        </div>
+        {% endif %}
+      </div>
+
+      {% if alert.ma20 or alert.ma50 or alert.ma200 %}
+      <div class="ma-grid">
+        {% if alert.ma20 %}
+        <div class="ma-item">
+          <span class="ma-label">MA20</span>
+          <span class="ma-val">${{ "%.0f"|format(alert.ma20) }}</span>
+        </div>
+        {% endif %}
+        {% if alert.ma50 %}
+        <div class="ma-item">
+          <span class="ma-label">MA50</span>
+          <span class="ma-val">${{ "%.0f"|format(alert.ma50) }}</span>
+        </div>
+        {% endif %}
+        {% if alert.ma200 %}
+        <div class="ma-item">
+          <span class="ma-label">MA200</span>
+          <span class="ma-val">${{ "%.0f"|format(alert.ma200) }}</span>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Confluence -->
+    {% if alert.confluence and alert.confluence_timeframes %}
+    <div class="card">
+      <h3>Confluence</h3>
+      <div style="font-size:13px;color:var(--bullish)">
+        ✅ Confirmed on: {{ alert.confluence_timeframes | join(" + ") }}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Full Analysis Card (collapsible) -->
+    {% if alert.discord_message %}
+    <div class="card">
+      <h3>Full Analysis</h3>
+      <details>
+        <summary style="cursor:pointer;font-size:13px;color:var(--text-muted);margin-bottom:8px">
+          Show full signal card ▸
+        </summary>
+        <pre class="analysis-text">{{ alert.discord_message }}</pre>
+      </details>
+    </div>
+    {% endif %}
+
+    <div style="height:16px"></div>
+  </div><!-- /tab-alert -->
+
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- CHAT TAB                                       -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="tab-chat" class="tab-panel">
+    <div class="chat-panel">
+
+      <div class="chat-messages" id="chat-messages">
+        <!-- Empty state -->
+        <div class="chat-empty" id="chat-empty">
+          <span class="icon">🤖</span>
+          <p>Ask Claude anything about this trade.<br>It has the full alert context.</p>
+        </div>
+      </div>
+
+      <!-- Quick prompts -->
+      <div class="quick-prompts" id="quick-prompts">
+        <button class="quick-btn" onclick="quickAsk('Should I take this trade given the current setup?')">Take it?</button>
+        <button class="quick-btn" onclick="quickAsk('What price action would invalidate this setup?')">Invalidation?</button>
+        <button class="quick-btn" onclick="quickAsk('How should I size this for a $10,000 account?')">Size it</button>
+        <button class="quick-btn" onclick="quickAsk('What are the biggest risks with this trade right now?')">Key risks</button>
+        <button class="quick-btn" onclick="quickAsk('Explain what the setup tags mean for this trade.')">Explain setup</button>
+      </div>
+
+      <!-- Input -->
+      <div class="chat-input-row">
+        <input
+          type="text"
+          id="chat-input"
+          placeholder="Ask about this trade…"
+          onkeydown="if(event.key==='Enter')sendMessage()"
+          autocomplete="off"
+          autocorrect="off"
+        />
+        <button class="send-btn" id="send-btn" onclick="sendMessage()">Send</button>
+      </div>
+
+    </div>
+  </div><!-- /tab-chat -->
+
+</div><!-- /page -->
+
+<!-- Hidden data -->
+<input type="hidden" id="alert-id" value="{{ alert_id }}">
+
+<script>
+// ── Tab switching ──────────────────────────────────────────────
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ── Chat state ─────────────────────────────────────────────────
+let chatHistory = [];   // [{role, content}, ...]
+let isStreaming  = false;
+
+function quickAsk(text) {
+  document.getElementById('chat-input').value = text;
+  sendMessage();
+}
+
+// ── Append a message bubble ────────────────────────────────────
+function appendMessage(role, text) {
+  const empty = document.getElementById('chat-empty');
+  if (empty) empty.remove();
+
+  const quickPrompts = document.getElementById('quick-prompts');
+  if (quickPrompts) quickPrompts.style.display = 'none';
+
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = text;
+  document.getElementById('chat-messages').appendChild(div);
+  div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  return div;
+}
+
+// ── Send + stream ──────────────────────────────────────────────
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const message = input.value.trim();
+  if (!message || isStreaming) return;
+
+  isStreaming = true;
+  document.getElementById('send-btn').disabled = true;
+  input.value = '';
+
+  appendMessage('user', message);
+
+  const assistantEl = appendMessage('assistant', '');
+  assistantEl.classList.add('streaming');
+
+  const alertId = document.getElementById('alert-id').value;
+  let fullResponse = '';
+
+  try {
+    const res = await fetch('/api/chat/' + alertId, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history: chatHistory }),
+    });
+
+    if (!res.ok) {
+      assistantEl.textContent = '⚠️ Server error: ' + res.status;
+      assistantEl.classList.remove('streaming');
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';  // keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6).trim();
+        if (payload === '[DONE]') break;
+        try {
+          const parsed = JSON.parse(payload);
+          if (parsed.text) {
+            fullResponse += parsed.text;
+            assistantEl.textContent = fullResponse;
+            assistantEl.scrollIntoView({ behavior: 'smooth', block: 'end' });
+          }
+        } catch (_) {}
+      }
+    }
+
+    // Save to history for multi-turn
+    chatHistory.push({ role: 'user',      content: message });
+    chatHistory.push({ role: 'assistant', content: fullResponse });
+
+  } catch (err) {
+    assistantEl.textContent = '⚠️ Connection error: ' + err.message;
+  } finally {
+    assistantEl.classList.remove('streaming');
+    isStreaming = false;
+    document.getElementById('send-btn').disabled = false;
+    input.focus();
+  }
+}
+</script>
+</body>
+</html>

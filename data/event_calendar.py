@@ -35,8 +35,7 @@ import os
 import sys
 import json
 import re
-from datetime import date, datetime, timedelta
-from typing import Optional
+from datetime import date, timedelta
 
 import requests
 from loguru import logger

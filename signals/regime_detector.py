@@ -42,6 +42,8 @@ from loguru import logger
 # ─────────────────────────────────────────
 
 class Regime(str, Enum):
+    """Six regime labels emitted by the SPY classifier (plus EVENT_DAY/UNKNOWN)."""
+
     TRENDING_UP_CALM   = "trending_up_calm"
     TRENDING_DOWN_CALM = "trending_down_calm"
     CHOPPY_LOW_VOL     = "choppy_low_vol"
@@ -53,6 +55,8 @@ class Regime(str, Enum):
 
 @dataclass
 class RegimeResult:
+    """Output of RegimeDetector.classify() — regime label, play, confidence, metrics."""
+
     regime:          Regime
     tradeable:       bool
     play:            str        # human-readable play name
@@ -61,6 +65,7 @@ class RegimeResult:
     metrics:         dict       # spy_close, ma200, adx, vix, ivr, etc.
 
     def to_dict(self) -> dict:
+        """Return a JSON-serializable dict of this result."""
         return {
             "regime":     self.regime.value,
             "tradeable":  self.tradeable,
@@ -218,9 +223,9 @@ class RegimeDetector:
             if is_elevated:
                 reasons.append(f"VIX {vix_current:.1f} elevated — 50% size, widen stops")
                 return RegimeResult(
-                    Regime.TRENDING_HIGH_VOL, False,
-                    "SKIP -- elevated vol in trending market, no edge on debit spreads",
-                    0.9, reasons, metrics,
+                    Regime.TRENDING_HIGH_VOL, True,
+                    "BULL CALL DEBIT SPREAD — reduced size (50%), elevated vol",
+                    0.6, reasons, metrics,
                 )
             play = (
                 "BULL PUT CREDIT SPREAD — IVR elevated, sell the put side"
@@ -258,9 +263,9 @@ class RegimeDetector:
             if is_elevated:
                 reasons.append(f"VIX {vix_current:.1f} elevated — 50% size, widen stops")
                 return RegimeResult(
-                    Regime.TRENDING_HIGH_VOL, False,
-                    "SKIP -- elevated vol in trending market, no edge on debit spreads",
-                    0.9, reasons, metrics,
+                    Regime.TRENDING_HIGH_VOL, True,
+                    "BEAR PUT DEBIT SPREAD — reduced size (50%), elevated vol",
+                    0.6, reasons, metrics,
                 )
             play = (
                 "BEAR CALL CREDIT SPREAD — IVR elevated, sell the call side"

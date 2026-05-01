@@ -20,3 +20,6 @@ Thumbs.db
 
 # Pytest
 .pytest_cache/
+
+# Claude Code local settings
+.claude/

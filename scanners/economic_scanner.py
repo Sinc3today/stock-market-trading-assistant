@@ -14,13 +14,12 @@ High impact releases that trigger immediate alerts:
 import os
 import sys
 import requests
-from datetime import datetime
 from loguru import logger
 import pytz
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import config
-from data.fred_client import FREDClient, TRACKED_SERIES, HIGH_IMPACT_SERIES
+from data.fred_client import FREDClient
 
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_MODEL   = "claude-sonnet-4-20250514"

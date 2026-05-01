@@ -9,7 +9,6 @@ Usage:
 """
 
 import pandas as pd
-import numpy as np
 from loguru import logger
 import config
 

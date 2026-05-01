@@ -19,7 +19,6 @@ Usage:
 import os
 import sys
 import json
-import time
 import requests
 from datetime import datetime
 from loguru import logger
@@ -91,6 +90,7 @@ class AIAdvisor:
         trade_history:    list = None,
         user_question:    str  = "",
     ) -> str:
+        """Ask Claude for a pre-trade analysis given indicator + score context."""
         prompt = self._build_pre_trade_prompt(
             ticker, score_result, ma_result, donchian_result,
             volume_result, cvd_result, rsi_result,
@@ -112,6 +112,7 @@ class AIAdvisor:
         patterns:      dict = None,
         user_question: str  = "",
     ) -> str:
+        """Ask Claude for a post-trade review given the closed trade + lesson."""
         prompt = self._build_post_trade_prompt(
             trade, lesson, patterns, user_question
         )
@@ -131,6 +132,7 @@ class AIAdvisor:
         question:     str,
         context_data: dict = None,
     ) -> str:
+        """Free-form Q&A with Claude — optional context dict is included in the prompt."""
         prompt   = self._build_general_prompt(question, context_data)
         response = self._call_claude(prompt)
         self._save_to_history(
@@ -445,4 +447,10 @@ Post-trade review covering:
         context_block = ""
         if context_data:
             context_block = f"\nCONTEXT:\n{json.dumps(context_data, indent=2)}\n"
-        return f"{context_block}\nQUESTION: {question}"
+        return (
+            f"You are acting as a trading coach for an active options trader "
+            f"focused on SPY and individual equities using technical analysis.\n"
+            f"Give direct, practical answers grounded in real market mechanics.\n"
+            f"{context_block}"
+            f"\nQUESTION: {question}"
+        )

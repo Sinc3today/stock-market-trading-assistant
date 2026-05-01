@@ -19,7 +19,7 @@ Usage:
 import json
 import sys
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from loguru import logger
 import pytz
 
@@ -50,6 +50,7 @@ class PremarketScanner:
         self._priority_list  = []  # Shared with swing scanner
 
     def set_discord_fn(self, fn):
+        """Register the callable used to post premarket alerts (Discord or notifier)."""
         self.discord_post_fn = fn
 
     def get_priority_list(self) -> list[str]:
@@ -301,20 +302,10 @@ class PremarketScanner:
         return "\n".join(lines)
 
     def _post_summary(self, message: str):
-        """Post premarket summary to standard alerts channel."""
+        """Post premarket summary via the registered notify function."""
         try:
-            from alerts.discord_bot import bot
-            import asyncio
-
-            channel_id = config.DISCORD_CHANNEL_ID_STANDARD
-            channel    = bot.get_channel(channel_id)
-
-            if channel:
-                if bot.loop and bot.loop.is_running():
-                    import asyncio
-                    asyncio.run_coroutine_threadsafe(
-                        channel.send(message), bot.loop
-                    )
+            if self.discord_post_fn:
+                self.discord_post_fn(message)
         except Exception as e:
             logger.error(f"Failed to post premarket summary: {e}")
 

@@ -126,6 +126,7 @@ class TradeLogger:
         return self._load(self.alert_log_path)[-limit:]
 
     def get_today_alerts(self) -> list:
+        """Return all alerts logged today."""
         today = datetime.now().strftime("%Y-%m-%d")
         return [
             a for a in self._load(self.alert_log_path)

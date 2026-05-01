@@ -60,9 +60,13 @@ def test_danger_iv_blocked(options, bullish_standard):
     assert result["tradeable"] is False
     print(f"\n✅ Danger IV blocked: {result['reason']}")
 
-def test_low_score_blocked(options):
-    low = {"final_score": 55, "direction": "bullish", "tier": "watchlist"}
-    result = options.analyze("AAPL", low, 170, 182, 166, iv_rank=20)
+def test_low_score_blocked(monkeypatch):
+    """Score below SCORE_ALERT_MINIMUM should block options trading.
+    Pins the threshold to 75 so the test is immune to config drift."""
+    import config
+    monkeypatch.setattr(config, "SCORE_ALERT_MINIMUM", 75)
+    low    = {"final_score": 55, "direction": "bullish", "tier": "watchlist"}
+    result = OptionsLayer().analyze("AAPL", low, 170, 182, 166, iv_rank=20)
     assert result["tradeable"] is False
     print(f"\n✅ Low score blocked")
 

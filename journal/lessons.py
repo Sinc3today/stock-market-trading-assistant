@@ -247,6 +247,7 @@ class LessonsJournal:
         return None
 
     def get_recent_lessons(self, limit: int = 10) -> list:
+        """Return the most recent N lessons (newest last)."""
         return self._load()[-limit:]
 
     # ─────────────────────────────────────────

@@ -1460,7 +1460,7 @@ def render_economic():
     st.title("🏛️ Economic Data")
     st.caption("Live FRED data — CPI, Jobs, Fed Rate, GDP and more")
 
-    from data.fred_client import FREDClient, TRACKED_SERIES
+    from data.fred_client import FREDClient
     from scanners.economic_scanner import EconomicScanner
 
     client  = FREDClient()
