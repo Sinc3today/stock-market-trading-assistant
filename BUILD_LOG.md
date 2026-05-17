@@ -4,6 +4,80 @@
 
 ---
 
+## 2026-05-16 (late night, post-sweep) | VIX term structure + sector breadth modules
+
+**Why:** Asked "what else could meaningfully help the trader?" The
+honest answer for an iron-condor-edge trader is leading indicators
+that flag when the chop regime is ending or stress is incoming.
+Picked VIX term structure (the single highest-leverage signal — would
+have flagged Feb '18 and Aug '24 vol events a day early) + sector
+breadth (high dispersion = real rotation = iron condor candidate;
+low dispersion + alignment = trending = skip).
+
+Both are explicit "observer" modules — they do NOT mutate
+`signals/regime_detector.ADX_TREND_MIN` or `VIX_CALM_MAX` (those are
+tuned and locked per CLAUDE.md). Instead the new signals feed the KB,
+the dashboard, and the daily Discord briefings so the trader and the
+self-learning loop's reflector can use them as context.
+
+**What was built (3 commits):**
+
+`60a33c2` — feat: VIX term structure + sector breadth modules
+  - `data/vix_term_structure.py` (4 CBOE CSVs, no new dep)
+  - `signals/sector_breadth.py`  (10 SPDR ETFs via Polygon)
+  - 30 new tests (18 + 12), all mocked
+
+`4d25d2a` — feat: macro_runner + /macro dashboard route
+  - `signals/macro_runner.py` — APScheduler jobs at 08:55 / 10:00 ET
+  - State persistence: `logs/macro/{vix,sector}_latest.json`
+  - KB hook on flag/signal flips (category=`market_context`)
+  - VIX stress flips ping notifier (cautious↔stress↔extreme_stress);
+    intra-calm flips only hit the KB (no phone spam)
+  - Sector briefing posts daily to Discord (low-noise)
+  - `main.py` wires the jobs into the running scheduler
+  - `alerts/web_app.py` — `/macro` route + new nav link, mobile cards
+    with colored flag/signal pills, dispersion + leaders/laggards
+  - 13 new tests (11 macro_runner + 2 web)
+
+(Pending) — docs: session log
+
+**Test result:** 304 passed, 4 deselected (integration), ~173s
+(was 261).
+
+**Macro schedule now:**
+
+```
+08:55 ET (Mon-Fri)  VIX term structure   (CBOE)   -> KB on flip, Pushover on stress flip
+09:00 ET (Mon-Fri)  Swing scanner        (existing)
+10:00 ET (Mon-Fri)  Sector breadth       (Polygon) -> KB on flip, Discord daily
+```
+
+**Live state verified:**
+
+- `python -m data.vix_term_structure` → VIX9D 16.37 / VIX 18.43 /
+  VIX3M 21.36 / VIX6M 23.25, ratio 0.86, flag = `calm`
+- main.py restarted, macro jobs registered in log
+- `/macro` route renders the seeded VIX snapshot
+
+**Open follow-ups (updated):**
+
+1. ✅ Live "prediction resolved" Pushover
+2. **Promotion workflow CLI** ← next recommended Phase 2 item
+3. ✅ Cross-alert FastAPI views (`/learning` + `/hypotheses` still
+    pending; depend on #2)
+4. Expiry-based exit for `[AUTO-PAPER]` positions
+5. VIX wiring in off-hours replay — now feasible since VIX TS persists
+   to disk daily; replace the hardcoded `vix_today = 16.0` in
+   `learning/off_hours_learner._find_near_misses`
+6. Backlog: tests for `data/`, `signals/`, `scanners/` modules without
+   coverage (still ~9 modules)
+7. (new) Consider feeding VIX backwardation + sector dispersion into
+   the `hypothesis_engine` whitelist so the weekly loop can propose
+   "skip iron condors when ratio > 1.10" as a tunable. Would require
+   adding the new modules' outputs to the prediction snapshot first.
+
+---
+
 ## 2026-05-16 (late night) | Codebase audit sweep — delete dead code, extract config, add tests
 
 **Why:** After the cross-alert views landed, user asked for "a clean
