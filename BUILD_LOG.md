@@ -4,6 +4,46 @@
 
 ---
 
+## 2026-05-16 (post-upgrade) | Polygon Options Starter live — real IVR flowing
+
+**Why:** User upgraded Polygon to Stocks Starter + Options Starter
+($58/mo total). No code changes needed — the IVR options-chain bug
+fix from earlier this session made the code ready for paid tier.
+
+**What changed at runtime (no commits — just config activation):**
+
+| Endpoint | Before | After upgrade |
+|---|---|---|
+| Options snapshot chain | NOT_AUTHORIZED | ✅ IV=15.7% live |
+| 5yr historical bars | 2yr cap | ✅ 1255 bars (5yr) |
+| VIX I:VIX | NOT_AUTHORIZED | Still NOT_AUTHORIZED (separate paid tier — CBOE CSV continues to work, no action needed) |
+
+**The play actually changed** when real IVR became available:
+
+```
+Before (IVR=30.0 hardcoded fallback):
+  Play: BULL CALL DEBIT SPREAD — low IVR, cheap calls, buy the move
+  Strategy: debit_spread
+
+After (IVR=50.0 from real options chain):
+  Play: BULL PUT CREDIT SPREAD — IVR elevated, sell the put side
+  Strategy: credit_spread
+```
+
+The regime detector switched approaches entirely — from buying options
+(debit) to selling options (credit). This is what proper IVR awareness
+means for an options-aware bot.
+
+**Caveat:** IVR will read 50.0 for ~30 days while iv_history_SPY.json
+accumulates. After that, it becomes a real percentile vs 52-week
+range. The mechanism works; the percentile just needs samples.
+
+**No commits this update** — the existing code path activated as
+designed. The hard work was the earlier scenario testing that found
++ fixed the SDK / api_key bugs blocking this path.
+
+---
+
 ## 2026-05-16 (final hour) | Promotion CLI + 1 more silent bug + paid-tier guidance
 
 **Why:** User asked to keep pushing while doing scenario validation.
