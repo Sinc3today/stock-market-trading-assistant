@@ -1,63 +1,105 @@
-# Cloudflare Tunnel Setup
+# Cloudflare Tunnel — PARKED
 
-Exposes the local FastAPI alert app (`alerts/web_app.py` on port 8000) to
-the public internet at `https://alerts.nexus-lab.work`. Cloudflare handles
-HTTPS, the domain, and the inbound connection — no Railway, no VPS, no
-open inbound port on your router.
+**Status as of 2026-05-16:** PARKED. The dashboard is served over Tailscale
+instead. This directory and config are kept intentionally so the tunnel
+can be revived in one command if/when this project grows beyond a single
+user.
 
-## Current status (verified 2026-04-30)
+## Why we parked it
 
-- cloudflared installed: `C:\Program Files (x86)\cloudflared\cloudflared.exe`
+- Single user, Tailscale already on every device I'd use to view the
+  dashboard (Linux box, iPhone, Windows laptop).
+- `alerts/web_app.py` has no application-layer auth. Exposing it over a
+  public tunnel without Cloudflare Access in front meant anyone with the
+  URL could read alerts/journal entries and burn Anthropic credits by
+  POSTing to `/alerts/{id}/chat`.
+- Cloudflare Access would close that hole, but adds an OAuth/email-code
+  redirect to every Pushover notification tap on a new device or after
+  cookie eviction. Tailscale "just works" on devices I already trust.
+
+## What's running instead
+
+- Web app binds to `0.0.0.0:8002` (see `.env: WEB_SERVER_HOST=0.0.0.0`).
+- Tailscale ACL = default (full mesh, my tailnet only).
+- Pushover deep links use `http://nexus-nucbox-k8-plus:8002` (set in
+  `.env: PUSHOVER_BASE_URL`).
+- Access from iPhone / Windows: open Tailscale → tap link or visit
+  `http://nexus-nucbox-k8-plus:8002` directly.
+
+## When to un-park (revival triggers)
+
+Revive Cloudflare if any of these become true:
+
+- A second person needs to see the dashboard (spouse, accountant, CPA).
+- You want to check it from a device that can't run Tailscale (corporate
+  laptop, kiosk, someone else's phone).
+- You add real per-user auth to `alerts/web_app.py` and want a clean
+  public URL for sharing.
+- You ship something multi-tenant on top of this codebase.
+
+## Revival — one-time setup status (already done)
+
+These steps were completed on this Linux box; the artifacts still exist:
+
+- `cloudflared` installed at `/usr/local/bin/cloudflared` (v2026.5.0)
 - Authenticated: `~/.cloudflared/cert.pem` present
-- Tunnel `trading-alerts` (UUID `e8b94fb3-1227-4958-9d26-a57c6952adbd`) created
-- DNS: `alerts.nexus-lab.work` → Cloudflare edge → tunnel
-- Credentials file: `~/.cloudflared/e8b94fb3-1227-4958-9d26-a57c6952adbd.json`
+- Tunnel `trading-alerts` UUID `e8b94fb3-1227-4958-9d26-a57c6952adbd`
+  created in Cloudflare account
+- DNS routed: `alerts.nexus-lab.work` → tunnel
+- Credentials: `~/.cloudflared/e8b94fb3-1227-4958-9d26-a57c6952adbd.json`
+- `cloudflare/tunnel_config.yml` ingress targets `http://127.0.0.1:8002`
 
-If you're on this machine, the one-time setup below is already done.
-Skip to "Daily startup".
+If you wiped the machine, redo from `cloudflared tunnel login` onwards —
+see the "Original one-time setup" section at the bottom for the exact
+commands.
 
-## One-time setup (already done on alexr's box)
+## Revival — daily startup (when un-parked)
 
-1. Install cloudflared:
+1. **Flip `.env` back to loopback + public URL:**
 
-       winget install Cloudflare.cloudflared
+       WEB_SERVER_HOST=127.0.0.1
+       PUSHOVER_BASE_URL=https://alerts.nexus-lab.work
 
-2. Authenticate (opens a browser, pick the `nexus-lab.work` zone):
+2. **Restart main.py** so the web app rebinds.
 
-       cloudflared tunnel login
+3. **Start the tunnel** (in a separate terminal or under systemd):
 
-3. Create the tunnel:
+       cloudflared tunnel --config cloudflare/tunnel_config.yml run
 
-       cloudflared tunnel create trading-alerts
+4. **Strongly recommended before re-exposing publicly:** stand up
+   Cloudflare Access in front of `alerts.nexus-lab.work` (Zero Trust →
+   Access → Applications → Add a self-hosted application, policy = your
+   email only). The `/chat` endpoint will burn Anthropic credits on
+   anonymous traffic otherwise.
 
-4. Copy the tunnel UUID printed in the output and update
-   `cloudflare/tunnel_config.yml` — replace the UUID in both the
-   `tunnel:` line and the `credentials-file:` path.
+5. **Verify:**
 
-5. Point DNS at the tunnel:
+       curl https://alerts.nexus-lab.work/health   # expect {"status":"ok"}
 
-       cloudflared tunnel route dns trading-alerts alerts.nexus-lab.work
+## Troubleshooting (kept for revival)
 
-## Daily startup
-
-Two processes — start both when you start trading.
-
-### Start the FastAPI app
-The trading bot starts this automatically when you run `python main.py`.
-To run it standalone:
-
-    uvicorn alerts.web_app:app --host 127.0.0.1 --port 8000 --reload
-
-### Start the tunnel
-
-    cloudflared tunnel --config cloudflare/tunnel_config.yml run
-
-Once both are running, every Pushover alert link
-(`https://alerts.nexus-lab.work/alerts/<id>`) hits the local web app.
-
-## Troubleshooting
-
-- 502 from Cloudflare: FastAPI isn't running on port 8000 locally.
+- 502 from Cloudflare: FastAPI isn't running on `127.0.0.1:8002`.
 - 404 from the web app: alert ID doesn't exist in `logs/alert_store.db`.
-- 1033 from Cloudflare: tunnel itself isn't running locally.
-- DNS not resolving: re-run `cloudflared tunnel route dns ...` (step 5).
+- 1033 from Cloudflare: tunnel itself isn't running.
+- DNS not resolving: re-run `cloudflared tunnel route dns trading-alerts alerts.nexus-lab.work`.
+
+## Original one-time setup (for a fresh machine)
+
+```sh
+# 1. Install cloudflared (Linux)
+curl -L -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo dpkg -i /tmp/cloudflared.deb
+
+# 2. Authenticate (opens a browser; pick the nexus-lab.work zone)
+cloudflared tunnel login
+
+# 3. Create the tunnel
+cloudflared tunnel create trading-alerts
+# → prints UUID; copy it into tunnel_config.yml `tunnel:` and `credentials-file:` paths
+
+# 4. Route DNS
+cloudflared tunnel route dns trading-alerts alerts.nexus-lab.work
+
+# 5. Run
+cloudflared tunnel --config cloudflare/tunnel_config.yml run
+```
