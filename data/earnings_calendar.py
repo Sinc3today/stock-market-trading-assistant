@@ -12,12 +12,18 @@ Used by:
     - MacroChat       ("what's coming this week for my watchlist?")
     - /macro web page  (third card: upcoming earnings list)
 
-Data source:
-    PolygonClient.get_ticker_details(ticker).next_earnings_date
+Data source — IMPORTANT:
+    yfinance.Ticker(symbol).calendar["Earnings Date"]
 
-    Polygon's free Stocks Starter tier includes ticker details. If the
-    field is missing for a ticker, that ticker is silently dropped from
-    the list (matches existing _check_earnings behavior).
+    An earlier prototype used Polygon's TickerDetails.next_earnings_date,
+    but that attribute does NOT exist on Polygon's free tier (verified
+    by inspection 2026-05-16). The existing signals/gates.py:_check_earnings
+    has been silently returning "No earnings date available" for every
+    ticker as a result. yfinance gives free, reliable earnings dates.
+
+    The polygon_client constructor kwarg is retained for backward
+    compatibility — a few callsites still pass it — but the module
+    no longer uses it.
 
 Cache:
     logs/earnings_calendar.json    refreshed at most once per day
@@ -33,6 +39,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -44,25 +51,35 @@ from loguru import logger
 
 CACHE_FILE_NAME = "earnings_calendar.json"
 
+# Small delay between yfinance calls to stay under Yahoo's rate limiter
+# during the watchlist sweep (~10 tickers × 0.5s = ~5s).
+YFINANCE_DELAY_SEC = 0.5
+
 
 class EarningsCalendar:
     """
-    Aggregates upcoming earnings dates across the watchlist.
+    Aggregates upcoming earnings dates across the watchlist via yfinance.
 
-    A 'cycle' is one full refresh: hits Polygon once per watchlist
+    A 'cycle' is one full refresh: hits yfinance once per watchlist
     ticker. Cached on disk for `cache_ttl_days` (default 1 day) so
     re-fetching is free unless explicitly forced.
     """
 
     def __init__(
         self,
-        polygon_client       = None,
+        polygon_client       = None,    # kept for backward-compat; ignored
         watchlist_path: str  = None,
         cache_ttl_days: int  = 1,
+        fetcher              = None,    # injectable in tests: fn(ticker) -> "YYYY-MM-DD" | None
     ):
-        self.polygon         = polygon_client
+        # polygon_client is retained so existing callsites don't break
+        # but the module uses yfinance. self.polygon is what the
+        # "no fetcher available" path checks — we mirror that semantics
+        # via self._fetcher below.
+        self.polygon         = polygon_client    # legacy attr, unused
         self.watchlist_path  = watchlist_path or config.WATCHLIST_PATH
         self.cache_ttl_days  = cache_ttl_days
+        self._fetcher        = fetcher           # if None, real yfinance is used
 
     # ── PUBLIC API ────────────────────────────────────
 
@@ -78,9 +95,9 @@ class EarningsCalendar:
 
         if not refresh and self._cache_is_fresh(cache):
             entries = cache_entries
-        elif self.polygon is None:
-            # No fetcher -- serve whatever cache we have rather than
-            # overwriting it with an empty refresh.
+        elif not self._can_fetch():
+            # No fetcher available -- serve whatever cache we have rather
+            # than overwriting it with an empty refresh.
             entries = cache_entries
         else:
             entries = self._refresh()
@@ -152,15 +169,34 @@ class EarningsCalendar:
 
     # ── REFRESH (hits Polygon) ────────────────────────
 
+    def _can_fetch(self) -> bool:
+        """True if we can refresh — either we have an injected fetcher
+        (tests) or yfinance is importable (production)."""
+        if self._fetcher is not None:
+            return True
+        try:
+            import yfinance  # noqa: F401
+            return True
+        except ImportError:
+            logger.warning("EarningsCalendar: yfinance not installed -- skipping refresh")
+            return False
+
     def _refresh(self) -> list[dict]:
-        if self.polygon is None:
-            logger.warning("EarningsCalendar: no polygon_client -- skipping refresh")
+        tickers = self._load_watchlist()
+        if not tickers:
             return []
 
-        tickers = self._load_watchlist()
+        fetcher = self._fetcher or self._yfinance_next_earnings_date
         out: list[dict] = []
-        for ticker in tickers:
-            ed = self._fetch_next_earnings_date(ticker)
+        for i, ticker in enumerate(tickers):
+            if i > 0 and self._fetcher is None:
+                # Rate-limit only the live yfinance path; tests use injected fetchers.
+                time.sleep(YFINANCE_DELAY_SEC)
+            try:
+                ed = fetcher(ticker)
+            except Exception as e:
+                logger.warning(f"EarningsCalendar: {ticker} fetch raised: {e}")
+                continue
             if ed:
                 out.append({"ticker": ticker, "earnings_date": ed})
         logger.info(
@@ -168,21 +204,29 @@ class EarningsCalendar:
         )
         return out
 
-    def _fetch_next_earnings_date(self, ticker: str) -> Optional[str]:
-        """One ticker, one Polygon call. Returns YYYY-MM-DD or None."""
+    @staticmethod
+    def _yfinance_next_earnings_date(ticker: str) -> Optional[str]:
+        """
+        One ticker, one yfinance lookup. Returns YYYY-MM-DD or None.
+
+        yfinance.Ticker(t).calendar is a dict with an "Earnings Date" key
+        whose value is a list[date]. ETFs return an empty dict.
+        """
         try:
-            details = self.polygon.get_ticker_details(ticker)
-            if details is None:
+            import yfinance as yf
+            cal = yf.Ticker(ticker).calendar
+            if not cal or not isinstance(cal, dict):
                 return None
-            raw = getattr(details, "next_earnings_date", None)
-            if raw is None:
+            dates = cal.get("Earnings Date") or []
+            if not dates:
                 return None
-            if isinstance(raw, str):
-                return raw
-            # date / datetime
-            return raw.isoformat() if hasattr(raw, "isoformat") else str(raw)
+            # Take the soonest upcoming date
+            today = date.today()
+            future = [d for d in dates if isinstance(d, date) and d >= today]
+            chosen = min(future) if future else dates[0]
+            return chosen.isoformat() if hasattr(chosen, "isoformat") else str(chosen)
         except Exception as e:
-            logger.warning(f"EarningsCalendar: {ticker} fetch failed: {e}")
+            logger.warning(f"EarningsCalendar: yfinance {ticker} failed: {e}")
             return None
 
     # ── WATCHLIST ─────────────────────────────────────
