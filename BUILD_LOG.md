@@ -4,6 +4,75 @@
 
 ---
 
+## 2026-05-16 (latest+2) | Watchlist earnings calendar + universal wiring
+
+**Why:** Closing the user-stated "calendar for specific stocks" gap.
+The existing gates check ONE ticker on demand at alert-fire time.
+Built the batch counterpart so morning brief, macro chat, and /macro
+dashboard all share a single daily-refreshed cache.
+
+**What was built (2 feature commits + this docs entry):**
+
+`de825f5` — feat: EarningsCalendar module
+  - `data/earnings_calendar.py` — walks watchlist (union of swing +
+    intraday + options_enabled from `config/watchlist.json`), calls
+    PolygonClient.get_ticker_details(ticker).next_earnings_date for
+    each, caches at `logs/earnings_calendar.json` (1-day TTL).
+  - Read-only mode (polygon_client=None) serves whatever cache exists
+    without overwriting it — important so web routes that read the
+    cache don't accidentally destroy it.
+  - 13 new tests covering all paths (cache hit/miss, refresh override,
+    exception swallow, no-polygon empty-vs-preserved, date-object
+    handling, malformed strings).
+
+`cc26f0b` — feat: universal wiring
+  - `signals/morning_briefer.py` — accepts earnings_calendar kwarg;
+    today's earnings flow into Claude's context block.
+    Fallback synthesis: ticker reporting today -> skip_conditions
+    ("Avoid AAPL — earnings today"); tomorrow -> watch_conditions
+    ("MSFT earnings tomorrow").
+  - `scheduler/spy_daily_scheduler.py` — job_spy_premarket constructs
+    EarningsCalendar with the polygon_client and passes to briefer.
+  - `alerts/macro_chat.py` — added earnings_calendar kwarg; context
+    bundle now includes `earnings_next_7d`; context_summary shows
+    "earnings N/7d"; system prompt block has EARNINGS NEXT 7D
+    section so the chat answers "what's coming this week."
+  - `alerts/web_app.py` — /macro page gains a third card with the
+    upcoming earnings list; /chat routes use a read-only
+    EarningsCalendar so the chat sees the cache without Polygon hits.
+  - `signals/macro_runner.py` — register_macro_jobs adds 4th job at
+    08:50 ET weekdays that refreshes the earnings cache (silent, no
+    Discord/Pushover output).
+
+**Updated daily schedule:**
+
+```
+08:50 ET (Mon-Fri)   earnings calendar refresh (1 Polygon call/ticker)
+08:55 ET (Mon-Fri)   VIX term structure       (CBOE)
+09:15 ET (Mon-Fri)   morning brief            (consumes ↑↑ + sectors)
+10:00 ET (Mon-Fri)   sector breadth           (Polygon)
+```
+
+**Test result:** 354 passed, 4 deselected (integration), ~146s
+(was 336). +18 new tests this round.
+
+**Open follow-ups (updated):**
+
+1. ✅ Live "prediction resolved" Pushover
+2. **Promotion workflow CLI** ← still queued
+3. ✅ Cross-alert FastAPI views
+4. ✅ VIX TS + sector breadth
+5. ✅ Morning brief 2.0 with skip/watch
+6. ✅ Macro-aware chat
+7. ✅ Per-ticker earnings calendar
+8. Expiry-based exit for `[AUTO-PAPER]` positions
+9. VIX wiring in off-hours replay (small, ~30 min)
+10. Backtest dashboard surface
+11. Per-ticker earnings REACTION history (this build covers calendar
+    only — the "TSLA fades beats 65%" history idea is still open)
+
+---
+
 ## 2026-05-16 (latest+1) | Macro-aware /chat — ask Claude with full daily context
 
 **Why:** The morning brief tells you WHAT today's play is, but doesn't
