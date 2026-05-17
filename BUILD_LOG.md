@@ -4,6 +4,70 @@
 
 ---
 
+## 2026-05-17 (PM-7) | /levels page: SPY chart + S/R + option walls + mobile pass
+
+**Why:** Dashboard needed two things: (1) a "where is SPY trading vs key
+levels" view that combines price-action S/R with options-derived levels;
+(2) a mobile-friendly layout — the existing pages assumed desktop width.
+
+**What changed:**
+
+- **`signals/price_levels.py` (new):** pure-function helpers.
+  - `recent_swing_levels(df, lookback=50)` — lookback HH/LL + local 5-bar
+    pivot highs/lows. Pivots outside the lookback are dropped.
+  - `moving_average_levels(df)` — current MA20/MA50/MA200 from the last
+    bar, or None when not enough history.
+  - `distance_pct(price, level)` — small convenience for the "X% away"
+    labels in the dashboard.
+
+- **`signals/options_walls.py` (new):** "walls" = strikes with the
+  largest open interest. Dealers hedging short option positions create
+  effective support/resistance there.
+  - `compute_walls(calls, puts, spot, top_n)` — pure aggregator,
+    returns `{call_walls, put_walls, max_pain, spot}`.
+  - `max_pain(calls, puts)` — strike that minimizes total option-holder
+    intrinsic value. Standard formula; price often gravitates here into
+    expiry.
+  - `load_walls(ticker, spot, dte_target=14)` — wraps `OptionsChain`
+    so callers don't have to.
+  - Safe on empty / failing chain — returns empty structure rather
+    than raising.
+
+- **`alerts/web_app.py` /levels route + renderer:**
+  - **Plotly inline (CDN)** — `https://cdn.plot.ly/plotly-2.27.0.min.js`
+    loaded only on /levels via the new `extra_head` param on
+    `_render_page`. Other pages stay JS-free.
+  - SPY candlestick (last 90 trading days) with overlays:
+    - MA20 / MA50 / MA200 lines
+    - Red dashed lines for top-3 call walls
+    - Green dashed lines for top-3 put walls
+    - Orange dotted line for max pain
+    - Yellow dotted lines for 50d high / low
+  - Two summary cards below the chart: "Price levels" (MAs + lookback
+    HH/LL with % distance from current close) and "Heavy option strikes"
+    (call walls in red, put walls in green, max pain in orange).
+  - Empty state when SPY fetch fails — page still renders 200, just
+    drops the chart.
+  - Nav bar gets a new `Levels` entry between `Macro` and `Backtest`.
+
+- **Mobile CSS pass (`alerts/web_app.py:_INDEX_CSS`):**
+  - Single `@media (max-width:600px)` block applied site-wide.
+  - 2-col `.grid` cards collapse to 1 col on phones — was the worst
+    desktop-only assumption.
+  - Body padding 1rem → 0.6rem; H1 1.4rem → 1.2rem.
+  - Nav links bumped to ~44px tall for tap-target accessibility.
+  - `#lvl-chart` shrinks 480px → 340px on phone so the Plotly canvas
+    doesn't push everything below the fold.
+
+- **Tests:** +11 `signals/price_levels` (swing, MA, distance helpers),
+  +9 `signals/options_walls` (top-N, max-pain math, load_walls with
+  stub + exception paths), +5 web_app (route renders on Polygon failure,
+  with seeded SPY, with chain data, mobile CSS present, nav has /levels).
+
+**Tests:** full suite (cross-module: web_app route + new data modules).
+
+---
+
 ## 2026-05-17 (PM-6) | Baseline card on /macro + Sun warmup job + promote safety review
 
 Three small follow-ups, bundled because each is self-contained.

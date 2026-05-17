@@ -36,6 +36,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 import config
+from loguru import logger
 from alerts import alert_store
 from alerts.macro_chat import MacroChat
 from journal.trade_recorder import TradeRecorder
@@ -246,6 +247,18 @@ h1{font-size:1.4rem;margin-bottom:1rem;color:#58a6ff}
 .badge{display:inline-block;padding:.1rem .5rem;border-radius:4px;font-size:.75rem;
        background:#21262d;border:1px solid #30363d;margin-right:.25rem}
 .empty{text-align:center;color:#8b949e;padding:3rem 0}
+
+/* ── Mobile: collapse 2-col grids, tighten chrome, bigger tap targets */
+@media (max-width:600px){
+  body{padding:.6rem}
+  h1{font-size:1.2rem;margin-bottom:.6rem}
+  .alert-card{padding:.7rem .8rem}
+  .nav a{padding:.5rem .9rem;font-size:.9rem}   /* ~44px tall */
+  .nav{margin:-.6rem -.6rem .8rem;padding:.5rem .6rem}
+  .grid{grid-template-columns:1fr !important;gap:.4rem !important}
+  .row{flex-direction:column}
+  #lvl-chart{height:340px !important}
+}
 """ + _NAV_CSS
 
 _DETAIL_CSS = _INDEX_CSS + """
@@ -295,6 +308,7 @@ _NAV_LINKS = [
     ("journal",  "/journal",  "Journal"),
     ("chats",    "/chats",    "Chats"),
     ("macro",    "/macro",    "Macro"),
+    ("levels",   "/levels",   "Levels"),
     ("backtest", "/backtest", "Backtest"),
 ]
 
@@ -307,7 +321,10 @@ def _render_nav(active: str) -> str:
     return f'<nav class="nav">{"".join(items)}</nav>'
 
 
-def _render_page(title: str, heading: str, body: str, css: str, active_nav: str) -> str:
+def _render_page(
+    title: str, heading: str, body: str, css: str, active_nav: str,
+    extra_head: str = "",
+) -> str:
     """Shared HTML wrapper: head + nav bar + page body."""
     return f"""<!doctype html>
 <html><head>
@@ -315,6 +332,7 @@ def _render_page(title: str, heading: str, body: str, css: str, active_nav: str)
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title>
 <style>{css}</style>
+{extra_head}
 </head><body>
 {_render_nav(active_nav)}
 <h1>{html.escape(heading)}</h1>
@@ -1346,6 +1364,219 @@ function renderJournal(items) {{
 
 
 # ─────────────────────────────────────────
+# LEVELS PAGE (SPY chart + S/R + options walls + max pain)
+# ─────────────────────────────────────────
+
+_PLOTLY_CDN = '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>'
+
+
+def _build_levels_figure(spy_df, mas: dict, swing: dict, walls: dict) -> dict:
+    """
+    Build the Plotly figure spec (data + layout) as a plain dict.
+
+    Layered:
+      1. Candlestick of SPY for last 90 trading days
+      2. Three MA lines (20/50/200)
+      3. Horizontal call walls (red dashed) + put walls (green dashed)
+      4. Max pain marker (orange dotted)
+      5. Recent lookback high/low (yellow dotted)
+
+    Returns {"data": [...], "layout": {...}} — JSON-serializable.
+    """
+    import pandas as pd
+
+    cols = {c.lower(): c for c in spy_df.columns} if spy_df is not None else {}
+    needed = ("open", "high", "low", "close")
+    if spy_df is None or any(c not in cols for c in needed):
+        return {"data": [], "layout": {"title": "No SPY data available"}}
+
+    df = spy_df.tail(90)
+    x  = [str(d)[:10] for d in df.index]
+
+    traces: list[dict] = [{
+        "type":      "candlestick",
+        "x":         x,
+        "open":      [float(v) for v in df[cols["open"]]],
+        "high":      [float(v) for v in df[cols["high"]]],
+        "low":       [float(v) for v in df[cols["low"]]],
+        "close":     [float(v) for v in df[cols["close"]]],
+        "name":      "SPY",
+        "increasing": {"line": {"color": "#3fb950"}},
+        "decreasing": {"line": {"color": "#f85149"}},
+    }]
+
+    closes = df[cols["close"]].rolling
+    for window, color in [(20, "#58a6ff"), (50, "#bc8cff"), (200, "#f0c674")]:
+        if len(df) >= window:
+            ma_series = df[cols["close"]].rolling(window).mean()
+            traces.append({
+                "type": "scatter", "mode": "lines",
+                "x":    x,
+                "y":    [round(float(v), 2) if pd.notna(v) else None for v in ma_series],
+                "name": f"MA{window}",
+                "line": {"color": color, "width": 1.5},
+            })
+
+    shapes: list[dict] = []
+
+    def _hline(y, color, dash, name):
+        if y is None: return
+        shapes.append({
+            "type": "line", "xref": "paper", "x0": 0, "x1": 1,
+            "y0": y, "y1": y,
+            "line": {"color": color, "width": 1, "dash": dash},
+        })
+        # Invisible scatter so the line gets a legend entry
+        traces.append({
+            "type": "scatter", "mode": "lines",
+            "x": [x[0], x[-1]], "y": [y, y],
+            "name": name,
+            "line": {"color": color, "width": 1, "dash": dash},
+            "hoverinfo": "name+y",
+        })
+
+    for w in (walls.get("call_walls") or []):
+        _hline(w["strike"], "#f85149", "dash",
+               f'Call wall ${w["strike"]:g} ({w["open_interest"]:,} OI)')
+    for w in (walls.get("put_walls") or []):
+        _hline(w["strike"], "#3fb950", "dash",
+               f'Put wall ${w["strike"]:g} ({w["open_interest"]:,} OI)')
+    if walls.get("max_pain") is not None:
+        _hline(walls["max_pain"], "#f0883e", "dot",
+               f'Max pain ${walls["max_pain"]:g}')
+    if swing.get("high_N") is not None:
+        _hline(swing["high_N"], "#e3b341", "dot",
+               f'{swing.get("lookback","?")}d high ${swing["high_N"]:g}')
+    if swing.get("low_N") is not None:
+        _hline(swing["low_N"], "#e3b341", "dot",
+               f'{swing.get("lookback","?")}d low ${swing["low_N"]:g}')
+
+    layout = {
+        "title":       "SPY — last 90 days, levels overlaid",
+        "paper_bgcolor": "#0d1117",
+        "plot_bgcolor":  "#0d1117",
+        "font":          {"color": "#c9d1d9"},
+        "xaxis": {
+            "rangeslider": {"visible": False},
+            "gridcolor":   "#21262d",
+            "type":        "category",   # skip weekend gaps
+        },
+        "yaxis": {
+            "gridcolor":   "#21262d",
+            "title":       "Price ($)",
+        },
+        "margin":     {"l": 50, "r": 10, "t": 50, "b": 40},
+        "shapes":     shapes,
+        "showlegend": True,
+        "legend":     {"orientation": "h", "y": -0.2},
+        "hovermode":  "x unified",
+    }
+    return {"data": traces, "layout": layout}
+
+
+def _render_levels(spy_df, mas: dict, swing: dict, walls: dict) -> str:
+    """Render the /levels page body (chart + side tables)."""
+    import json as _json
+    figure = _build_levels_figure(spy_df, mas, swing, walls)
+
+    chart_html = f'''
+<div class="alert-card" style="padding:.5rem">
+  <div id="lvl-chart" style="height:480px"></div>
+</div>
+<script>
+  Plotly.newPlot(
+    "lvl-chart",
+    {_json.dumps(figure["data"])},
+    {_json.dumps(figure["layout"])},
+    {{responsive: true, displayModeBar: false}}
+  );
+</script>'''
+
+    # ── Summary table ─────────────────────────────────
+    close = (mas or {}).get("close")
+    rows = []
+    def _row(label, value, distance):
+        v = "—" if value is None else f"${value:,.2f}"
+        d = "—" if distance is None else f"{distance:+.2f}%"
+        rows.append(
+            f'<div><span>{_esc(label)}</span><b>{_esc(v)}</b>'
+            f'<span class="muted" style="margin-left:.5rem">{_esc(d)}</span></div>'
+        )
+
+    if mas:
+        _row("MA20",  mas.get("ma20"),  _dist(close, mas.get("ma20")))
+        _row("MA50",  mas.get("ma50"),  _dist(close, mas.get("ma50")))
+        _row("MA200", mas.get("ma200"), _dist(close, mas.get("ma200")))
+    if swing:
+        _row(f'{swing.get("lookback","?")}d high', swing.get("high_N"),
+              _dist(close, swing.get("high_N")))
+        _row(f'{swing.get("lookback","?")}d low',  swing.get("low_N"),
+              _dist(close, swing.get("low_N")))
+
+    summary_html = (
+        f'<div class="alert-card"><div><b>Price levels</b></div>'
+        f'<div class="grid" style="margin-top:.5rem">{"".join(rows)}</div></div>'
+        if rows else ""
+    )
+
+    # ── Walls table ────────────────────────────────────
+    walls_rows = []
+    for w in (walls.get("call_walls") or []):
+        walls_rows.append(
+            f'<div><span>Call wall (resistance)</span>'
+            f'<b style="color:#f85149">${w["strike"]:,.0f}</b>'
+            f'<span class="muted" style="margin-left:.4rem">'
+            f'{w["open_interest"]:,} OI · {w["distance_pct"]:+.2f}% away</span></div>'
+        )
+    for w in (walls.get("put_walls") or []):
+        walls_rows.append(
+            f'<div><span>Put wall (support)</span>'
+            f'<b style="color:#3fb950">${w["strike"]:,.0f}</b>'
+            f'<span class="muted" style="margin-left:.4rem">'
+            f'{w["open_interest"]:,} OI · {w["distance_pct"]:+.2f}% away</span></div>'
+        )
+    if walls.get("max_pain") is not None:
+        walls_rows.append(
+            f'<div><span>Max pain</span>'
+            f'<b style="color:#f0883e">${walls["max_pain"]:,.0f}</b>'
+            f'<span class="muted" style="margin-left:.4rem">'
+            f'{_dist(close, walls["max_pain"]):+.2f}% away</span></div>'
+            if _dist(close, walls["max_pain"]) is not None else
+            f'<div><span>Max pain</span>'
+            f'<b style="color:#f0883e">${walls["max_pain"]:,.0f}</b></div>'
+        )
+    exp = walls.get("expiration")
+    exp_suffix = (
+        f' <span class="muted" style="margin-left:.5rem">expiry {_esc(exp)}</span>'
+        if exp else ""
+    )
+    walls_header = f'<div><b>Heavy option strikes</b>{exp_suffix}</div>'
+    walls_html = (
+        f'<div class="alert-card">{walls_header}'
+        f'<div class="grid" style="margin-top:.5rem">{"".join(walls_rows)}</div></div>'
+        if walls_rows else
+        '<div class="empty">No options chain data — chart shows price levels only. '
+        'Once Polygon options access is wired this card fills in.</div>'
+    )
+
+    body = chart_html + summary_html + walls_html
+    return _render_page(
+        title       = "Trading Assistant - Levels",
+        heading     = "SPY Levels",
+        body        = body,
+        css         = _INDEX_CSS,
+        active_nav  = "levels",
+        extra_head  = _PLOTLY_CDN,
+    )
+
+
+def _dist(price, level):
+    if price is None or level is None or level == 0:
+        return None
+    return round((price - level) / level * 100, 2)
+
+
+# ─────────────────────────────────────────
 # ROUTES
 # ─────────────────────────────────────────
 
@@ -1407,6 +1638,33 @@ def today_page():
     from datetime import date
     plan = PlanLogger().get_plan(date.today().isoformat())
     return HTMLResponse(_render_today(plan))
+
+
+@app.get("/levels", response_class=HTMLResponse)
+def levels_page():
+    """SPY price chart + S/R levels (MAs, recent swings, option walls, max pain)."""
+    from data.polygon_client    import PolygonClient
+    from signals.price_levels   import recent_swing_levels, moving_average_levels
+    from signals.options_walls  import load_walls
+
+    spy_df = None
+    try:
+        spy_df = PolygonClient().get_bars("SPY", timeframe=config.SWING_PRIMARY_TIMEFRAME,
+                                           limit=250, days_back=365)
+    except Exception as e:
+        logger.warning(f"/levels: SPY fetch failed: {e}")
+
+    mas   = moving_average_levels(spy_df) if spy_df is not None else {}
+    swing = recent_swing_levels(spy_df, lookback=50) if spy_df is not None else {}
+    walls = {}
+    try:
+        spot = (mas or {}).get("close")
+        if spot:
+            walls = load_walls("SPY", spot=spot)
+    except Exception as e:
+        logger.warning(f"/levels: walls fetch failed: {e}")
+
+    return HTMLResponse(_render_levels(spy_df, mas, swing, walls))
 
 
 def _macro_chat_instance() -> MacroChat:

@@ -309,6 +309,104 @@ def test_macro_page_baseline_card_uses_fresh_summary(client, app_modules, tmp_pa
     assert "Fresh rerun"    in r.text
 
 
+def test_levels_page_renders_when_polygon_fails(client, app_modules, monkeypatch):
+    """If SPY fetch fails, the page should still render gracefully with the
+    'no data' empty state, not 500."""
+    import data.polygon_client as pc
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars",
+                        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("polygon down")))
+    r = client.get("/levels")
+    assert r.status_code == 200
+    assert "SPY Levels" in r.text
+    # Plotly CDN still loaded
+    assert "cdn.plot.ly" in r.text
+
+
+def test_levels_page_renders_chart_with_seeded_spy(client, app_modules, monkeypatch):
+    """With injected SPY bars, chart container + MAs + levels card render."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+
+    rows = []
+    base = datetime(2026, 1, 5)
+    for i in range(250):
+        d = base + timedelta(days=i)
+        rows.append({"timestamp": d, "open": 500+i*0.1, "high": 500+i*0.1+1,
+                     "low": 500+i*0.1-1, "close": 500+i*0.1, "volume": 1_000_000})
+    df = pd.DataFrame(rows).set_index("timestamp")
+
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", lambda *a, **kw: df)
+
+    # Stub OptionsChain so /levels doesn't try the real Polygon options call
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls",
+                        lambda *a, **kw: {"call_walls": [], "put_walls": [],
+                                          "max_pain": None, "spot": kw.get("spot"),
+                                          "expiration": None})
+
+    r = client.get("/levels")
+    assert r.status_code == 200
+    assert "SPY Levels"   in r.text
+    assert "lvl-chart"    in r.text
+    assert "Plotly.newPlot" in r.text
+    assert "MA20"         in r.text
+    assert "Price levels" in r.text
+
+
+def test_levels_page_renders_option_walls_when_chain_present(client, app_modules, monkeypatch):
+    """When load_walls returns data, the walls card lists call + put + max pain."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+
+    rows = []
+    for i in range(50):
+        d = datetime(2026, 3, 1) + timedelta(days=i)
+        rows.append({"timestamp": d, "open": 500, "high": 501, "low": 499,
+                     "close": 500, "volume": 1_000_000})
+    df = pd.DataFrame(rows).set_index("timestamp")
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", lambda *a, **kw: df)
+
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls", lambda *a, **kw: {
+        "call_walls": [{"strike": 515.0, "open_interest": 20_000, "distance_pct": 3.0,
+                        "side": "call"}],
+        "put_walls":  [{"strike": 490.0, "open_interest": 15_000, "distance_pct": -2.0,
+                        "side": "put"}],
+        "max_pain":   505.0,
+        "spot":       500.0,
+        "expiration": "2026-06-20",
+    })
+
+    r = client.get("/levels")
+    assert r.status_code == 200
+    assert "Heavy option strikes" in r.text
+    assert "Call wall"            in r.text
+    assert "$515"                 in r.text
+    assert "Put wall"             in r.text
+    assert "$490"                 in r.text
+    assert "Max pain"             in r.text
+    assert "$505"                 in r.text
+    assert "expiry 2026-06-20"    in r.text
+
+
+def test_mobile_css_media_query_present(client, app_modules):
+    """Every page should ship the @media(max-width:600px) rules."""
+    r = client.get("/today")
+    assert "@media (max-width:600px)" in r.text
+    # The grid stack rule is what makes /macro readable on phone
+    assert "grid-template-columns:1fr" in r.text
+
+
+def test_nav_includes_levels_link(client, app_modules):
+    r = client.get("/macro")
+    assert 'href="/levels"' in r.text
+
+
 def test_macro_page_renders_snapshots(client, app_modules, tmp_path):
     """Seed both snapshot files and verify the page surfaces values + flags."""
     import json
