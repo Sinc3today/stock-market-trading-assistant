@@ -4,6 +4,81 @@
 
 ---
 
+## 2026-05-16 (late evening) | Migrated dashboard to Tailscale + lint sweep
+
+**Why:** After bringing the Cloudflare tunnel up end-to-end (works fine),
+realized the web app has zero auth — anyone with the public URL could
+read the journal/alerts and burn Anthropic credits via `/chat`. Weighed
+Tailscale-only vs Cloudflare Access. For a single-user dashboard on
+devices already on the tailnet (Linux box, iPhone, Windows laptop),
+Tailscale removes the OAuth/email-code redirect that Cloudflare Access
+would add to every Pushover notification tap.
+
+**What changed:**
+
+- **`.env` (not committed — gitignored):**
+    - `WEB_SERVER_HOST` 127.0.0.1 → 0.0.0.0
+    - `PUSHOVER_BASE_URL` https://alerts.nexus-lab.work
+      → http://nexus-nucbox-k8-plus:8002
+
+- **`cloudflare/README.md` — rewritten as PARKED notes** (commit `b8acd35`).
+  Status, why-Tailscale, when-to-un-park triggers, exact revival steps
+  including the reminder to put Cloudflare Access in front of `/chat`
+  before re-exposing publicly. Tunnel config and credentials kept
+  in place — revival is `cloudflared tunnel run` + an `.env` flip.
+
+- **Runtime state:**
+    - `cloudflared` process stopped (was PID 162000).
+    - Orphan `uvicorn` on :8000 from earlier session killed (PID 114782).
+    - `main.py` restarted → web app now binds `0.0.0.0:8002`.
+    - Verified all three paths return HTTP 200 on `/health`:
+      `127.0.0.1`, tailnet IP `100.81.82.116`, MagicDNS hostname
+      `nexus-nucbox-k8-plus`.
+
+- **Lint sweep with ruff** (commit `e3e3f35`).
+    - 71 auto-fixed: 56 redundant f-string prefixes, 9 unused imports,
+      6 multi-imports-on-one-line.
+    - 7 F841 unused-variable removals applied manually after confirming
+      each was genuinely dead (none were missed assertions or planned
+      side effects). Files touched: `alerts/dashboard.py`,
+      `data/ivr_client.py`, `scanners/economic_scanner.py`, three
+      test files.
+    - Deliberately left untouched: 41 E701, 36 E702, 29 E741, 13 E402,
+      7 E712. These are deliberate stylistic choices throughout the
+      codebase (inline `if x: return`, `sys.path.insert(...); import`
+      pattern, terse variable names). Not bugs.
+
+**Test result:** 239 passed, 4 deselected (integration), ~140s.
+Same count as before lint sweep — no behavioral change.
+
+**Commits this session (cumulative):**
+- `326348f` chore: move cloudflared tunnel to Linux host (port 8002)
+- `527d492` feat: live "prediction resolved" notification at 16:05 ET
+- `98120eb` docs: session log for resolved-prediction Pushover + tunnel move
+- `b8acd35` docs: park Cloudflare tunnel notes — Tailscale chosen
+- `e3e3f35` chore: lint sweep with ruff
+
+**Access from any tailnet device:**
+- Mobile-friendly URL: `http://nexus-nucbox-k8-plus:8002/`
+- Per-alert deep links (what Pushover embeds):
+  `http://nexus-nucbox-k8-plus:8002/alerts/{id}`
+- Tailscale must be on. iOS may need to re-enable Tailscale after
+  battery saver kills it — first tap after sleep can be slow.
+
+**Open for next session (unchanged order):**
+
+1. ~~Live "prediction resolved" Pushover~~ ✅ earlier this session
+2. Promotion workflow CLI (`python -m learning.promote <hyp_id>`)
+3. Web app `/learning` + `/hypotheses` routes
+4. Expiry-based exit for `[AUTO-PAPER]` positions
+5. VIX wiring in off-hours replay
+6. (new) Add `pip install ruff` to dev deps so the lint sweep is
+   repeatable. Maybe a tiny `pyproject.toml` `[tool.ruff]` block
+   disabling E701/E702/E741/E402/E712 so future `ruff check` runs
+   only flag the things we actually care about.
+
+---
+
 ## 2026-05-16 (evening, laptop pickup) | Live prediction-resolved Pushover + tunnel moved to Linux
 
 **Session length:** ~30 min after returning to the Linux box.
