@@ -4,6 +4,73 @@
 
 ---
 
+## 2026-05-16 (latest) | Morning Brief 2.0 — play card with skip/watch + /today route
+
+**Why:** With macro modules (VIX TS + sector breadth) live, the
+existing 09:15 ET SPYDailyStrategy job was producing a regime-driven
+play but missing the user-facing decision context: "when do I skip,
+what do I watch for, what's today's thesis given the macro state."
+Built MorningBriefer to wrap the existing strategy and add the
+context layer without touching the locked regime detector.
+
+**What was built (2 commits + this docs entry):**
+
+`bc39ded` — feat: morning briefer
+  - `signals/morning_briefer.py` — wraps SPYDailyStrategy, reads
+    macro_runner snapshots, calls EventCalendar for today's events,
+    asks Claude for narrative + skip + watch JSON. Fallback to
+    rule-based brief if no API key / parse fails.
+  - Persists to PlanLogger (so /today and learning loop can read it)
+    + archival `logs/morning_briefs/<date>.json`.
+  - `scheduler/spy_daily_scheduler.py` — `job_spy_premarket` now
+    constructs MorningBriefer around the existing SPYDailyStrategy.
+    `main.py` unchanged (already passes notifier.message → Pushover
+    + Discord). 12 new tests, all mocked.
+
+`5a30382` — feat: /today web route
+  - New mobile-first card layout: regime badge, play details grid,
+    thesis paragraph, skip conditions (red), watch conditions
+    (yellow), macro context summary.
+  - `/today` is now the FIRST nav link — morning marching orders.
+  - 2 new tests for empty state + populated brief.
+
+**Test result:** 318 passed, 4 deselected (integration), ~147s
+(was 304). All routes live: `/today /`, `/trades`, `/journal`,
+`/chats`, `/macro`.
+
+**Phone experience:**
+
+Open the home-screen icon (same URL) → tap **[Today]** in the nav.
+You'll see:
+- A big colored badge with regime + play
+- Strategy / R/R / DTE / max P/L grid
+- Thesis (one paragraph)
+- "Skip if..." list (red)
+- "Watch for..." list (yellow)
+- Macro context: VIX TS flag, sector signal, today's events
+- Same brief gets Pushover-pushed at 09:15 ET each weekday
+
+**Open follow-ups (updated):**
+
+1. ✅ Live "prediction resolved" Pushover
+2. **Promotion workflow CLI** ← still the next infrastructure item
+3. ✅ Cross-alert FastAPI views
+4. ✅ VIX term structure + sector breadth
+5. ✅ Morning brief 2.0 with skip/watch
+6. Expiry-based exit for `[AUTO-PAPER]` positions
+7. VIX wiring in off-hours replay (now possible since VIX TS persists)
+8. Per-ticker earnings reaction history (the calendar idea — partial
+   coverage exists in event_calendar; doesn't yet have per-ticker
+   earnings reaction patterns)
+9. Backtest dashboard surface (the 5yr SPY backtest + hypothesis
+   results have no web view; lowest urgency per earlier discussion)
+10. Macro-aware chat bot — /chat route with full context (KB, today's
+    plan, macro, events). Would let you ask "should I take this play
+    given Fed at 2pm?" Lower leverage than today's build but a nice
+    follow-on now that brief data exists.
+
+---
+
 ## 2026-05-16 (late night, post-sweep) | VIX term structure + sector breadth modules
 
 **Why:** Asked "what else could meaningfully help the trader?" The
