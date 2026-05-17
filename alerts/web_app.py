@@ -37,6 +37,7 @@ from pydantic import BaseModel
 
 import config
 from alerts import alert_store
+from alerts.macro_chat import MacroChat
 from journal.trade_recorder import TradeRecorder
 from journal.plan_logger import PlanLogger
 from signals import macro_runner
@@ -67,6 +68,11 @@ class JournalRequest(BaseModel):
     notes:           str  = ""
     outcome:         str  = "open"
     pnl:             float | None = None
+
+
+class MacroChatRequest(BaseModel):
+    """Single chat turn for the macro-aware /chat route."""
+    message: str
 
 
 # ─────────────────────────────────────────
@@ -280,6 +286,7 @@ def _esc(v: Any) -> str:
 
 _NAV_LINKS = [
     ("today",   "/today",   "Today"),
+    ("chat",    "/chat",    "Chat"),
     ("alerts",  "/",        "Alerts"),
     ("trades",  "/trades",  "Trades"),
     ("journal", "/journal", "Journal"),
@@ -449,6 +456,105 @@ _SIGNAL_CLASS = {
     "dispersed":        "status-loss",
     "unknown":          "status-open",
 }
+
+
+def _render_macro_chat(history: list[dict], context_summary: str) -> str:
+    """Macro-aware chat interface — full daily context, persistent history."""
+    chat_html = "".join(
+        f'<div class="msg {html.escape(m["role"])}">{html.escape(m["content"])}</div>'
+        for m in history
+    )
+    if not chat_html:
+        chat_html = (
+            '<div class="muted" style="text-align:center;padding:1.5rem">'
+            'Ask anything about today\'s setup, recent trades, or the KB.<br>'
+            'Examples: "Should I take today\'s play given the events?" · '
+            '"What happened the last 3 times we saw this regime?" · '
+            '"How did the last 5 iron condors go?"'
+            '</div>'
+        )
+
+    body = f'''
+<div class="alert-card">
+  <div class="muted" style="text-transform:uppercase;font-size:.7rem;margin-bottom:.3rem">
+    Context Claude sees
+  </div>
+  <div class="muted" style="font-size:.8rem;font-family:monospace;line-height:1.4">
+    {html.escape(context_summary)}
+  </div>
+</div>
+
+<div class="section">
+  <h2>Conversation</h2>
+  <div id="chat" class="chat-box" style="height:380px">{chat_html}</div>
+  <div class="row">
+    <textarea id="msg" placeholder="Ask about today, recent trades, the KB..."></textarea>
+  </div>
+  <div class="row" style="margin-top:.5rem;justify-content:space-between">
+    <button id="reset" style="background:#21262d;color:#c9d1d9">Reset</button>
+    <button id="send">Send</button>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const chatBox = $("#chat");
+const msgInput = $("#msg");
+const sendBtn = $("#send");
+const resetBtn = $("#reset");
+
+function appendMsg(role, content) {{
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = content;
+  chatBox.appendChild(div);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}}
+
+async function sendMessage() {{
+  const text = msgInput.value.trim();
+  if (!text) return;
+  sendBtn.disabled = true;
+  // Clear the empty placeholder if visible
+  if (chatBox.querySelector(".muted")) chatBox.innerHTML = "";
+  appendMsg("user", text);
+  msgInput.value = "";
+  try {{
+    const r = await fetch("/chat", {{
+      method: "POST",
+      headers: {{ "Content-Type": "application/json" }},
+      body: JSON.stringify({{ message: text }}),
+    }});
+    const data = await r.json();
+    appendMsg("assistant", data.reply || data.error || "(no response)");
+  }} catch (e) {{
+    appendMsg("assistant", "Network error: " + e);
+  }} finally {{
+    sendBtn.disabled = false;
+  }}
+}}
+
+sendBtn.addEventListener("click", sendMessage);
+msgInput.addEventListener("keydown", (e) => {{
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendMessage();
+}});
+
+resetBtn.addEventListener("click", async () => {{
+  if (!confirm("Clear chat history?")) return;
+  await fetch("/chat/reset", {{ method: "POST" }});
+  location.reload();
+}});
+
+chatBox.scrollTop = chatBox.scrollHeight;
+</script>'''
+
+    return _render_page(
+        title       = "Trading Assistant - Chat",
+        heading     = "Macro Chat",
+        body        = body,
+        css         = _DETAIL_CSS,
+        active_nav  = "chat",
+    )
 
 
 def _render_today(plan: dict | None) -> str:
@@ -949,6 +1055,33 @@ def today_page():
     from datetime import date
     plan = PlanLogger().get_plan(date.today().isoformat())
     return HTMLResponse(_render_today(plan))
+
+
+@app.get("/chat", response_class=HTMLResponse)
+def macro_chat_page():
+    """Macro-aware chat: full daily context, persistent history."""
+    mc = MacroChat()
+    return HTMLResponse(_render_macro_chat(
+        history=mc.history(),
+        context_summary=mc.context_summary(),
+    ))
+
+
+@app.post("/chat")
+def macro_chat_send(body: MacroChatRequest):
+    """Send a message to the macro chat. Both turns persist to disk."""
+    msg = (body.message or "").strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="message required")
+    reply = MacroChat().ask(msg)
+    return JSONResponse({"reply": reply})
+
+
+@app.post("/chat/reset")
+def macro_chat_reset():
+    """Clear the macro chat history."""
+    MacroChat().reset_history()
+    return JSONResponse({"ok": True})
 
 
 @app.get("/alerts/{alert_id}", response_class=HTMLResponse)

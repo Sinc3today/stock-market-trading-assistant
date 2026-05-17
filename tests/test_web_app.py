@@ -156,9 +156,10 @@ def test_recent_alerts_list(client, app_modules, sample_alert):
 def test_nav_appears_on_index(client):
     r = client.get("/")
     assert r.status_code == 200
-    # Nav links to all six views
-    for href in ('href="/today"', 'href="/"', 'href="/trades"',
-                 'href="/journal"', 'href="/chats"', 'href="/macro"'):
+    # Nav links to all seven views
+    for href in ('href="/today"', 'href="/chat"', 'href="/"',
+                 'href="/trades"', 'href="/journal"', 'href="/chats"',
+                 'href="/macro"'):
         assert href in r.text
 
 
@@ -323,6 +324,46 @@ def test_today_page_renders_full_brief(client, app_modules):
     assert "Iron condor still in play"             in r.text
     assert "calm"                                  in r.text   # VIX flag
     assert "CPI"                                   in r.text
+
+
+# ─────────────────────────────────────────
+# Macro chat route
+# ─────────────────────────────────────────
+
+def test_macro_chat_page_empty_history_shows_examples(client, app_modules):
+    r = client.get("/chat")
+    assert r.status_code == 200
+    assert "Macro Chat"                  in r.text
+    assert "Context Claude sees"         in r.text
+    # Examples shown when no history yet
+    assert "Should I take today"         in r.text or "Ask anything" in r.text
+
+
+def test_macro_chat_send_returns_reply_and_persists(client, app_modules, monkeypatch):
+    """POST /chat with a stubbed MacroChat.ask returns the reply."""
+    from alerts import macro_chat
+    monkeypatch.setattr(
+        macro_chat.MacroChat, "ask",
+        lambda self, msg: f"[stub reply for: {msg}]",
+    )
+    r = client.post("/chat", json={"message": "what's the play today?"})
+    assert r.status_code == 200
+    assert r.json()["reply"] == "[stub reply for: what's the play today?]"
+
+
+def test_macro_chat_send_rejects_empty(client, app_modules):
+    r = client.post("/chat", json={"message": "   "})
+    assert r.status_code == 400
+
+
+def test_macro_chat_reset_clears_history(client, app_modules):
+    from alerts.macro_chat import MacroChat
+    mc = MacroChat()
+    mc.append_turn("user", "hi")
+    assert len(mc.history()) == 1
+    r = client.post("/chat/reset")
+    assert r.status_code == 200
+    assert MacroChat().history() == []
 
 
 # Needed by test_macro_page_empty
