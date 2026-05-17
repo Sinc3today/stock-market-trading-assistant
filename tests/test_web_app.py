@@ -827,6 +827,182 @@ def test_today_omits_wall_summary_when_walls_empty(
     assert "Where SPY sits vs heavy strikes" not in r.text
 
 
+def test_levels_renders_timeframe_ribbon_with_default_active(
+    client, app_modules, monkeypatch,
+):
+    """The ribbon should show every timeframe button and mark the default
+    range (3M) as active when no ?range= is passed."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+
+    df = pd.DataFrame([{
+        "timestamp": datetime(2026, 3, 1) + timedelta(days=i),
+        "open": 500, "high": 501, "low": 499, "close": 500, "volume": 1,
+    } for i in range(40)]).set_index("timestamp")
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", lambda *a, **kw: df)
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls",
+                        lambda *a, **kw: {"call_walls": [], "put_walls": [],
+                                          "max_pain": None, "spot": kw.get("spot"),
+                                          "expiration": None})
+
+    r = client.get("/levels")
+    assert r.status_code == 200
+    # Every range key has a button rendered
+    for label in ("1D", "7D", "14D", "1M", "3M", "6M", "1Y", "5Y", "All"):
+        assert f'>{label}<' in r.text
+    # 3M (default) is active
+    assert 'rng-btn active" href="/levels/SPY?range=3m">3M' in r.text
+
+
+def test_levels_query_range_overrides_default(
+    client, app_modules, monkeypatch,
+):
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+
+    df = pd.DataFrame([{
+        "timestamp": datetime(2026, 3, 1) + timedelta(days=i),
+        "open": 500, "high": 501, "low": 499, "close": 500, "volume": 1,
+    } for i in range(40)]).set_index("timestamp")
+    captured = {"timeframe": None, "days_back": None}
+    def fake_get_bars(self, ticker, **kw):
+        captured["timeframe"] = kw.get("timeframe")
+        captured["days_back"] = kw.get("days_back")
+        return df
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", fake_get_bars)
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls",
+                        lambda *a, **kw: {"call_walls": [], "put_walls": [],
+                                          "max_pain": None, "spot": kw.get("spot"),
+                                          "expiration": None})
+
+    r = client.get("/levels/AAPL?range=1d")
+    assert r.status_code == 200
+    # 1D range uses 5-minute intraday bars, not daily
+    assert captured["timeframe"] == "5min"
+    # Active button switches to 1D
+    assert 'rng-btn active" href="/levels/AAPL?range=1d">1D' in r.text
+
+
+def test_levels_range_cookie_remembered_across_requests(
+    client, app_modules, monkeypatch,
+):
+    """After you pick a range, the cookie persists it so reloads keep it."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+
+    df = pd.DataFrame([{
+        "timestamp": datetime(2026, 3, 1) + timedelta(days=i),
+        "open": 500, "high": 501, "low": 499, "close": 500, "volume": 1,
+    } for i in range(40)]).set_index("timestamp")
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", lambda *a, **kw: df)
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls",
+                        lambda *a, **kw: {"call_walls": [], "put_walls": [],
+                                          "max_pain": None, "spot": kw.get("spot"),
+                                          "expiration": None})
+
+    r1 = client.get("/levels/SPY?range=6m")
+    assert r1.cookies.get("levels_range") == "6m"
+
+    # Subsequent visit with no ?range= reads the cookie
+    r2 = client.get("/levels", cookies={"levels_range": "6m", "levels_ticker": "SPY"})
+    assert 'rng-btn active" href="/levels/SPY?range=6m">6M' in r2.text
+
+
+def test_levels_invalid_range_falls_back_to_default(
+    client, app_modules, monkeypatch,
+):
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+    df = pd.DataFrame([{
+        "timestamp": datetime(2026, 3, 1) + timedelta(days=i),
+        "open": 500, "high": 501, "low": 499, "close": 500, "volume": 1,
+    } for i in range(40)]).set_index("timestamp")
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", lambda *a, **kw: df)
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls",
+                        lambda *a, **kw: {"call_walls": [], "put_walls": [],
+                                          "max_pain": None, "spot": kw.get("spot"),
+                                          "expiration": None})
+
+    r = client.get("/levels?range=42z")
+    # Falls back to 3M default rather than crashing or hitting Polygon junk
+    assert 'rng-btn active" href="/levels/SPY?range=3m">3M' in r.text
+
+
+def test_resample_bars_collapses_daily_to_weekly(client, app_modules):
+    """The 6M+ ranges resample daily bars to weekly so 200d isn't 200 candles."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+    _, web_app = app_modules
+    rows = []
+    for i in range(60):  # ~12 weeks of daily bars
+        d = datetime(2026, 1, 5) + timedelta(days=i)
+        rows.append({"timestamp": d, "open": 100+i, "high": 102+i,
+                     "low": 99+i, "close": 101+i, "volume": 1_000_000})
+    df = pd.DataFrame(rows).set_index("timestamp")
+    weekly = web_app._resample_bars(df, "W-FRI")
+    # 60 calendar days ≈ 8-10 weeks. The point is "many fewer than 60".
+    assert 7 <= len(weekly) <= 12
+    assert len(weekly) < len(df) / 4
+    # Each bar still has OHLCV
+    assert all(c in weekly.columns for c in ("open", "high", "low", "close", "volume"))
+
+
+def test_gestures_script_present_on_every_page(client, app_modules):
+    """Pull-to-refresh + swipe-back are injected by _render_page so every
+    page should ship them — not just /levels."""
+    for path in ("/today", "/macro", "/", "/trades", "/journal"):
+        r = client.get(path)
+        assert "ptr-indicator"   in r.text, f"missing PTR indicator on {path}"
+        assert "Pull to refresh" in r.text, f"missing PTR label on {path}"
+        # swipe-back guard: /today is the home, others can be swiped back from
+        assert 'HOME_NAV_KEY  = "today"' in r.text
+
+
+def test_active_nav_marker_on_body(client, app_modules):
+    """Body data-active-nav attribute is what the swipe-back JS reads to
+    decide whether to allow popping history. Verify the marker for each page."""
+    cases = [("/today", "today"), ("/macro", "macro"), ("/", "alerts"),
+             ("/trades", "trades"), ("/journal", "journal")]
+    for path, expected in cases:
+        r = client.get(path)
+        assert f'data-active-nav="{expected}"' in r.text
+
+
+def test_chart_modebar_is_enabled(client, app_modules, monkeypatch):
+    """The user previously couldn't zoom back out — confirm the modebar
+    config in the rendered script no longer disables it."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+    df = pd.DataFrame([{
+        "timestamp": datetime(2026, 3, 1) + timedelta(days=i),
+        "open": 500, "high": 501, "low": 499, "close": 500, "volume": 1,
+    } for i in range(40)]).set_index("timestamp")
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", lambda *a, **kw: df)
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls",
+                        lambda *a, **kw: {"call_walls": [], "put_walls": [],
+                                          "max_pain": None, "spot": kw.get("spot"),
+                                          "expiration": None})
+
+    r = client.get("/levels")
+    assert "displayModeBar: false" not in r.text
+    assert "modeBarButtonsToRemove" in r.text
+
+
 def test_wall_summary_picks_nearest_above_below_spot(client, app_modules):
     """Helper picks the nearest call wall above spot + nearest put wall
     below — not the first ones in the list."""

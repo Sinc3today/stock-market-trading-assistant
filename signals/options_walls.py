@@ -121,24 +121,26 @@ def load_walls(
 # ── internals ──────────────────────────────────────
 
 def _top_by_oi(contracts: list[dict], top_n: int, spot: float | None, side: str) -> list[dict]:
+    """Top N strikes by OI. Dedupe by strike first — two contracts at the
+    same strike (e.g. different expirations) would otherwise both make the
+    list and render as duplicate lines on the chart."""
     if not contracts:
         return []
-    ranked = sorted(
-        [c for c in contracts if c.get("open_interest") is not None],
-        key=lambda c: -int(c.get("open_interest") or 0),
-    )[:top_n]
-    out = []
-    for c in ranked:
-        strike = c.get("strike")
-        if strike is None:
+    by_strike: dict[float, int] = {}
+    for c in contracts:
+        s  = c.get("strike")
+        oi = c.get("open_interest")
+        if s is None or oi is None:
             continue
-        out.append({
-            "strike":        float(strike),
-            "open_interest": int(c.get("open_interest") or 0),
-            "distance_pct":  _dist_pct(spot, float(strike)),
-            "side":          side,
-        })
-    return out
+        sk = float(s)
+        by_strike[sk] = max(by_strike.get(sk, 0), int(oi))
+    ranked = sorted(by_strike.items(), key=lambda kv: -kv[1])[:top_n]
+    return [{
+        "strike":        sk,
+        "open_interest": oi,
+        "distance_pct":  _dist_pct(spot, sk),
+        "side":          side,
+    } for sk, oi in ranked]
 
 
 def _total_pain_at_price(p: float, calls: list[dict], puts: list[dict]) -> float:

@@ -4,6 +4,116 @@
 
 ---
 
+## 2026-05-17 (PM-11) | /levels timeframe ribbon + mobile gestures + chart polish
+
+A big /levels upgrade plus a cross-cutting gesture layer that lands on every
+page. Three independent threads bundled into one commit because the CSS
+restructure they all touch only makes sense as one diff.
+
+**1. Timeframe ribbon on /levels (`alerts/web_app.py`):**
+
+Nine buttons — `1D / 7D / 14D / 1M / 3M / 6M / 1Y / 5Y / All` — rendered as
+horizontal pills under the ticker picker. 1D pulls 5-minute intraday bars;
+2W through 3M render raw daily bars; 6M and 1Y resample daily → weekly
+(`W-FRI`); 5Y and All resample daily → monthly (`ME`). The resample stops
+the 5Y view from being 1300 unreadable candles.
+
+Implementation:
+  - `_LEVELS_RANGES` table holds `(key, label, days_back, polygon_tf,
+    resample_rule, x_label_format)` for every range.
+  - `_normalise_range()` clamps invalid query values to the default (3M)
+    rather than letting them through to Polygon.
+  - `_resample_bars()` does the OHLCV roll-up with pandas: first/max/min/
+    last/sum, dropna(how="all"). Handles non-DatetimeIndex frames.
+  - `_build_levels_view()` chooses `days_back + 30` headroom and a `limit`
+    sized for the worst-case bar count (~78 5-min bars per trading day).
+
+Cookie: a 90-day `levels_range` cookie sits next to the existing
+`levels_ticker` cookie. Precedence: `?range=` query → cookie → `3m`.
+
+**2. Chart cleanup in `_build_levels_figure`:**
+
+Mobile testing surfaced three issues — the chart legend was a wall of 5–9
+identical-looking S/R rows that ate half the viewport on phones; the
+in-chart title was redundant with the page H1; and the modebar was
+disabled, so a zoom-in had no undo.
+
+  - S/R lines now render via `layout.shapes` ONLY (no per-line scatter
+    legend trace). The side cards already enumerate every wall.
+  - Title removed from the figure (saves ~40px). Margins tightened
+    (`l/r/t/b = 48/12/12/32`).
+  - Yaxis dropped its "Price ($)" label in favor of a `$` tickprefix.
+  - Xaxis uses `nticks: 6` so labels stay readable at every timeframe.
+  - MAs are now computed on the full visible frame in one pass instead
+    of being conditionally added per window — the old logic skipped MA200
+    on short frames; the new logic just renders MA200 as all-NaN if it
+    doesn't have enough bars, which Plotly handles gracefully.
+  - **Modebar re-enabled.** `displaylogo: false` + a tight
+    `modeBarButtonsToRemove` allow-list keeps zoom/pan/reset but drops
+    lasso/select/spikeline noise.
+
+**3. Pull-to-refresh + edge-swipe-back gestures (every page):**
+
+`_GESTURES_SCRIPT` is a small inline IIFE injected by `_render_page` on
+every page. Two gestures:
+  - **Pull-to-refresh** — only armed when `window.scrollY === 0` at
+    touchstart. Translates `#ptr-indicator` down with the finger; at
+    70px the indicator changes label to "Release to refresh" and on
+    release fires `location.reload()`.
+  - **Edge-swipe-back** — touchstart within 30px of the left edge that
+    travels >80px horizontal (and is mostly horizontal, not vertical)
+    triggers `history.back()`. `/today` is treated as home — body
+    `data-active-nav="today"` short-circuits the back-nav so you can't
+    accidentally pop past the home page.
+
+Gesture capture skips `<input>`, `<textarea>`, `<select>`, and
+`#lvl-chart` / `.js-plotly-plot` so the chart's own pan/zoom isn't
+hijacked.
+
+**4. Visual + mobile nav refinements (`_BASE_CSS`, `_MOBILE_CSS`):**
+
+The single `_INDEX_CSS` constant was split into `_BASE_CSS + _NAV_CSS +
+_MOBILE_CSS` so the mobile @media block reliably wins the cascade — the
+old concatenation order let desktop `.nav-links` rules clobber the mobile
+slide-down panel.
+
+  - Body gets a subtle gradient + antialiasing.
+  - H1 uses a blue→purple gradient text clip.
+  - Cards get a soft inner highlight + hover lift (border + shadow).
+  - Badges are now pill-shaped uppercase chips instead of square tags.
+  - **Mobile nav rebuilt** as a 2-column grid panel inside the hamburger
+    (max-height: 75vh, animated reveal via opacity + max-height). Toggle
+    pushed right with `margin-left: auto`. Each nav link is a 42px-min
+    tap target with its own card-like surface.
+  - **Timeframe ribbon** has its own pill styling (`.rng-btn`,
+    `.rng-btn.active`) plus a hidden-scrollbar overflow ribbon for
+    narrow viewports.
+
+**5. Wall dedupe (`signals/options_walls.py`):**
+
+`_top_by_oi` was sorting raw contract list, so two contracts at the same
+strike (e.g. two different expirations) both made the top-N list and
+rendered as two stacked dashed lines at the same Y. Now it aggregates
+OI by strike (taking max) before ranking, so each strike appears at
+most once.
+
+**Tests:** +8 in `tests/test_web_app.py`, all green:
+  - Ribbon renders every button with the default (3M) marked active.
+  - `?range=1d` switches the Polygon timeframe to 5min and marks 1D active.
+  - `levels_range` cookie persists across requests.
+  - Invalid range query falls back to default rather than crashing.
+  - `_resample_bars` collapses 60 daily bars into ~8-10 weekly bars
+    with OHLCV intact.
+  - Gesture script + PTR indicator are present on every page
+    (`/today`, `/macro`, `/`, `/trades`, `/journal`).
+  - `data-active-nav` body marker matches the active page on each route.
+  - Modebar is enabled on /levels (`displayModeBar: false` absent,
+    `modeBarButtonsToRemove` present).
+
+**Tests:** full suite — 537 passed in 226s.
+
+---
+
 ## 2026-05-17 (PM-10) | Hamburger auto-close + /today wall summary + row wrapping
 
 Three small polishes around the new dashboard chrome:

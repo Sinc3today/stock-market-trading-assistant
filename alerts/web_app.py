@@ -250,20 +250,43 @@ _NAV_CSS = """
 .status-auto{background:#2d1b3d;color:#bc8cff;border:1px solid #6e40c9}
 """
 
-_INDEX_CSS = """
+_BASE_CSS = """
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-     background:#0d1117;color:#c9d1d9;line-height:1.5;padding:1rem;max-width:760px;margin:0 auto}
-h1{font-size:1.4rem;margin-bottom:1rem;color:#58a6ff}
-.alert-card{background:#161b22;border:1px solid #30363d;border-radius:8px;
-            padding:.9rem 1rem;margin-bottom:.75rem;text-decoration:none;color:inherit;display:block}
-.alert-card:hover{border-color:#58a6ff}
+html{-webkit-text-size-adjust:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,sans-serif;
+     background:linear-gradient(180deg,#0d1117 0%, #0a0e14 100%) fixed;
+     color:#c9d1d9;line-height:1.5;padding:1rem;max-width:760px;margin:0 auto;
+     -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+     overscroll-behavior-y:contain}    /* lets our PtR JS own the pull */
+h1{font-size:1.5rem;margin-bottom:1.1rem;color:#c9d1d9;font-weight:700;
+   letter-spacing:-.01em;
+   background:linear-gradient(90deg,#58a6ff 0%,#9d7aff 100%);
+   -webkit-background-clip:text;background-clip:text;color:transparent}
+.alert-card{background:linear-gradient(180deg,#161b22 0%,#13181f 100%);
+            border:1px solid #30363d;border-radius:10px;
+            padding:.95rem 1.05rem;margin-bottom:.75rem;
+            text-decoration:none;color:inherit;display:block;
+            box-shadow:0 1px 2px rgba(0,0,0,.4), 0 0 0 1px rgba(255,255,255,.02) inset;
+            transition:border-color .14s ease, transform .14s ease, box-shadow .14s ease}
+.alert-card:hover{border-color:#58a6ff;
+                  box-shadow:0 2px 8px rgba(31,111,235,.18), 0 0 0 1px rgba(88,166,255,.15) inset}
 .alert-row{display:flex;justify-content:space-between;font-size:.9rem;margin-top:.25rem;
            flex-wrap:wrap;gap:.3rem;align-items:center}
 .muted{color:#8b949e;font-size:.85rem}
-.badge{display:inline-block;padding:.1rem .5rem;border-radius:4px;font-size:.75rem;
-       background:#21262d;border:1px solid #30363d;margin-right:.25rem}
+.badge{display:inline-block;padding:.18rem .55rem;border-radius:999px;font-size:.7rem;
+       background:#21262d;border:1px solid #30363d;margin-right:.25rem;
+       font-weight:600;letter-spacing:.02em;text-transform:uppercase}
 .empty{text-align:center;color:#8b949e;padding:3rem 0}
+
+/* Pull-to-refresh indicator */
+#ptr-indicator{position:fixed;top:0;left:0;right:0;
+               display:flex;align-items:center;justify-content:center;
+               gap:.45rem;height:46px;color:#8b949e;font-size:.85rem;
+               background:linear-gradient(180deg,#0d1117 0%,rgba(13,17,23,0) 100%);
+               opacity:0;transform:translateY(-46px);pointer-events:none;
+               transition:transform .15s ease-out, opacity .15s ease-out;
+               z-index:9}
+#ptr-indicator .ptr-spinner{font-size:1.1rem;display:inline-block}
 
 /* /levels ticker picker */
 .lvl-picker{display:flex;gap:.5rem;align-items:center;padding:.6rem .8rem}
@@ -273,30 +296,78 @@ h1{font-size:1.4rem;margin-bottom:1rem;color:#58a6ff}
                    padding:.45rem 1rem;cursor:pointer;font-weight:600}
 .lvl-picker button:hover{background:#388bfd}
 
-/* ── Mobile: hamburger nav, single-col grids, bigger tap targets */
+/* /levels timeframe ribbon */
+.rng-ribbon{display:flex;gap:.3rem;padding:.5rem .55rem;overflow-x:auto;
+            -webkit-overflow-scrolling:touch;scrollbar-width:none}
+.rng-ribbon::-webkit-scrollbar{display:none}
+.rng-btn{flex:0 0 auto;padding:.4rem .7rem;border-radius:6px;font-size:.8rem;
+         font-weight:600;color:#8b949e;background:#0d1117;
+         border:1px solid #30363d;text-decoration:none;white-space:nowrap;
+         transition:background .12s ease, color .12s ease, border-color .12s ease}
+.rng-btn:hover{color:#c9d1d9;border-color:#58a6ff}
+.rng-btn.active{color:#fff;background:#1f6feb;border-color:#1f6feb}
+"""
+
+# The mobile @media block has to come AFTER _NAV_CSS so its rules win the
+# cascade — earlier versions concatenated it before and the desktop
+# nav-links rules (no media query) clobbered the mobile slide-down panel.
+_MOBILE_CSS = """
 @media (max-width:760px){
   body{padding:.6rem}
   h1{font-size:1.2rem;margin-bottom:.6rem}
   .alert-card{padding:.7rem .8rem}
-  .nav{margin:-.6rem -.6rem .8rem;padding:.5rem .6rem;flex-wrap:nowrap}
-  .nav-toggle{display:inline-block}
-  .nav-links{display:none;flex:1 0 100%;flex-direction:column;align-items:stretch;
-             gap:.25rem;margin-top:.6rem;margin-left:0;
-             border-top:1px solid #21262d;padding-top:.6rem}
-  .nav-toggle-input:checked ~ .nav-links{display:flex}
-  .nav-group{flex-direction:column;align-items:stretch;gap:.15rem;padding:.4rem 0;
-             border-left:none;border-top:1px solid #161b22}
-  .nav-group:first-child{border-top:none;padding-top:0}
-  .nav-group-label{display:block;padding:0 .5rem .15rem}
-  .nav a:not(.nav-brand){padding:.65rem .8rem;font-size:.95rem}   /* ~44px tall */
+  /* Keep flex-wrap:wrap (inherited from base .nav) — the panel needs to
+     wrap to its OWN row below the brand+toggle. nowrap was forcing it
+     to overflow off the right edge of the viewport. */
+  .nav{margin:-.6rem -.6rem .8rem;padding:.45rem .6rem;gap:.5rem}
+  .nav-toggle{display:inline-block;margin-left:auto}   /* push toggle to right */
+
+  /* Slide-down panel: takes the full viewport row below brand/toggle.
+     Animates via opacity + max-height for a fast GPU reveal — no layout
+     reflow. */
+  .nav-links{display:flex;flex:0 0 100%;width:100%;
+             flex-direction:column;align-items:stretch;
+             gap:.2rem;margin:0;padding:0;
+             max-height:0;opacity:0;overflow:hidden;pointer-events:none;
+             border-top:0 solid #21262d;
+             transition:max-height .18s ease-out, opacity .14s ease-out,
+                        margin .18s ease-out, padding .18s ease-out;
+             will-change:max-height,opacity}
+  .nav-toggle-input:checked ~ .nav-links{
+    max-height:75vh;opacity:1;pointer-events:auto;overflow:auto;
+    margin-top:.5rem;border-top-width:1px;padding-top:.5rem;
+  }
+
+  /* 2-column grid keeps the panel under ~280px tall instead of ~500px.
+     Group labels span both columns. Box-sizing makes the grid fit
+     inside the panel without horizontal overflow. */
+  .nav-group{display:grid;grid-template-columns:1fr 1fr;gap:.3rem;
+             padding:.35rem .25rem;border-left:none;border-top:1px solid #161b22;
+             align-items:stretch;width:100%;box-sizing:border-box;
+             min-width:0}
+  .nav-group:first-child{border-top:none;padding-top:.15rem}
+  .nav-group-label{display:block;grid-column:1/-1;padding:0 .15rem .15rem;
+                   font-weight:600;color:#8b949e;font-size:.7rem;
+                   text-transform:uppercase;letter-spacing:.06em;
+                   text-align:left}
+  .nav a:not(.nav-brand){padding:.65rem .4rem;font-size:.9rem;
+                         text-align:center;border:1px solid #21262d;
+                         background:#161b22;border-radius:6px;
+                         display:flex;align-items:center;justify-content:center;
+                         min-height:42px;min-width:0;width:100%}
+  .nav a:not(.nav-brand):active{background:#1f6feb;color:#fff}
+  .nav a.active{background:#1f6feb;color:#fff;border-color:#1f6feb}
+
   .grid{grid-template-columns:1fr !important;gap:.4rem !important}
   .row{flex-direction:column}
-  #lvl-chart{height:340px !important}
+  #lvl-chart{height:360px !important}
   /* Card rows: more breathing room between badge + value + timestamp */
   .alert-row{margin-top:.4rem}
   .alert-card > div:not(.alert-row){line-height:1.45}
 }
-""" + _NAV_CSS
+"""
+
+_INDEX_CSS = _BASE_CSS + _NAV_CSS + _MOBILE_CSS
 
 _DETAIL_CSS = _INDEX_CSS + """
 .section{background:#161b22;border:1px solid #30363d;border-radius:8px;
@@ -395,7 +466,7 @@ def _render_page(
     title: str, heading: str, body: str, css: str, active_nav: str,
     extra_head: str = "",
 ) -> str:
-    """Shared HTML wrapper: head + nav bar + page body."""
+    """Shared HTML wrapper: head + nav bar + page body + gesture support."""
     return f"""<!doctype html>
 <html><head>
 <meta charset="utf-8">
@@ -403,11 +474,107 @@ def _render_page(
 <title>{html.escape(title)}</title>
 <style>{css}</style>
 {extra_head}
-</head><body>
+</head><body data-active-nav="{html.escape(active_nav)}">
 {_render_nav(active_nav)}
 <h1>{html.escape(heading)}</h1>
 {body}
+{_PTR_INDICATOR_HTML}
+{_GESTURES_SCRIPT}
 </body></html>"""
+
+
+# Tiny pull-to-refresh indicator that lives at the top of every page,
+# hidden by default; the gesture script unhides it during a pull.
+_PTR_INDICATOR_HTML = '''
+<div id="ptr-indicator" aria-hidden="true">
+  <span class="ptr-spinner">↻</span>
+  <span class="ptr-label">Pull to refresh</span>
+</div>
+'''
+
+# Gesture support: pull-to-refresh + edge-swipe-back. No JS framework,
+# just touch events. Skips inputs/textareas/Plotly chart so chart pan
+# isn't hijacked by the back-swipe.
+_GESTURES_SCRIPT = '''
+<script>
+(function(){
+  var PTR_THRESHOLD = 70;         // pixels of pull before refresh triggers
+  var SWIPE_EDGE_X  = 30;         // pixels from left edge that count as a back-swipe start
+  var SWIPE_MIN_DX  = 80;         // pixels of horizontal travel to trigger back-nav
+  var HOME_NAV_KEY  = "today";    // back-swipe stops here
+
+  var ind   = document.getElementById("ptr-indicator");
+  var label = ind ? ind.querySelector(".ptr-label") : null;
+  var startY = 0, startX = 0, dy = 0, dx = 0, pulling = false, swiping = false;
+  var armed = false;
+
+  function inExcludedTarget(el){
+    while (el){
+      if (!el.tagName) break;
+      var tag = el.tagName.toUpperCase();
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (el.id === "lvl-chart") return true;
+      if (el.classList && el.classList.contains("js-plotly-plot")) return true;
+      el = el.parentNode;
+    }
+    return false;
+  }
+
+  document.addEventListener("touchstart", function(e){
+    if (e.touches.length !== 1) return;
+    if (inExcludedTarget(e.target)) return;
+    var t = e.touches[0];
+    startY = t.clientY;
+    startX = t.clientX;
+    dy = 0; dx = 0;
+    pulling = (window.scrollY <= 0);
+    swiping = (startX <= SWIPE_EDGE_X);
+  }, {passive: true});
+
+  document.addEventListener("touchmove", function(e){
+    if (e.touches.length !== 1) return;
+    var t = e.touches[0];
+    dy = t.clientY - startY;
+    dx = t.clientX - startX;
+
+    if (pulling && dy > 0 && Math.abs(dy) > Math.abs(dx)){
+      if (ind){
+        ind.style.transform = "translateY(" + Math.min(dy, PTR_THRESHOLD + 20) + "px)";
+        ind.style.opacity = Math.min(1, dy / PTR_THRESHOLD);
+        if (dy >= PTR_THRESHOLD){
+          armed = true;
+          if (label) label.textContent = "Release to refresh";
+        } else {
+          armed = false;
+          if (label) label.textContent = "Pull to refresh";
+        }
+      }
+    }
+  }, {passive: true});
+
+  document.addEventListener("touchend", function(){
+    if (pulling && armed){
+      if (label) label.textContent = "Refreshing…";
+      if (ind) ind.style.transform = "translateY(" + PTR_THRESHOLD + "px)";
+      location.reload();
+      return;
+    }
+    if (ind){ ind.style.transform = ""; ind.style.opacity = ""; }
+    if (label) label.textContent = "Pull to refresh";
+    armed = false;
+
+    if (swiping && dx > SWIPE_MIN_DX && Math.abs(dx) > Math.abs(dy) * 2){
+      var active = document.body.dataset.activeNav || "";
+      // /today is the home — don't pop history past it
+      if (active === HOME_NAV_KEY) return;
+      if (history.length > 1) history.back();
+      else                    location.href = "/today";
+    }
+    pulling = false; swiping = false;
+  }, {passive: true});
+})();
+</script>
+'''
 
 
 def _render_index(alerts: list[dict]) -> str:
@@ -1587,19 +1754,77 @@ _PLOTLY_CDN = '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>'
 _LEVELS_AUTO_REFRESH_META = '<meta http-equiv="refresh" content="300">'
 
 
+# ── Chart timeframe ribbon ─────────────────────────────
+# (key, label, days_back, polygon_timeframe, resample_rule, x_label_format)
+# - resample_rule None = use raw bars
+# - resample_rule "W-FRI" = weekly candles ending Friday
+# - resample_rule "ME"    = month-end candles
+_LEVELS_RANGES = [
+    ("1d",  "1D",     1,    "5min", None,    "%H:%M"),
+    ("7d",  "7D",    10,    "day",  None,    "%b %-d"),
+    ("14d", "14D",   20,    "day",  None,    "%b %-d"),
+    ("1m",  "1M",    40,    "day",  None,    "%b %-d"),
+    ("3m",  "3M",   100,    "day",  None,    "%b %-d"),
+    ("6m",  "6M",   200,    "day",  "W-FRI", "%b %d"),
+    ("1y",  "1Y",   400,    "day",  "W-FRI", "%b %d"),
+    ("5y",  "5Y",  1900,    "day",  "ME",    "%Y-%m"),
+    ("all", "All", 5000,    "day",  "ME",    "%Y-%m"),
+]
+_DEFAULT_RANGE = "3m"
+_LEVELS_RANGE_KEYS = {k for k, *_ in _LEVELS_RANGES}
+
+
+def _resample_bars(df, rule: str):
+    """Resample daily OHLCV bars to a coarser cadence. Used for 6M+ ranges
+    so we don't render 1300 daily candles on a 5Y chart."""
+    import pandas as pd
+    if df is None or len(df) == 0:
+        return df
+    cols = {c.lower(): c for c in df.columns}
+    # pandas resample needs a real DatetimeIndex
+    idx = df.index
+    if not isinstance(idx, pd.DatetimeIndex):
+        df = df.copy()
+        df.index = pd.to_datetime(df.index)
+    agg = {}
+    if "open"   in cols: agg[cols["open"]]   = "first"
+    if "high"   in cols: agg[cols["high"]]   = "max"
+    if "low"    in cols: agg[cols["low"]]    = "min"
+    if "close"  in cols: agg[cols["close"]]  = "last"
+    if "volume" in cols: agg[cols["volume"]] = "sum"
+    out = df.resample(rule).agg(agg).dropna(how="all")
+    return out
+
+
+def _normalise_range(key: str | None) -> str:
+    if key and key.lower() in _LEVELS_RANGE_KEYS:
+        return key.lower()
+    return _DEFAULT_RANGE
+
+
+def _range_spec(key: str) -> tuple:
+    for k, label, days, tf, rule, xfmt in _LEVELS_RANGES:
+        if k == key:
+            return (k, label, days, tf, rule, xfmt)
+    return _range_spec(_DEFAULT_RANGE)
+
+
 def _build_levels_figure(
     spy_df, mas: dict, swing: dict, walls: dict,
     ticker: str = "SPY",
+    range_key: str = _DEFAULT_RANGE,
 ) -> dict:
     """
     Build the Plotly figure spec (data + layout) as a plain dict.
 
     Layered:
-      1. Candlestick for the last 90 trading days
-      2. Three MA lines (20/50/200)
-      3. Horizontal call walls (red dashed) + put walls (green dashed)
-      4. Max pain marker (orange dotted)
-      5. Recent lookback high/low (yellow dotted)
+      1. Candlestick of the requested range (intraday for 1D, daily up
+         through 3M, weekly for 6M/1Y, monthly for 5Y/All).
+      2. MA20 / MA50 / MA200 — computed on the FULL frame so rolling(200)
+         doesn't go all-NaN on a short visible window.
+      3. Horizontal call walls (red dashed) + put walls (green dashed).
+      4. Max pain marker (orange dotted).
+      5. Recent lookback high/low (yellow dotted).
 
     Returns {"data": [...], "layout": {...}} — JSON-serializable.
     """
@@ -1608,10 +1833,21 @@ def _build_levels_figure(
     cols = {c.lower(): c for c in spy_df.columns} if spy_df is not None else {}
     needed = ("open", "high", "low", "close")
     if spy_df is None or any(c not in cols for c in needed):
-        return {"data": [], "layout": {"title": "No SPY data available"}}
+        return {"data": [], "layout": {"title": "No data available"}}
 
-    df = spy_df.tail(90)
-    x  = [str(d)[:10] for d in df.index]
+    # Visible candle frame: caller is responsible for trimming/resampling
+    # to the right cadence (intraday/daily/weekly/monthly) before we get
+    # here. MAs are computed on this same frame so they always have
+    # enough data to render (when there's at least `window` bars).
+    df = spy_df
+    _, _, _, _, _rule, xfmt = _range_spec(range_key)
+    def _fmt_idx(d):
+        if hasattr(d, "strftime"):
+            try:    return d.strftime(xfmt)
+            except: pass
+        return str(d)[:10]
+    x = [_fmt_idx(d) for d in df.index]
+    ma_full = {w: df[cols["close"]].rolling(w).mean() for w in (20, 50, 200)}
 
     traces: list[dict] = [{
         "type":      "candlestick",
@@ -1623,72 +1859,72 @@ def _build_levels_figure(
         "name":      ticker,
         "increasing": {"line": {"color": "#3fb950"}},
         "decreasing": {"line": {"color": "#f85149"}},
+        "showlegend": False,
     }]
 
-    closes = df[cols["close"]].rolling
     for window, color in [(20, "#58a6ff"), (50, "#bc8cff"), (200, "#f0c674")]:
-        if len(df) >= window:
-            ma_series = df[cols["close"]].rolling(window).mean()
-            traces.append({
-                "type": "scatter", "mode": "lines",
-                "x":    x,
-                "y":    [round(float(v), 2) if pd.notna(v) else None for v in ma_series],
-                "name": f"MA{window}",
-                "line": {"color": color, "width": 1.5},
-            })
+        series = ma_full[window]
+        if not any(pd.notna(v) for v in series):
+            continue   # underlying frame too short for this window
+        traces.append({
+            "type": "scatter", "mode": "lines",
+            "x":    x,
+            "y":    [round(float(v), 2) if pd.notna(v) else None for v in series],
+            "name": f"MA{window}",
+            "line": {"color": color, "width": 1.5},
+            "hoverinfo": "name+y",
+        })
 
+    # Horizontal S/R lines via layout.shapes ONLY — no per-line scatter
+    # legend entries (they used to flood the legend with 5-9 rows on a
+    # phone screen). The /levels side cards already enumerate every wall.
     shapes: list[dict] = []
-
-    def _hline(y, color, dash, name):
+    def _hline(y, color, dash):
         if y is None: return
         shapes.append({
             "type": "line", "xref": "paper", "x0": 0, "x1": 1,
             "y0": y, "y1": y,
             "line": {"color": color, "width": 1, "dash": dash},
         })
-        # Invisible scatter so the line gets a legend entry
-        traces.append({
-            "type": "scatter", "mode": "lines",
-            "x": [x[0], x[-1]], "y": [y, y],
-            "name": name,
-            "line": {"color": color, "width": 1, "dash": dash},
-            "hoverinfo": "name+y",
-        })
 
     for w in (walls.get("call_walls") or []):
-        _hline(w["strike"], "#f85149", "dash",
-               f'Call wall ${w["strike"]:g} ({w["open_interest"]:,} OI)')
+        _hline(w["strike"], "#f85149", "dash")
     for w in (walls.get("put_walls") or []):
-        _hline(w["strike"], "#3fb950", "dash",
-               f'Put wall ${w["strike"]:g} ({w["open_interest"]:,} OI)')
+        _hline(w["strike"], "#3fb950", "dash")
     if walls.get("max_pain") is not None:
-        _hline(walls["max_pain"], "#f0883e", "dot",
-               f'Max pain ${walls["max_pain"]:g}')
+        _hline(walls["max_pain"], "#f0883e", "dot")
     if swing.get("high_N") is not None:
-        _hline(swing["high_N"], "#e3b341", "dot",
-               f'{swing.get("lookback","?")}d high ${swing["high_N"]:g}')
+        _hline(swing["high_N"], "#e3b341", "dot")
     if swing.get("low_N") is not None:
-        _hline(swing["low_N"], "#e3b341", "dot",
-               f'{swing.get("lookback","?")}d low ${swing["low_N"]:g}')
+        _hline(swing["low_N"], "#e3b341", "dot")
 
     layout = {
-        "title":       f"{ticker} — last 90 days, levels overlaid",
+        # Title is in the page H1 already — drop the in-chart title to free
+        # ~40px of mobile real estate.
         "paper_bgcolor": "#0d1117",
         "plot_bgcolor":  "#0d1117",
-        "font":          {"color": "#c9d1d9"},
+        "font":          {"color": "#c9d1d9", "size": 11},
         "xaxis": {
             "rangeslider": {"visible": False},
             "gridcolor":   "#21262d",
-            "type":        "category",   # skip weekend gaps
+            "type":        "category",     # skip weekend gaps
+            "nticks":      6,              # ~weekly labels, not daily
+            "tickangle":   0,
+            "showspikes":  False,
         },
         "yaxis": {
             "gridcolor":   "#21262d",
-            "title":       "Price ($)",
+            "title":       None,
+            "tickprefix":  "$",
         },
-        "margin":     {"l": 50, "r": 10, "t": 50, "b": 40},
+        "margin":     {"l": 48, "r": 12, "t": 12, "b": 32},
         "shapes":     shapes,
+        # Show only the 3 MA legend entries (candlestick + S/R lines opt out
+        # via showlegend:False or by being shapes). Place on top to use the
+        # chart edge rather than steal vertical space at the bottom.
         "showlegend": True,
-        "legend":     {"orientation": "h", "y": -0.2},
+        "legend":     {"orientation": "h", "y": 1.06, "x": 0,
+                       "bgcolor": "rgba(0,0,0,0)", "font": {"size": 10}},
         "hovermode":  "x unified",
     }
     return {"data": traces, "layout": layout}
@@ -1721,11 +1957,13 @@ def _watchlist_for_picker() -> list[str]:
 
 
 def _render_levels(
-    ticker: str, df, mas: dict, swing: dict, walls: dict
+    ticker: str, df, mas: dict, swing: dict, walls: dict,
+    range_key: str = _DEFAULT_RANGE,
 ) -> str:
-    """Render the /levels page body (picker + chart + side tables)."""
+    """Render the /levels page body (picker + range ribbon + chart + side tables)."""
     import json as _json
-    figure = _build_levels_figure(df, mas, swing, walls, ticker=ticker)
+    figure = _build_levels_figure(df, mas, swing, walls,
+                                   ticker=ticker, range_key=range_key)
 
     # ── Ticker picker (form GET /levels/<select-value>) ──────
     options = "".join(
@@ -1734,11 +1972,25 @@ def _render_levels(
     )
     picker_html = f'''
 <form class="alert-card lvl-picker" method="get" action="/levels"
-      onsubmit="this.action='/levels/'+this.ticker.value;return true">
+      onsubmit="this.action='/levels/'+this.ticker.value+'?range={_esc(range_key)}';return true">
   <label style="font-size:.85rem;color:#8b949e">Ticker</label>
   <select name="ticker" style="flex:1">{options}</select>
   <button type="submit">Go</button>
 </form>'''
+
+    # ── Timeframe ribbon (1D / 7D / 1M / ... / All) ─────────
+    range_buttons = []
+    for k, label, *_ in _LEVELS_RANGES:
+        active = " active" if k == range_key else ""
+        href   = f"/levels/{_esc(ticker)}?range={_esc(k)}"
+        range_buttons.append(
+            f'<a class="rng-btn{active}" href="{href}">{_esc(label)}</a>'
+        )
+    range_html = (
+        '<div class="alert-card rng-ribbon">'
+        + "".join(range_buttons) +
+        '</div>'
+    )
 
     chart_html = f'''
 <div class="alert-card" style="padding:.5rem">
@@ -1749,7 +2001,16 @@ def _render_levels(
     "lvl-chart",
     {_json.dumps(figure["data"])},
     {_json.dumps(figure["layout"])},
-    {{responsive: true, displayModeBar: false}}
+    {{
+      responsive: true,
+      // Compact modebar: keep zoom + reset, drop the noisy stuff. The
+      // user previously had no way to undo a zoom-in on the chart.
+      displaylogo: false,
+      modeBarButtonsToRemove: [
+        "lasso2d", "select2d", "toggleSpikelines",
+        "hoverClosestCartesian", "hoverCompareCartesian"
+      ]
+    }}
   );
 </script>'''
 
@@ -1820,7 +2081,7 @@ def _render_levels(
         'Once Polygon options access is wired this card fills in.</div>'
     )
 
-    body = picker_html + chart_html + summary_html + walls_html
+    body = picker_html + range_html + chart_html + summary_html + walls_html
     return _render_page(
         title       = f"Trading Assistant - {ticker} Levels",
         heading     = f"{ticker} Levels",
@@ -1907,68 +2168,95 @@ def today_page():
     ))
 
 
-def _build_levels_view(ticker: str) -> str:
-    """Fetch the bars + levels + walls for `ticker` and return the rendered HTML."""
+def _build_levels_view(ticker: str, range_key: str = _DEFAULT_RANGE) -> str:
+    """Fetch the bars + levels + walls for `ticker` at the requested range
+    and return the rendered HTML. Range determines:
+      - Polygon timeframe (5min vs day)
+      - days_back / limit
+      - whether to resample (weekly for 6M+ daily, monthly for 5Y+)
+    """
     from data.polygon_client    import PolygonClient
     from signals.price_levels   import recent_swing_levels, moving_average_levels
     from signals.options_walls  import load_walls
 
+    range_key = _normalise_range(range_key)
+    _, _, days_back, polygon_tf, resample_rule, _ = _range_spec(range_key)
+
     df = None
     try:
-        df = PolygonClient().get_bars(ticker, timeframe=config.SWING_PRIMARY_TIMEFRAME,
-                                       limit=250, days_back=365)
+        # Limit needs headroom over the bar-count estimate: ~78 5-min bars
+        # per trading day, ~22 trading days per month, etc.
+        limit = max(500, days_back * (78 if polygon_tf == "5min" else 2))
+        df = PolygonClient().get_bars(
+            ticker, timeframe=polygon_tf, limit=limit, days_back=days_back + 30,
+        )
     except Exception as e:
-        logger.warning(f"/levels/{ticker}: bars fetch failed: {e}")
+        logger.warning(f"/levels/{ticker} ({range_key}): bars fetch failed: {e}")
+
+    if df is not None and resample_rule and len(df) > 0:
+        try:
+            df = _resample_bars(df, resample_rule)
+        except Exception as e:
+            logger.warning(f"/levels/{ticker} ({range_key}): resample failed: {e}")
 
     mas   = moving_average_levels(df) if df is not None else {}
-    swing = recent_swing_levels(df, lookback=50) if df is not None else {}
+    swing = recent_swing_levels(df, lookback=min(50, len(df) if df is not None else 0)) \
+            if df is not None else {}
     walls = {}
     try:
         spot = (mas or {}).get("close")
         if spot:
             walls = load_walls(ticker, spot=spot)
     except Exception as e:
-        logger.warning(f"/levels/{ticker}: walls fetch failed: {e}")
+        logger.warning(f"/levels/{ticker} ({range_key}): walls fetch failed: {e}")
 
-    return _render_levels(ticker, df, mas, swing, walls)
+    return _render_levels(ticker, df, mas, swing, walls, range_key=range_key)
 
 
 LEVELS_TICKER_COOKIE = "levels_ticker"
+LEVELS_RANGE_COOKIE  = "levels_range"
 
 
-def _levels_response(symbol: str) -> HTMLResponse:
-    """Build the response + persist the active ticker in a 90-day cookie so
-    the next visit lands on the same chart."""
-    body = _build_levels_view(symbol)
+def _levels_response(symbol: str, range_key: str) -> HTMLResponse:
+    """Build the response + persist the active ticker and range in
+    90-day cookies so the next visit lands on the same chart at the
+    same timeframe."""
+    body = _build_levels_view(symbol, range_key=range_key)
     resp = HTMLResponse(body)
-    resp.set_cookie(
-        key      = LEVELS_TICKER_COOKIE,
-        value    = symbol,
-        max_age  = 60 * 60 * 24 * 90,   # 90 days
-        samesite = "lax",
-        httponly = False,
-    )
+    resp.set_cookie(LEVELS_TICKER_COOKIE, symbol,    max_age=60*60*24*90,
+                    samesite="lax", httponly=False)
+    resp.set_cookie(LEVELS_RANGE_COOKIE,  range_key, max_age=60*60*24*90,
+                    samesite="lax", httponly=False)
     return resp
 
 
 @app.get("/levels", response_class=HTMLResponse)
 def levels_page_default(
     ticker:         str | None = None,
+    range:          str | None = None,
     levels_ticker:  str | None = Cookie(default=None),
+    levels_range:   str | None = Cookie(default=None),
 ):
     """
     Picks ticker from (in order): explicit ?ticker= query → last-visited
-    cookie → SPY. Picker form GETs hit this route on submit.
+    cookie → SPY. Range from ?range= → cookie → default.
     """
-    sym = _normalise_ticker(ticker or levels_ticker, fallback="SPY")
-    return _levels_response(sym)
+    sym  = _normalise_ticker(ticker or levels_ticker, fallback="SPY")
+    rng  = _normalise_range(range  or levels_range)
+    return _levels_response(sym, rng)
 
 
 @app.get("/levels/{ticker}", response_class=HTMLResponse)
-def levels_page_for_ticker(ticker: str):
-    """Per-ticker chart + S/R levels. Ticker is validated; invalid → SPY."""
+def levels_page_for_ticker(
+    ticker: str,
+    range:  str | None = None,
+    levels_range: str | None = Cookie(default=None),
+):
+    """Per-ticker chart + S/R levels. Ticker is validated; invalid → SPY.
+    Range from ?range= → cookie → default."""
     sym = _normalise_ticker(ticker, fallback="SPY")
-    return _levels_response(sym)
+    rng = _normalise_range(range or levels_range)
+    return _levels_response(sym, rng)
 
 
 def _macro_chat_instance() -> MacroChat:
