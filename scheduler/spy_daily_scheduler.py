@@ -30,6 +30,7 @@ import pytz
 
 import config
 from signals.spy_daily_strategy import SPYDailyStrategy
+from signals.morning_briefer    import MorningBriefer
 from journal.plan_logger         import PlanLogger
 
 ET = pytz.timezone("US/Eastern")
@@ -47,10 +48,19 @@ def job_spy_premarket(
     event_calendar=None,
 ):
     """
-    09:15 ET — Build daily SPY play and post to Discord.
-    Skips automatically on weekends (APScheduler cron handles this).
+    09:15 ET — Build the morning brief and post to Discord + Pushover.
+
+    Uses MorningBriefer, which wraps SPYDailyStrategy with:
+      - VIX term structure context (yesterday's 08:55 snapshot)
+      - Sector breadth context     (yesterday's 10:00 snapshot)
+      - Today's high-impact events from event_calendar
+      - Claude-synthesized narrative + skip + watch conditions
+
+    The base play (regime + options) still comes from SPYDailyStrategy
+    so its locked, backtested logic is unchanged. The briefer only adds
+    context and decision hints.
     """
-    logger.info("▶ SPY pre-market job starting")
+    logger.info("▶ Morning brief job starting")
     try:
         strategy = SPYDailyStrategy(
             polygon_client = polygon_client,
@@ -58,23 +68,26 @@ def job_spy_premarket(
             ivr_client     = ivr_client,
             event_calendar = event_calendar,
         )
-        play = strategy.build_today()
+        briefer = MorningBriefer(
+            spy_strategy   = strategy,
+            event_calendar = event_calendar,
+        )
+        brief = briefer.build_today()
 
-        # Save to plan log regardless of tradeable/skip
-        PlanLogger().save_plan(play.get("plan_payload", {}))
-
-        # Post to Discord
+        # Plan is saved inside briefer; just post to Discord here.
         if post_fn:
-            post_fn(play["discord_message"])
+            post_fn(brief["discord_message"])
 
         logger.info(
-            f"SPY pre-market done — "
-            f"regime={play['regime']} | tradeable={play['tradeable']}"
+            f"Morning brief done — "
+            f"regime={brief['regime']} | tradeable={brief['tradeable']} | "
+            f"skip={len(brief.get('skip_conditions') or [])} | "
+            f"watch={len(brief.get('watch_conditions') or [])}"
         )
     except Exception as e:
-        logger.exception(f"SPY pre-market job failed: {e}")
+        logger.exception(f"Morning brief job failed: {e}")
         if post_fn:
-            post_fn(f"⚠️ **SPY daily play error:** {e}")
+            post_fn(f"⚠️ **Morning brief error:** {e}")
 
 
 def job_spy_close_snapshot(polygon_client, post_fn=None):
