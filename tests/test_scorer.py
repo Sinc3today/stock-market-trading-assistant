@@ -67,7 +67,7 @@ def test_scorer_returns_result(score_result):
     assert "final_score" in score_result
     assert "tier" in score_result
     assert "direction" in score_result
-    print(f"\n✅ Score result returned")
+    print("\n✅ Score result returned")
 
 def test_scorer_score_in_range(score_result):
     assert 0 <= score_result["final_score"] <= 100
@@ -87,7 +87,7 @@ def test_scorer_layer_scores_present(score_result):
     assert "trend"  in layers
     assert "setup"  in layers
     assert "volume" in layers
-    print(f"\n✅ Layer scores:")
+    print("\n✅ Layer scores:")
     print(f"   Trend:  {layers['trend']['score']}/{layers['trend']['max']}")
     print(f"   Setup:  {layers['setup']['score']}/{layers['setup']['max']}")
     print(f"   Volume: {layers['volume']['score']}/{layers['volume']['max']}")
@@ -178,7 +178,7 @@ def test_gates_fail_with_neutral_direction(score_result):
         entry=170.0, stop=166.0, target=182.0
     )
     assert any("neutral" in f.lower() for f in failures)
-    print(f"\n✅ Neutral direction correctly blocked")
+    print("\n✅ Neutral direction correctly blocked")
 
 
 # ─────────────────────────────────────────
@@ -235,7 +235,7 @@ def test_alert_builder_discord_format(indicator_results, score_result):
     assert "170.0"    in msg
     assert "R/R"      in msg
     assert "EST"      in msg   # Timestamp includes EST
-    print(f"\n✅ Discord message formatted correctly")
+    print("\n✅ Discord message formatted correctly")
     print("\n--- SAMPLE DISCORD MESSAGE ---")
     print(msg)
     print("------------------------------")

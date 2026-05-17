@@ -68,7 +68,7 @@ def test_low_score_blocked(monkeypatch):
     low    = {"final_score": 55, "direction": "bullish", "tier": "watchlist"}
     result = OptionsLayer().analyze("AAPL", low, 170, 182, 166, iv_rank=20)
     assert result["tradeable"] is False
-    print(f"\n✅ Low score blocked")
+    print("\n✅ Low score blocked")
 
 
 # ─────────────────────────────────────────
@@ -87,14 +87,14 @@ def test_debit_spread_bullish_uses_calls(options, bullish_standard):
     result = options.analyze("AAPL", bullish_standard, 170, 182, 166, iv_rank=20)
     types = [l["option_type"] for l in result["legs"]]
     assert all(t == "CALL" for t in types)
-    print(f"\n✅ Bull debit spread → all CALLs")
+    print("\n✅ Bull debit spread → all CALLs")
 
 def test_debit_spread_bearish_uses_puts(options, bearish_standard):
     result = options.analyze("AAPL", bearish_standard, 170, 158, 174, iv_rank=20)
     assert result["strategy"] == "debit_spread"
     types = [l["option_type"] for l in result["legs"]]
     assert all(t == "PUT" for t in types)
-    print(f"\n✅ Bear debit spread → all PUTs")
+    print("\n✅ Bear debit spread → all PUTs")
 
 def test_credit_spread_has_two_legs(options, bullish_standard):
     result = options.analyze("AAPL", bullish_standard, 170, 182, 166, iv_rank=55)
@@ -108,7 +108,7 @@ def test_iron_condor_has_four_legs(options, neutral_score):
     put_legs  = [l for l in result["legs"] if l["option_type"] == "PUT"]
     assert len(call_legs) == 2
     assert len(put_legs)  == 2
-    print(f"\n✅ Iron condor → 4 legs (2 calls, 2 puts)")
+    print("\n✅ Iron condor → 4 legs (2 calls, 2 puts)")
 
 def test_buy_strike_lower_than_sell_for_bull_spread(options, bullish_standard):
     result = options.analyze("AAPL", bullish_standard, 170, 182, 166, iv_rank=20)
@@ -155,5 +155,5 @@ def test_discord_addon_shows_strategy(options, bullish_standard):
     assert "DEBIT SPREAD" in result["discord_addon"].upper()
     assert "BUY"  in result["discord_addon"]
     assert "SELL" in result["discord_addon"]
-    print(f"\n✅ Discord addon preview:")
+    print("\n✅ Discord addon preview:")
     print(result["discord_addon"])

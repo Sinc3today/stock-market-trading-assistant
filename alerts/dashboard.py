@@ -206,7 +206,6 @@ def render_alert_card(alert: dict):
     mode      = alert.get("mode", "—")
 
     dir_arrow = "📈" if direction == "BULLISH" else "📉"
-    color     = score_color(score)
 
     with st.expander(
         f"{emoji} **{ticker}** — Score: {score}/100 | {direction} {dir_arrow} | {mode} | {timestamp}",
@@ -452,7 +451,6 @@ def render_performance():
 
     # Use trade recorder stats as primary source — richer and always populated
     has_trades  = tr_stats["total"] > 0
-    has_closed  = tr_stats["closed"] > 0
     has_alerts  = stats["total_alerts"] > 0
 
     if not has_trades and not has_alerts:

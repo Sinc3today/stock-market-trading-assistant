@@ -271,7 +271,7 @@ class PremarketScanner:
 
         lines = [
             f"🌅 **PREMARKET SCAN** — {now_est}",
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         ]
 
         if priority:
@@ -296,8 +296,8 @@ class PremarketScanner:
                     f"{r['trend_emoji']} {r['trend'].upper()}"
                 )
 
-        lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append(f"⏰ Swing scan fires at 9:00 AM EST")
+        lines.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("⏰ Swing scan fires at 9:00 AM EST")
 
         return "\n".join(lines)
 

@@ -164,15 +164,15 @@ def test_iron_condor_win(recorder):
 
 def test_invalid_trade_id_returns_false(recorder):
     assert recorder.log_exit("FAKEID", 180.0) is False
-    print(f"\n✅ Invalid ID handled gracefully")
+    print("\n✅ Invalid ID handled gracefully")
 
 def test_get_open_and_closed(recorder):
     t1 = recorder.log_entry("AAPL", 170.0, 10)
-    t2 = recorder.log_entry("MSFT", 380.0, 5)
+    recorder.log_entry("MSFT", 380.0, 5)
     recorder.log_exit(t1, 182.0)
     assert len(recorder.get_open_trades())   == 1
     assert len(recorder.get_closed_trades()) == 1
-    print(f"\n✅ Open/closed split correct")
+    print("\n✅ Open/closed split correct")
 
 def test_summary_stats_mixed_strategies(recorder):
     t1 = recorder.log_entry("AAPL", 170.0, 10, strategy="stock")

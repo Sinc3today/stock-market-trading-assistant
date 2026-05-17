@@ -71,7 +71,6 @@ class EconomicScanner:
         results  = []
 
         for release in released:
-            series_id = release["series_id"]
             impact    = release.get("impact", "MEDIUM")
 
             # Build AI analysis for each release
@@ -265,7 +264,7 @@ Be direct. No disclaimers."""
         # Recent releases
         recent = snapshot.get("recent_releases", [])
         if recent:
-            lines.append(f"\n📅 **Recent Releases** (last 7 days):")
+            lines.append("\n📅 **Recent Releases** (last 7 days):")
             for r in recent[:3]:
                 lines.append(
                     f"  • **{r['name']}**: {r['current_value']} "

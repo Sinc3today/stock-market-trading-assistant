@@ -5,7 +5,6 @@ Isolated to tmp_path via monkeypatched config.LOG_DIR.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from datetime import date
@@ -76,7 +75,7 @@ def test_kb_stats_and_markdown(kb):
 
 
 def test_kb_confidence_clamped(kb):
-    eid = kb.append(KBEntry(date="2026-01-01", category="other", claim="x", confidence=2.5))
+    kb.append(KBEntry(date="2026-01-01", category="other", claim="x", confidence=2.5))
     row = kb.all()[0]
     assert row["confidence"] == 1.0
 

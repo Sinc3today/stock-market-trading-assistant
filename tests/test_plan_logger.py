@@ -2,7 +2,9 @@
 tests/test_plan_logger.py — Test PlanLogger
 All tests use tmp_path so no real files are written.
 """
-import pytest, sys, os, json
+import pytest
+import sys
+import os
 from datetime import date, timedelta
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from journal.plan_logger import PlanLogger

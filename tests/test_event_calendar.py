@@ -103,7 +103,7 @@ class TestOPEXDates:
         eve_dates  = {date.fromisoformat(e["date"]) for e in events if e["type"] == "OPEX_EVE"}
         bleed = {d - timedelta(days=1) for d in opex_dates} & eve_dates
         assert not bleed, f"Non-quarterly months have OPEX_EVE: {bleed}"
-        print(f"\n✅ Non-quarterly months have no OPEX_EVE")
+        print("\n✅ Non-quarterly months have no OPEX_EVE")
 
 
 # ─────────────────────────────────────────
@@ -192,7 +192,7 @@ class TestFullCalendar:
         with patch.object(cal, "_fetch_fomc_dates", return_value=None):
             dates = cal.get_block_dates(months_ahead=3)
         assert len(dates) == len(set(dates))
-        print(f"\n✅ No duplicate dates in block list")
+        print("\n✅ No duplicate dates in block list")
 
     def test_all_types_represented(self, cal):
         with patch.object(cal, "_fetch_fomc_dates", return_value=None):
@@ -209,7 +209,7 @@ class TestFullCalendar:
         with patch.object(cal, "get_block_dates", return_value=[future_fomc]):
             assert cal.is_event_day(future_fomc) is True
             assert cal.is_event_day(date.today()) is False
-        print(f"\n✅ is_event_day correctly detects injected FOMC date")
+        print("\n✅ is_event_day correctly detects injected FOMC date")
 
     def test_is_event_day_today_not_blocked(self, cal):
         """Normally today should not be a block day (unless it really is)."""
@@ -243,8 +243,6 @@ class TestFullCalendar:
         # cal fixture uses tmp_path — no prior cache exists
         with patch.object(cal, "_fetch_fomc_dates", return_value=None):
             cal.get_block_dates(months_ahead=3)
-        from data.event_calendar import _cache_file
-        import data.event_calendar as ec_mod
         # temporarily override LOG_DIR path for assertion
         cache_path = os.path.join(config.LOG_DIR, "event_calendar.json")
         assert os.path.exists(cache_path)
@@ -256,7 +254,8 @@ class TestFullCalendar:
 
     def test_cache_is_used_on_second_call(self, cal):
         """Verify second call reads from cache by checking file mtime doesn't change."""
-        import config, time
+        import config
+        import time
         with patch.object(cal, "_fetch_fomc_dates", return_value=None):
             cal.get_block_dates(months_ahead=3)  # first call — builds
         cache_path = os.path.join(config.LOG_DIR, "event_calendar.json")

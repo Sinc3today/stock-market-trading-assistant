@@ -12,7 +12,7 @@ import pytest
 import sys
 import os
 from datetime import date, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -179,7 +179,7 @@ def test_put_with_large_existing_oi_is_hedge(scanner):
     result = scanner._score_contract(row, "SPY", 500.0, date.today())
     if result:
         assert result["implied_direction"] == "hedge"
-        print(f"\n✅ Put hedge correctly identified")
+        print("\n✅ Put hedge correctly identified")
     else:
         print("\n✅ Low vol/OI put filtered out (normal)")
 
@@ -229,7 +229,7 @@ def test_signal_has_required_fields(scanner):
                 "volume","open_interest","vol_oi_ratio","implied_direction",
                 "flags","conviction","spot_price","timestamp"):
         assert key in result, f"Missing field: {key}"
-    print(f"\n✅ All required fields present")
+    print("\n✅ All required fields present")
 
 
 # ─────────────────────────────────────────
@@ -274,7 +274,7 @@ def test_discord_post_called_when_signals_found(scanner):
     assert len(posted) == 1
     assert "SPY" in posted[0]
     assert "UNUSUAL OPTIONS ACTIVITY" in posted[0]
-    print(f"\n✅ Discord message posted with SPY signal")
+    print("\n✅ Discord message posted with SPY signal")
 
 def test_no_discord_post_when_no_signals(scanner):
     """No Discord post if no signals found."""

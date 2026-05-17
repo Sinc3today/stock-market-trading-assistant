@@ -17,7 +17,8 @@ If ZERO setups fire, the script shows raw scores so you
 can see exactly how close each strategy is to the threshold.
 """
 
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
@@ -62,7 +63,7 @@ def run():
     ics, _ = _score_iron_condor(ctx)
 
     print(f"\n{'─'*58}")
-    print(f"  RAW SCORES (before confluence bonus)")
+    print("  RAW SCORES (before confluence bonus)")
     print(f"{'─'*58}")
     print(f"  📈 Call Debit Spread:  {cs:3d}/100  ", end="")
     print("✅ FIRES" if cs >= config.SCORE_ALERT_MINIMUM else f"❌ needs {config.SCORE_ALERT_MINIMUM}")
@@ -85,8 +86,8 @@ def run():
         print(f"  Highest score: {max(cs, ps, ics)}/100")
         if max(cs, ps, ics) >= 35:
             print(f"\n  ⚠️  Scores are close but below threshold ({config.SCORE_ALERT_MINIMUM}).")
-            print(f"  You can lower SCORE_ALERT_MINIMUM in config.py to 35")
-            print(f"  to confirm the engine works, then raise it back.")
+            print("  You can lower SCORE_ALERT_MINIMUM in config.py to 35")
+            print("  to confirm the engine works, then raise it back.")
         return
 
     for setup in setups:
@@ -97,13 +98,13 @@ def run():
         print(f"   Score:       {setup.score}/100")
         print(f"   Timeframe:   {setup.timeframe}")
         print(f"   Direction:   {setup.direction}")
-        print(f"\n   Why it fired:")
+        print("\n   Why it fired:")
         for r in setup.reasons:
             print(f"     • {r}")
 
         if setup.strategy in ("call_debit_spread", "put_debit_spread"):
             opt = "CALL" if setup.strategy == "call_debit_spread" else "PUT"
-            print(f"\n   Estimated Legs:")
+            print("\n   Estimated Legs:")
             print(f"     BUY  {opt} ${setup.long_strike:.0f}")
             print(f"     SELL {opt} ${setup.short_strike:.0f}")
             print(f"     Est. debit:   ~${setup.est_debit:.2f}/share")
@@ -112,7 +113,7 @@ def run():
             print(f"     Spread R/R:   ~{setup.spread_rr:.1f}:1")
 
         elif setup.strategy == "iron_condor":
-            print(f"\n   Estimated Legs:")
+            print("\n   Estimated Legs:")
             print(f"     BUY  PUT  ${setup.ic_put_long:.0f}")
             print(f"     SELL PUT  ${setup.ic_put_short:.0f}")
             print(f"     SELL CALL ${setup.ic_call_short:.0f}")

@@ -110,7 +110,7 @@ def test_pre_trade_prompt_contains_ticker(advisor, mock_score, mock_ma):
     assert "AAPL"    in prompt
     assert "82"      in prompt
     assert "bullish" in prompt
-    print(f"\n✅ Pre-trade prompt contains correct data")
+    print("\n✅ Pre-trade prompt contains correct data")
 
 def test_pre_trade_prompt_includes_user_question(advisor, mock_score):
     prompt = advisor._build_pre_trade_prompt(
@@ -118,7 +118,7 @@ def test_pre_trade_prompt_includes_user_question(advisor, mock_score):
         None, None, "Is the volume strong enough?"
     )
     assert "Is the volume strong enough?" in prompt
-    print(f"\n✅ User question included in prompt")
+    print("\n✅ User question included in prompt")
 
 def test_pre_trade_prompt_includes_options(advisor, mock_score):
     options_ctx = {
@@ -133,7 +133,7 @@ def test_pre_trade_prompt_includes_options(advisor, mock_score):
     )
     assert "OPTIONS CONTEXT" in prompt
     assert "debit_spread"    in prompt
-    print(f"\n✅ Options context included in pre-trade prompt")
+    print("\n✅ Options context included in pre-trade prompt")
 
 def test_pre_trade_prompt_includes_history(advisor, mock_score, mock_trade):
     prompt = advisor._build_pre_trade_prompt(
@@ -141,7 +141,7 @@ def test_pre_trade_prompt_includes_history(advisor, mock_score, mock_trade):
         None, [mock_trade], ""
     )
     assert "PAST TRADES" in prompt
-    print(f"\n✅ Trade history included in pre-trade prompt")
+    print("\n✅ Trade history included in pre-trade prompt")
 
 def test_post_trade_prompt_contains_trade_data(advisor, mock_trade, mock_lesson):
     prompt = advisor._build_post_trade_prompt(
@@ -151,7 +151,7 @@ def test_post_trade_prompt_contains_trade_data(advisor, mock_trade, mock_lesson)
     assert "debit_spread" in prompt
     assert "300.0"        in prompt
     assert "calm"         in prompt
-    print(f"\n✅ Post-trade prompt contains correct trade data")
+    print("\n✅ Post-trade prompt contains correct trade data")
 
 def test_post_trade_prompt_includes_patterns(advisor, mock_trade, mock_lesson):
     patterns = {
@@ -165,14 +165,14 @@ def test_post_trade_prompt_includes_patterns(advisor, mock_trade, mock_lesson):
     )
     assert "TRADING PATTERNS" in prompt
     assert "75.0"             in prompt
-    print(f"\n✅ Patterns included in post-trade prompt")
+    print("\n✅ Patterns included in post-trade prompt")
 
 def test_post_trade_prompt_includes_user_question(advisor, mock_trade):
     prompt = advisor._build_post_trade_prompt(
         mock_trade, None, None, "Did I exit too early?"
     )
     assert "Did I exit too early?" in prompt
-    print(f"\n✅ User question included in post-trade prompt")
+    print("\n✅ User question included in post-trade prompt")
 
 def test_general_prompt_contains_question(advisor):
     prompt = advisor._build_general_prompt(
@@ -180,14 +180,14 @@ def test_general_prompt_contains_question(advisor):
     )
     assert "When should I use a credit spread?" in prompt
     assert "trading coach" in prompt.lower()
-    print(f"\n✅ General prompt built correctly")
+    print("\n✅ General prompt built correctly")
 
 def test_general_prompt_includes_context(advisor):
     ctx    = {"win_rate": 65.0, "total_trades": 20}
     prompt = advisor._build_general_prompt("What should I focus on?", ctx)
     assert "65.0"    in prompt
     assert "context" in prompt.lower()
-    print(f"\n✅ Context included in general prompt")
+    print("\n✅ Context included in general prompt")
 
 
 # ─────────────────────────────────────────
@@ -199,16 +199,16 @@ def test_ask_without_api_key_returns_string(monkeypatch):
     a      = AIAdvisor()
     result = a.ask("What is RSI divergence?")
     assert isinstance(result, str) and len(result) > 0
-    print(f"\n✅ ask() returns string without API key")
+    print("\n✅ ask() returns string without API key")
 
 def test_pre_trade_without_api_key_returns_string(monkeypatch, mock_score):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     result = AIAdvisor().pre_trade_analysis("AAPL", mock_score)
     assert isinstance(result, str)
-    print(f"\n✅ pre_trade_analysis() safe without API key")
+    print("\n✅ pre_trade_analysis() safe without API key")
 
 def test_post_trade_without_api_key_returns_string(monkeypatch, mock_trade):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     result = AIAdvisor().post_trade_review(mock_trade)
     assert isinstance(result, str)
-    print(f"\n✅ post_trade_review() safe without API key")
+    print("\n✅ post_trade_review() safe without API key")

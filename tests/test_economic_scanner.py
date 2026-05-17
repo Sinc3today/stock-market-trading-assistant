@@ -113,7 +113,7 @@ def test_discord_alert_format(scanner):
     assert "CPI" in alert
     assert "315.6" in alert
     assert "ECONOMIC RELEASE" in alert
-    print(f"\n✅ Discord alert formatted correctly")
+    print("\n✅ Discord alert formatted correctly")
 
 def test_briefing_format(scanner):
     mock_snapshot = {
@@ -130,4 +130,4 @@ def test_briefing_format(scanner):
     formatted = scanner._format_for_briefing(mock_snapshot, "Markets look cautious.")
     assert "ECONOMIC CONDITIONS" in formatted
     assert "CPI" in formatted
-    print(f"\n✅ Briefing format correct")
+    print("\n✅ Briefing format correct")

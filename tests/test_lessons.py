@@ -11,7 +11,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from journal.lessons import LessonsJournal, EMOTION_OPTIONS
+from journal.lessons import LessonsJournal
 
 
 @pytest.fixture
@@ -43,7 +43,7 @@ def _log_sample(journal, trade_id="T001", outcome="win", followed=True,
 def test_log_lesson_returns_true(journal):
     result = _log_sample(journal)
     assert result is True
-    print(f"\n✅ Lesson logged successfully")
+    print("\n✅ Lesson logged successfully")
 
 
 def test_lesson_saved_correctly(journal):
@@ -68,7 +68,7 @@ def test_lesson_clamps_quality_scores(journal):
     assert lesson["entry_quality"]   == 5
     assert lesson["exit_quality"]    == 1
     assert lesson["execution_score"] == 5
-    print(f"\n✅ Quality scores clamped correctly")
+    print("\n✅ Quality scores clamped correctly")
 
 
 def test_flags_generated_on_loss(journal):
@@ -103,7 +103,7 @@ def test_patterns_empty_with_no_data(journal):
     patterns = journal.get_patterns()
     assert patterns["total_lessons"] == 0
     assert patterns["insights"]      == []
-    print(f"\n✅ Empty patterns handled")
+    print("\n✅ Empty patterns handled")
 
 
 def test_patterns_requires_3_trades(journal):
@@ -111,7 +111,7 @@ def test_patterns_requires_3_trades(journal):
     _log_sample(journal, "T002", "loss")
     patterns = journal.get_patterns()
     assert "Log more trades" in patterns["insights"][0]
-    print(f"\n✅ Needs 3 trades for insights")
+    print("\n✅ Needs 3 trades for insights")
 
 
 def test_system_adherence_tracked(journal):
@@ -159,7 +159,7 @@ def test_insights_generated(journal):
 
     patterns = journal.get_patterns()
     assert len(patterns["insights"]) > 0
-    print(f"\n✅ Insights generated:")
+    print("\n✅ Insights generated:")
     for insight in patterns["insights"]:
         print(f"   {insight}")
 

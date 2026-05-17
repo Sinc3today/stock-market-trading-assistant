@@ -129,7 +129,6 @@ class IVRClient:
 
             # Step 2: find target expiry (25–40 DTE)
             today      = date.today()
-            target_dte = (today + timedelta(days=30)).isoformat()
             min_expiry = (today + timedelta(days=25)).isoformat()
             max_expiry = (today + timedelta(days=40)).isoformat()
 
@@ -193,7 +192,8 @@ class IVRClient:
         We maintain a simple rolling log of daily IV readings.
         First run will return 50.0 (neutral) until enough history builds.
         """
-        import json, os
+        import json
+        import os
         history_path = os.path.join("logs", f"iv_history_{ticker}.json")
         os.makedirs("logs", exist_ok=True)
 
@@ -280,7 +280,7 @@ if __name__ == "__main__":
     vix = vix_client.get_current()
     hist = vix_client.get_history(days=252)
     if hist is not None:
-        print(f"\n── VIX context ──")
+        print("\n── VIX context ──")
         print(f"  Current VIX:  {vix:.2f}")
         print(f"  52w VIX high: {hist['close'].max():.2f}")
         print(f"  52w VIX low:  {hist['close'].min():.2f}")

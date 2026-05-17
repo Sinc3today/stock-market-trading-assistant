@@ -99,7 +99,7 @@ def test_none_df_returns_unknown(detector):
     result = detector.classify(None, vix_current=13.0, ivr_current=25)
     assert result.regime    == Regime.UNKNOWN
     assert result.tradeable is False
-    print(f"\n✅ None DataFrame handled gracefully")
+    print("\n✅ None DataFrame handled gracefully")
 
 
 # ─────────────────────────────────────────

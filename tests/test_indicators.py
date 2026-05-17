@@ -148,13 +148,13 @@ def test_total_score_within_bounds(daily_df):
 
     total = ma_score + dc_score + vol_score + cvd_score + rsi_score
 
-    print(f"\n✅ Score breakdown:")
+    print("\n✅ Score breakdown:")
     print(f"   MA:      {ma_score}/35")
     print(f"   Donchian:{dc_score}/15")
     print(f"   Volume:  {vol_score}/12")
     print(f"   CVD:     {cvd_score}/12")
     print(f"   RSI:     {rsi_score}/12")
-    print(f"   ─────────────")
+    print("   ─────────────")
     print(f"   TOTAL:   {total}/86  (scorer will normalize to /100)")
 
     assert total <= 86, f"Raw total {total} exceeds max possible 86"

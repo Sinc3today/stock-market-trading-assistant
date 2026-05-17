@@ -6,7 +6,9 @@
 #   python -m backtests.spy_daily_backtest --years 5 --tune --source local
 
 from __future__ import annotations
-import os, sys, argparse
+import os
+import sys
+import argparse
 from datetime import date, timedelta
 import pandas as pd
 import numpy as np

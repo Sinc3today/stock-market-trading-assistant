@@ -82,11 +82,11 @@ def main():
     notifier.alert(alert, discord_message)
 
     alert_id = alert.get("alert_id", "unknown")
-    print(f"\n✅ Done!")
+    print("\n✅ Done!")
     print(f"   Alert ID : {alert_id}")
     print(f"   Detail page: https://alerts.nexus-lab.work/alert/{alert_id}")
-    print(f"\nCheck your phone for the Pushover notification.")
-    print(f"Tap the link to test the full trade card + Claude chat.")
+    print("\nCheck your phone for the Pushover notification.")
+    print("Tap the link to test the full trade card + Claude chat.")
 
 
 if __name__ == "__main__":

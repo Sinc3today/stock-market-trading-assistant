@@ -71,7 +71,7 @@ def test_format_discord_message(scanner):
     assert "MORNING"   in msg
     assert "AAPL"      in msg
     assert "Apple"     in msg
-    print(f"\n✅ Discord message formatted correctly")
+    print("\n✅ Discord message formatted correctly")
     print(msg[:300])
 
 
@@ -99,4 +99,4 @@ def test_save_and_load_briefing(scanner, tmp_path, monkeypatch):
     loaded = scanner.get_recent_briefings(limit=5)
     assert len(loaded) == 1
     assert loaded[0]["type"] == "morning"
-    print(f"\n✅ Briefing saved and loaded correctly")
+    print("\n✅ Briefing saved and loaded correctly")

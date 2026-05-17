@@ -49,10 +49,6 @@ def test_engine_valid_proposal_saved(iso, monkeypatch):
     assert spec["var"]    == "ADX_TREND_MIN"
     assert spec["proposed_value"] == 27.0
     # File written
-    spec_path = os.path.join(
-        os.environ.get("LOG_DIR", str(iso)),
-        "learning", "hypotheses", f"{spec['id']}.json",
-    )
     assert os.path.exists(os.path.join(str(iso), "learning", "hypotheses", f"{spec['id']}.json"))
     # KB has a "hypothesis" entry
     assert any(r["category"] == "hypothesis" for r in KnowledgeBase().all())

@@ -226,7 +226,7 @@ class Reflector:
         lines = [f"# Daily Reflection -- {today_str}", ""]
         if parsed:
             lines += [
-                f"## Summary",
+                "## Summary",
                 "",
                 parsed.get("summary", "_(none)_"),
                 "",
