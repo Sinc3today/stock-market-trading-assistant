@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-05-17 (PM-3) | Per-ticker post-earnings reaction history
+
+**Why:** The morning brief and gates currently know *when* a ticker
+reports earnings (block window from yfinance) but not *how violently*
+the stock typically reacts. A ticker that averages a ±5% next-day move
+deserves a different sizing/blocking decision than one that averages
+±0.8%. This builds the data layer for that — integration with gates
+or the brief is a follow-up.
+
+**What changed:**
+
+- **`data/earnings_history.py` (new):** `EarningsHistory.get_reactions(ticker)`
+  pulls up to 8 prior earnings dates (yfinance), reads daily bars from
+  the injected PolygonClient, and computes the close-to-close % move on
+  the trading day *after* each earnings print. Aggregates into:
+  `mean_abs_move_pct`, `stdev_move_pct`, `gap_class` ∈ {calm, normal, volatile}.
+  - Holiday-aware: if the earnings date has no bar (rare), falls back
+    to the prior trading day's close as the baseline.
+  - 30-day cache at `logs/earnings_history.json` (per-ticker keys).
+  - `annotate_upcoming()` helper merges stats into the
+    `EarningsCalendar.get_upcoming()` shape for the brief/dashboard.
+
+- **`tests/test_earnings_history.py` (new, 13 tests):** classification
+  boundaries, next-day move math, exact-date vs prior-day fallback,
+  cache hit/refresh, disk persistence, annotate passthrough for
+  unknown tickers.
+
+**Tests:** targeted (small isolated change, no scheduler wiring).
+
+---
+
 ## 2026-05-17 (PM-2) | Expiry-based exit for AUTO-PAPER positions
 
 **Why:** Multi-day spreads recorded by `paper_broker` (debit, credit,
