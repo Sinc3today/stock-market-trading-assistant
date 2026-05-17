@@ -4,6 +4,72 @@
 
 ---
 
+## 2026-05-16 (night) | Cross-alert /trades /journal /chats in FastAPI app
+
+**Why:** After bookmarking the dashboard to the iPhone home screen, user
+realized the page only shows recent alerts — they remembered building a
+"whole app" with trades/journal/chat browsers. That richer app is the
+Streamlit `alerts/dashboard.py` (1597 lines) which was never wired into
+`main.py` and is desktop-shaped anyway. Decided to put mobile-native
+aggregated views into the FastAPI app instead of starting Streamlit on
+a second port — one URL, one bookmark, phone-first.
+
+**What changed:**
+
+- `alerts/alert_store.py` — two new helpers:
+    - `get_all_journal_entries(limit=50)` — LEFT JOIN onto alerts so
+      each journal row carries ticker/regime/direction without N+1.
+    - `get_alerts_with_chat(limit=50)` — GROUP BY alert with
+      msg_count, last_msg_at, last_msg subquery for previews.
+
+- `alerts/web_app.py`:
+    - `_NAV_CSS` chunk + `_render_nav(active)` + `_render_page()`
+      shared wrapper. Sticky top bar with `[Alerts] [Trades] [Journal]
+      [Chats]`. Horizontally scrollable on narrow screens.
+    - `_render_trades(trades)` — newest first, status pill
+      (OPEN/WIN/LOSS/BE), `+$xxx.xx` P&L with red/green color,
+      `AUTO-PAPER` badge for `[AUTO-PAPER]`-tagged entries.
+    - `_render_journal(entries)` — cross-alert feed, each card links
+      back to `/alerts/{id}`.
+    - `_render_chats(threads)` — alerts with ≥1 message, sorted by
+      last message, shows count + last reply preview.
+    - Three new routes: `GET /trades`, `GET /journal`, `GET /chats`.
+    - Nav also injected into the existing `/alerts/{id}` detail page.
+
+- `tests/test_web_app.py` — +7 tests:
+    - Nav appears on index
+    - /trades empty + populated (AAPL +$120 win round-trip)
+    - /journal empty + populated (links back to alert)
+    - /chats empty + populated (renders msg count + last reply preview)
+    - Fixture extended: `monkeypatch.setattr(config, "LOG_DIR", ...)`
+      so TradeRecorder's `trades.json` lands in tmp_path per test.
+
+**Test result:** 246 passed, 4 deselected, ~144s (was 239).
+**Commit:** `d26a4d1`.
+
+**Runtime:** main.py restarted; verified all four routes return 200
+from loopback and from `http://nexus-nucbox-k8-plus:8002/...`.
+Bookmarked home-screen icon still works — same URL, just with the
+nav bar across the top now.
+
+**Open follow-ups (updated order):**
+
+1. ~~Live "prediction resolved" Pushover~~ ✅
+2. Promotion workflow CLI (`python -m learning.promote <hyp_id>`)
+3. ~~Web app cross-alert views~~ ✅ (trades/journal/chats done; the
+   originally-planned `/learning` + `/hypotheses` pages depend on the
+   promotion CLI existing first)
+4. Expiry-based exit for `[AUTO-PAPER]` positions
+5. VIX wiring in off-hours replay
+6. Add `ruff` to dev deps + tiny `[tool.ruff]` block disabling
+   E701/E702/E741/E402/E712 so lint runs only flag what we care about
+7. (new) Decide fate of `alerts/dashboard.py` — Streamlit dashboard is
+   now superseded for mobile by the FastAPI views. Either:
+   (a) keep as desktop-only deep-dive (document start command in
+       README), or (b) delete and let the FastAPI app be the one UI.
+
+---
+
 ## 2026-05-16 (late evening) | Migrated dashboard to Tailscale + lint sweep
 
 **Why:** After bringing the Cloudflare tunnel up end-to-end (works fine),
