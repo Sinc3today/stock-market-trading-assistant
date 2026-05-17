@@ -118,8 +118,11 @@ class IVRClient:
         """
         try:
             from polygon import RESTClient
-            client = RESTClient(api_key=self.polygon.client.api_key
-                                if hasattr(self.polygon, "client") else None)
+            import config
+            api_key = config.POLYGON_API_KEY
+            if not api_key:
+                return None
+            client = RESTClient(api_key=api_key)
 
             # Step 1: spot price
             spot_df = self.polygon.get_bars(ticker, timeframe="day", limit=1, days_back=5)
@@ -132,25 +135,22 @@ class IVRClient:
             min_expiry = (today + timedelta(days=25)).isoformat()
             max_expiry = (today + timedelta(days=40)).isoformat()
 
-            # Step 3: fetch ATM call
+            # Step 3: fetch ATM call. Polygon SDK signature was updated
+            # to accept a params dict instead of kwargs in newer versions.
+            common_params = {
+                "expiration_date.gte": min_expiry,
+                "expiration_date.lte": max_expiry,
+                "strike_price.gte":    spot * 0.98,
+                "strike_price.lte":    spot * 1.02,
+                "limit":               10,
+            }
             call_chain = list(client.list_snapshot_options_chain(
                 underlying_asset = ticker,
-                contract_type    = "call",
-                expiration_date_gte = min_expiry,
-                expiration_date_lte = max_expiry,
-                strike_price_gte = spot * 0.98,
-                strike_price_lte = spot * 1.02,
-                limit            = 10,
+                params           = {**common_params, "contract_type": "call"},
             ))
-
             put_chain = list(client.list_snapshot_options_chain(
                 underlying_asset = ticker,
-                contract_type    = "put",
-                expiration_date_gte = min_expiry,
-                expiration_date_lte = max_expiry,
-                strike_price_gte = spot * 0.98,
-                strike_price_lte = spot * 1.02,
-                limit            = 10,
+                params           = {**common_params, "contract_type": "put"},
             ))
 
             if not call_chain or not put_chain:
