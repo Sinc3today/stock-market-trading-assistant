@@ -38,6 +38,7 @@ from pydantic import BaseModel
 import config
 from alerts import alert_store
 from journal.trade_recorder import TradeRecorder
+from journal.plan_logger import PlanLogger
 from signals import macro_runner
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
@@ -278,6 +279,7 @@ def _esc(v: Any) -> str:
 
 
 _NAV_LINKS = [
+    ("today",   "/today",   "Today"),
     ("alerts",  "/",        "Alerts"),
     ("trades",  "/trades",  "Trades"),
     ("journal", "/journal", "Journal"),
@@ -447,6 +449,124 @@ _SIGNAL_CLASS = {
     "dispersed":        "status-loss",
     "unknown":          "status-open",
 }
+
+
+def _render_today(plan: dict | None) -> str:
+    """Today's morning brief: regime, play, narrative, skip/watch conditions."""
+    if not plan:
+        body = (
+            '<div class="empty">'
+            'No morning brief yet for today.<br>'
+            'The 09:15 ET job will produce one on the next trading day.'
+            '</div>'
+        )
+        return _render_page(
+            title="Trading Assistant - Today",
+            heading="Today's Play",
+            body=body,
+            css=_INDEX_CSS,
+            active_nav="today",
+        )
+
+    regime    = _esc(plan.get("regime") or "?")
+    play      = _esc(plan.get("play") or plan.get("action") or "—")
+    strategy  = _esc(plan.get("strategy") or "—")
+    rr        = _esc(plan.get("rr_ratio") or "—")
+    dte       = _esc(plan.get("recommended_dte") or "—")
+    max_p     = plan.get("max_profit")
+    max_l     = plan.get("max_loss")
+    max_p_str = f"${max_p:,.0f}" if isinstance(max_p, (int, float)) else "—"
+    max_l_str = f"${max_l:,.0f}" if isinstance(max_l, (int, float)) else "—"
+    narrative = _esc(plan.get("narrative") or "")
+    skips     = plan.get("skip_conditions") or []
+    watches   = plan.get("watch_conditions") or []
+    exit_rule = _esc(plan.get("exit_rule") or "—")
+    macro     = plan.get("macro_context") or {}
+    vix_ts    = macro.get("vix_ts") or {}
+    sector    = macro.get("sector") or {}
+    events    = macro.get("events") or []
+    plan_date = _esc(plan.get("date") or "")
+
+    # Determine signal_cls for the regime badge
+    is_skip   = (plan.get("action") == "SKIP") or not plan.get("strategy")
+    regime_cls = "status-loss" if is_skip else "status-win"
+
+    play_html = f'''
+<div class="alert-card">
+  <div style="margin-bottom:.6rem">
+    <span class="badge {regime_cls}" style="font-size:.85rem">{regime.upper()}</span>
+    <span class="muted" style="float:right">{plan_date}</span>
+  </div>
+  <div style="font-size:1.1rem;margin-bottom:.4rem"><b>{play}</b></div>
+  <div class="grid">
+    <div><span>Strategy</span><b>{strategy}</b></div>
+    <div><span>R/R</span><b>{rr}</b></div>
+    <div><span>DTE</span><b>{dte}</b></div>
+    <div><span>Max P / L</span><b>{max_p_str} / {max_l_str}</b></div>
+  </div>
+  <div class="muted" style="margin-top:.5rem">Exit: {exit_rule}</div>
+</div>'''
+
+    narrative_html = (
+        f'<div class="alert-card"><div class="muted" style="text-transform:uppercase;'
+        f'font-size:.75rem;margin-bottom:.4rem">Thesis</div>'
+        f'<div>{narrative}</div></div>'
+        if narrative else ""
+    )
+
+    def _condition_card(label, items, css_cls):
+        if not items:
+            return ""
+        rows = "".join(
+            f'<div style="padding:.35rem 0;border-bottom:1px solid #21262d">• {_esc(s)}</div>'
+            for s in items
+        )
+        return f'''
+<div class="alert-card">
+  <div class="muted" style="text-transform:uppercase;font-size:.75rem;margin-bottom:.4rem">
+    <span class="badge {css_cls}" style="font-size:.7rem">{label}</span>
+  </div>
+  {rows}
+</div>'''
+
+    skip_html  = _condition_card("Skip if",  skips,   "status-loss")
+    watch_html = _condition_card("Watch for", watches, "status-be")
+
+    # Macro context summary
+    macro_bits = []
+    if vix_ts.get("flag"):
+        macro_bits.append(
+            f'<div><span>VIX TS</span><b>{_esc(vix_ts.get("flag"))} '
+            f'(r={_esc(vix_ts.get("ratio"))})</b></div>'
+        )
+    if sector.get("signal"):
+        macro_bits.append(
+            f'<div><span>Sectors</span><b>{_esc(sector.get("signal"))}</b></div>'
+        )
+    if events:
+        events_str = ", ".join(
+            f"{_esc(e.get('event'))} ({_esc(e.get('days_away'))}d)" for e in events
+        )
+        macro_bits.append(f'<div><span>Events 48h</span><b>{events_str}</b></div>')
+
+    macro_html = ""
+    if macro_bits:
+        macro_html = f'''
+<div class="alert-card">
+  <div class="muted" style="text-transform:uppercase;font-size:.75rem;margin-bottom:.4rem">
+    Macro Context
+  </div>
+  <div class="grid">{"".join(macro_bits)}</div>
+</div>'''
+
+    body = play_html + narrative_html + skip_html + watch_html + macro_html
+    return _render_page(
+        title       = "Trading Assistant - Today",
+        heading     = "Today's Play",
+        body        = body,
+        css         = _INDEX_CSS,
+        active_nav  = "today",
+    )
 
 
 def _render_macro(vix: dict | None, sector: dict | None) -> str:
@@ -821,6 +941,14 @@ def macro_page():
     vix    = macro_runner.get_latest_vix()
     sector = macro_runner.get_latest_sector()
     return HTMLResponse(_render_macro(vix, sector))
+
+
+@app.get("/today", response_class=HTMLResponse)
+def today_page():
+    """Today's morning brief: play, thesis, skip/watch conditions, macro."""
+    from datetime import date
+    plan = PlanLogger().get_plan(date.today().isoformat())
+    return HTMLResponse(_render_today(plan))
 
 
 @app.get("/alerts/{alert_id}", response_class=HTMLResponse)

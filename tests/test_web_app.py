@@ -156,9 +156,9 @@ def test_recent_alerts_list(client, app_modules, sample_alert):
 def test_nav_appears_on_index(client):
     r = client.get("/")
     assert r.status_code == 200
-    # Nav links to all five aggregated views
-    for href in ('href="/"', 'href="/trades"', 'href="/journal"',
-                 'href="/chats"', 'href="/macro"'):
+    # Nav links to all six views
+    for href in ('href="/today"', 'href="/"', 'href="/trades"',
+                 'href="/journal"', 'href="/chats"', 'href="/macro"'):
         assert href in r.text
 
 
@@ -275,6 +275,54 @@ def test_macro_page_renders_snapshots(client, app_modules, tmp_path):
         assert "0.940"    in r.text or "0.94" in r.text
     finally:
         mr._MACRO_DIR = old
+
+
+def test_today_page_empty(client, app_modules):
+    """No plan for today — placeholder shown."""
+    r = client.get("/today")
+    assert r.status_code == 200
+    # h1 gets html-escaped (apostrophe -> &#x27;) so look for the unambiguous bits
+    assert "Today" in r.text and "Play" in r.text
+    assert "No morning brief yet"  in r.text
+
+
+def test_today_page_renders_full_brief(client, app_modules):
+    """Seed a plan and verify all sections render."""
+    from journal.plan_logger import PlanLogger
+    from datetime import date
+
+    plan = {
+        "date":             date.today().isoformat(),
+        "ticker":           "SPY",
+        "regime":           "choppy_low_vol",
+        "play":             "Iron Condor",
+        "strategy":         "iron_condor",
+        "rr_ratio":         "0.33",
+        "recommended_dte":  14,
+        "max_profit":       250,
+        "max_loss":         750,
+        "exit_rule":        "Close at 50% profit",
+        "narrative":        "Iron condor still in play. VIX calm, sectors moderately rotating.",
+        "skip_conditions":  ["Skip if VIX opens > 17", "Skip if SPY gaps > 0.6%"],
+        "watch_conditions": ["Tighten condor if dispersion drops below 1.5"],
+        "macro_context": {
+            "vix_ts": {"flag": "calm", "ratio": 0.94},
+            "sector": {"signal": "rotating", "dispersion": 2.1},
+            "events": [{"event": "CPI", "days_away": 1}],
+        },
+    }
+    PlanLogger().save_plan(plan)
+
+    r = client.get("/today")
+    assert r.status_code == 200
+    assert "CHOPPY_LOW_VOL"                       in r.text
+    assert "Iron Condor"                           in r.text
+    assert "$250"                                  in r.text   # max profit
+    assert "Skip if VIX opens"                     in r.text
+    assert "Tighten condor"                        in r.text
+    assert "Iron condor still in play"             in r.text
+    assert "calm"                                  in r.text   # VIX flag
+    assert "CPI"                                   in r.text
 
 
 # Needed by test_macro_page_empty
