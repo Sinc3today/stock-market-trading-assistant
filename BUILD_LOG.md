@@ -166,6 +166,21 @@ Sun 10:00 ET        learning.off_hours_learner.run()
    we don't have historical VIX in the local CSV. Wire the CBOE CSV
    loader (already in `data/vix_client.py`) into the replay.
 
+**Session handoff (transferring to laptop):**
+
+- All work committed in `6591605`. Pull on the laptop:
+  `git pull origin main`
+- First thing to verify the loop is alive end-to-end on the laptop:
+  `pytest tests/test_learning_*.py -v` (expect 34 passing)
+- Then `python main.py` will start the bot with the six new learning
+  jobs already wired into the scheduler.
+- The first paper trade + prediction will land at 09:16 ET the next
+  weekday; the first reflection at 19:01 ET that same day.
+  `logs/learning/` will populate from there. Nothing to do but watch.
+- Pick the Phase 2 follow-up to attack first — recommendation is #3
+  (promotion workflow), since without it accepted hypotheses just pile
+  up. #4 (live "resolved" Pushover) is the easiest quick win.
+
 ---
 
 ## 2026-04-30 | Per-alert web app (FastAPI + SQLite + Claude chat + journal)
