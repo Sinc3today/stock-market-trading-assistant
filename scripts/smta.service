@@ -1,0 +1,76 @@
+# scripts/smta.service — systemd unit for the SMTA web app + scheduler.
+#
+# Manages the same `python main.py` process the restart.sh helper does,
+# but with systemd's lifecycle benefits: auto-start on boot, auto-restart
+# on crash, journalctl-aggregated logs, and a single `systemctl restart`
+# instead of pgrep+kill+nohup.
+#
+# ─────────────────────────────────────────────────────────────────────
+# ONE-TIME INSTALL (run on the Linux box as your user):
+#
+#   sudo cp scripts/smta.service /etc/systemd/system/smta.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable smta.service        # start on boot
+#   sudo systemctl start smta.service         # start now
+#
+# DAY-TO-DAY:
+#
+#   sudo systemctl status smta                # is it running?
+#   sudo systemctl restart smta               # roll new code after git pull
+#   sudo systemctl stop smta                  # take it down
+#   journalctl -u smta -f                     # tail live logs
+#   journalctl -u smta --since "10 min ago"   # recent logs
+#
+# UPGRADE:
+#
+#   cd ~/Projects/stock-market-trading-assistant
+#   git pull
+#   sudo systemctl restart smta
+#
+# ─────────────────────────────────────────────────────────────────────
+# NOTES
+#
+# - The unit runs as the 'nexus' user (not root) so file permissions
+#   match what restart.sh / your interactive shell produce.
+# - WorkingDirectory pins to the repo root so relative paths
+#   (backtests/spy_history.csv, config/watchlist.json, logs/) keep working.
+# - Restart=on-failure with a 10s delay: a crash auto-restarts, but if
+#   you stop it manually it stays stopped.
+# - Type=simple because main.py is a long-running foreground process
+#   (it spawns uvicorn as a child and stays alive supervising it).
+# - The .env is loaded via EnvironmentFile so API keys are pulled in
+#   without baking them into the unit.
+
+[Unit]
+Description=Stock Market Trading Assistant (web app + scheduler)
+Documentation=https://github.com/Sinc3today/stock-market-trading-assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexus
+Group=nexus
+WorkingDirectory=/home/nexus/Projects/stock-market-trading-assistant
+EnvironmentFile=-/home/nexus/Projects/stock-market-trading-assistant/.env
+ExecStart=/home/nexus/Projects/stock-market-trading-assistant/.venv/bin/python main.py
+
+# Lifecycle
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=15s
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Logging — captured by journald, view with `journalctl -u smta`
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=smta
+
+# Security hardening (defensive; relax if anything breaks)
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
