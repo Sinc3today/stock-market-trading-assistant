@@ -4,6 +4,66 @@
 
 ---
 
+## 2026-05-17 (PM-6) | Baseline card on /macro + Sun warmup job + promote safety review
+
+Three small follow-ups, bundled because each is self-contained.
+
+**1. Baseline card on /macro (`alerts/web_app.py`):**
+
+New `_render_baseline_card()` reads `backtest_summary.production_stats()`
+and renders a small footer card on `/macro` showing the tuned-baseline
+win rate, Sharpe, and source-of-truth label:
+  - Static defaults → "Static defaults (run `python -m backtests.rerun`
+    to refresh)" so the user knows the CTA.
+  - JSON on disk → "Fresh rerun — 2026-05-17" so they can see whether
+    it's current.
+Tests in `tests/test_web_app.py` cover both branches (static fallback +
+disk override).
+
+**2. Sunday earnings-reaction warmup (`signals/macro_runner.py`):**
+
+New `run_earnings_reaction_warmup(polygon_client, ...)` walks the
+watchlist and calls `EarningsHistory.get_reactions(t, refresh=True)`
+with a 0.6s delay between tickers. Returns
+`{refreshed, errors, classes: {calm, normal, volatile, unknown}}`.
+
+Wired as `_job_earnings_reaction_warmup` on the existing
+`register_macro_jobs()` → **Sunday 11:00 ET** (after off-hours learner).
+Job count in `register_macro_jobs` test bumped 3 → 4; +5 targeted
+tests for the warmup logic (class counting, missing-history fallthrough
+to `unknown`, exception per-ticker, empty watchlist, wrapper exception
+isolation).
+
+This pre-warms the cache so the first weekday alert that hits
+`AlertGates` with `EARNINGS_REACTION_GATE_ENABLED=True` doesn't have
+to wait on yfinance.
+
+**3. Promote-hypothesis safety review (`tests/test_learning_promote.py`):**
+
+8 new tests covering attack/failure vectors not previously verified:
+  - Spec with `module="../../etc/passwd"` → rejected by the TUNABLE_PARAMS
+    whitelist (no path injection possible).
+  - Spec with special chars in `var` → same whitelist refusal.
+  - `list_accepted()` silently skips corrupt JSON files in the dir.
+  - `apply_edit` refuses ambiguous source (two `VAR = NUMBER` lines)
+    rather than picking one — file left untouched.
+  - `--force` actually allows non-accepted verdicts to land end-to-end
+    (not just pass `validate_spec`).
+  - `git_commit` failure leaves the source file edited (visible in
+    `git diff`) but spec NOT marked promoted → re-run after fixing git
+    works cleanly.
+  - Idempotent: re-promoting a marked-promoted spec is a clean refusal,
+    not a double-edit.
+  - Non-numeric value in source → regex misses → clean "no line found"
+    error instead of float() crash.
+
+No production code changes for #3 — promote.py was already defensive;
+this just adds the regression suite. 30/30 promote tests pass.
+
+**Tests:** full suite (cross-module: scheduler wiring + web_app render).
+
+---
+
 ## 2026-05-17 (PM-5) | Polygon-backed backtest re-run CLIs
 
 **Why:** Stocks Starter now serves the full 5y SPY daily window in a

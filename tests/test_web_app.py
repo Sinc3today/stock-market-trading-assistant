@@ -273,6 +273,42 @@ def test_macro_page_renders_earnings_panel(client, app_modules, tmp_path):
     assert "MSFT"               in r.text
 
 
+def test_macro_page_renders_baseline_card_from_static_defaults(client, app_modules):
+    """No backtest_summary.json on disk → card renders from static defaults
+    and points the user at the rerun CLI."""
+    r = client.get("/macro")
+    assert r.status_code == 200
+    assert "Tuned baseline" in r.text
+    # Static defaults: 50.3% / 1.73 / 5y
+    assert "50.3%"          in r.text
+    assert "1.73"           in r.text
+    assert "backtests.rerun" in r.text   # call-to-action mentions the CLI
+
+
+def test_macro_page_baseline_card_uses_fresh_summary(client, app_modules, tmp_path):
+    """When logs/backtest_summary.json exists, the card uses its numbers
+    and labels the source as a fresh rerun."""
+    import json
+    summary = {
+        "source":  "rerun_cli (local)",
+        "version": "2026-05-17",
+        "years":   3,
+        "overview": {"sharpe": 1.91, "win_rate_pct": 52.4,
+                     "trade_days": 410, "skip_days": 320},
+        "by_regime":  [],
+        "thresholds": {},
+    }
+    with open(os.path.join(str(tmp_path), "backtest_summary.json"), "w") as f:
+        json.dump(summary, f)
+
+    r = client.get("/macro")
+    assert r.status_code == 200
+    assert "Tuned baseline" in r.text
+    assert "52.4%"          in r.text
+    assert "1.91"           in r.text
+    assert "Fresh rerun"    in r.text
+
+
 def test_macro_page_renders_snapshots(client, app_modules, tmp_path):
     """Seed both snapshot files and verify the page surfaces values + flags."""
     import json

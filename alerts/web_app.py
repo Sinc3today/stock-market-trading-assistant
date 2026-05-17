@@ -1037,7 +1037,9 @@ def _render_macro(vix: dict | None, sector: dict | None,
     else:
         greeks_html = ""
 
-    body = vix_html + sector_html + earnings_html + greeks_html
+    baseline_html = _render_baseline_card()
+
+    body = vix_html + sector_html + earnings_html + greeks_html + baseline_html
     return _render_page(
         title       = "Trading Assistant - Macro",
         heading     = "Macro Snapshot",
@@ -1045,6 +1047,52 @@ def _render_macro(vix: dict | None, sector: dict | None,
         css         = _INDEX_CSS,
         active_nav  = "macro",
     )
+
+
+def _render_baseline_card() -> str:
+    """
+    Small footer card showing the tuned-baseline backtest numbers:
+    win rate, Sharpe, source, last-run date. Reads from
+    data.backtest_summary.production_stats() — that returns
+    logs/backtest_summary.json when present (refreshed by
+    `python -m backtests.rerun`) or static defaults otherwise.
+    """
+    try:
+        stats = backtest_summary.production_stats() or {}
+    except Exception:
+        return ""
+    overview = stats.get("overview") or {}
+    wr   = overview.get("win_rate_pct")
+    sh   = overview.get("sharpe")
+    yrs  = stats.get("years") or "?"
+    src  = stats.get("source") or "static_defaults"
+    ver  = stats.get("version") or ""
+
+    if wr is None and sh is None:
+        return ""
+
+    wr_s = f"{wr:.1f}%" if isinstance(wr, (int, float)) else "—"
+    sh_s = f"{sh:.2f}"  if isinstance(sh, (int, float)) else "—"
+
+    # Friendly source label
+    if src.startswith("rerun_cli"):
+        src_label = f"Fresh rerun — {_esc(ver)}"
+    elif "backtest_summary.json" in src:
+        src_label = f"Saved summary — {_esc(ver)}"
+    else:
+        src_label = "Static defaults (run `python -m backtests.rerun` to refresh)"
+
+    return f'''
+<div class="alert-card">
+  <div class="muted" style="text-transform:uppercase;font-size:.75rem;margin-bottom:.4rem">
+    Tuned baseline ({_esc(yrs)}y backtest)
+  </div>
+  <div class="grid">
+    <div><span>Win rate</span><b>{wr_s}</b></div>
+    <div><span>Sharpe</span><b>{sh_s}</b></div>
+  </div>
+  <div class="muted" style="font-size:.75rem;margin-top:.4rem">{src_label}</div>
+</div>'''
 
 
 def _render_chats(threads: list[dict]) -> str:

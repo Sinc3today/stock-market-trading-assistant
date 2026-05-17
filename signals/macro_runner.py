@@ -38,6 +38,7 @@ from loguru import logger
 
 from data.vix_term_structure   import VIXTermStructure
 from data.earnings_calendar    import EarningsCalendar
+from data.earnings_history     import EarningsHistory
 from signals.sector_breadth    import SectorBreadth
 from learning.knowledge_base   import KnowledgeBase, KBEntry
 
@@ -226,6 +227,56 @@ def run_earnings_refresh(polygon_client) -> dict:
         return {"error": str(e)}
 
 
+def run_earnings_reaction_warmup(
+    polygon_client,
+    earnings_history: EarningsHistory | None = None,
+    tickers:          list[str]       | None = None,
+    sleep_sec:        float                  = 0.6,
+) -> dict:
+    """
+    Pre-populate the EarningsHistory cache for every watchlist ticker.
+
+    Scheduled for Sunday 11:00 ET (after off_hours_learner). The first
+    weekday alert that hits AlertGates with EARNINGS_REACTION_GATE_ENABLED
+    won't have to wait on yfinance — it just reads the warm cache.
+
+    Returns {refreshed, errors, classes: {calm, normal, volatile, unknown}}.
+    """
+    import time
+
+    hist = earnings_history or EarningsHistory(polygon_client=polygon_client)
+    if tickers is None:
+        tickers = EarningsCalendar()._load_watchlist()
+    if not tickers:
+        logger.info("macro_runner.reaction_warmup: empty watchlist, nothing to do")
+        return {"refreshed": 0, "errors": 0,
+                "classes": {"calm": 0, "normal": 0, "volatile": 0, "unknown": 0}}
+
+    classes = {"calm": 0, "normal": 0, "volatile": 0, "unknown": 0}
+    refreshed = errors = 0
+    for i, t in enumerate(tickers):
+        if i > 0 and sleep_sec > 0:
+            time.sleep(sleep_sec)
+        try:
+            stats = hist.get_reactions(t, refresh=True)
+        except Exception as e:
+            logger.warning(f"macro_runner.reaction_warmup: {t} raised {e}")
+            errors += 1
+            continue
+        if not stats:
+            classes["unknown"] += 1
+            continue
+        refreshed += 1
+        cls = stats.get("gap_class") or "unknown"
+        classes[cls] = classes.get(cls, 0) + 1
+
+    logger.info(
+        f"macro_runner.reaction_warmup: refreshed={refreshed} "
+        f"errors={errors} classes={classes}"
+    )
+    return {"refreshed": refreshed, "errors": errors, "classes": classes}
+
+
 # ── SNAPSHOT READERS (for /macro web route) ──────────────
 
 def get_latest_vix() -> Optional[dict]:
@@ -266,6 +317,14 @@ def _job_earnings(polygon_client):
         logger.exception(f"macro_runner.earnings failed: {e}")
 
 
+def _job_earnings_reaction_warmup(polygon_client):
+    try:
+        result = run_earnings_reaction_warmup(polygon_client)
+        logger.info(f"macro_runner.reaction_warmup -> {result}")
+    except Exception as e:
+        logger.exception(f"macro_runner.reaction_warmup failed: {e}")
+
+
 def register_macro_jobs(scheduler, polygon_client, post_fn=None) -> None:
     """
     Wire macro snapshot jobs onto the running APScheduler.
@@ -273,6 +332,7 @@ def register_macro_jobs(scheduler, polygon_client, post_fn=None) -> None:
         08:50 ET (Mon-Fri)  Earnings calendar refresh
         08:55 ET (Mon-Fri)  VIX term structure (before swing scanner)
         10:00 ET (Mon-Fri)  Sector breadth     (30 min after open)
+        11:00 ET (Sun)      Earnings reaction history warmup
     """
     from apscheduler.triggers.cron import CronTrigger
     import pytz
@@ -305,7 +365,17 @@ def register_macro_jobs(scheduler, polygon_client, post_fn=None) -> None:
         replace_existing=True,
     )
 
+    scheduler.add_job(
+        _job_earnings_reaction_warmup,
+        CronTrigger(day_of_week="sun", hour=11, minute=0, timezone=eastern),
+        kwargs={"polygon_client": polygon_client},
+        id="macro_earnings_reaction_warmup",
+        name="Macro: earnings reaction history warmup",
+        replace_existing=True,
+    )
+
     logger.info("Macro jobs registered:")
     logger.info("   08:50 ET (Mon-Fri) - earnings calendar refresh")
     logger.info("   08:55 ET (Mon-Fri) - VIX term structure")
     logger.info("   10:00 ET (Mon-Fri) - sector breadth")
+    logger.info("   11:00 ET (Sun)     - earnings reaction history warmup")

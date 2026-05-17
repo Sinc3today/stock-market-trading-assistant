@@ -205,12 +205,15 @@ class _FakeScheduler:
         self.jobs.append({"fn": fn, "trigger": trigger, **kwargs})
 
 
-def test_register_macro_jobs_adds_three_jobs():
+def test_register_macro_jobs_adds_all_jobs():
     s = _FakeScheduler()
     register_macro_jobs(s, polygon_client=None, post_fn=None)
-    assert len(s.jobs) == 3
+    assert len(s.jobs) == 4
     ids = {j["id"] for j in s.jobs}
-    assert ids == {"macro_earnings", "macro_vix", "macro_sector"}
+    assert ids == {
+        "macro_earnings", "macro_vix", "macro_sector",
+        "macro_earnings_reaction_warmup",
+    }
 
 
 def test_register_macro_jobs_routes_polygon_correctly():
@@ -239,3 +242,88 @@ def test_earnings_job_swallows_exceptions(monkeypatch):
     )
     # Should NOT raise.
     mr._job_earnings(polygon_client=None)
+
+
+# ─────────────────────────────────────────
+# EARNINGS REACTION WARMUP TESTS
+# ─────────────────────────────────────────
+
+class _StubHistory:
+    """Mimics EarningsHistory.get_reactions with a per-ticker dict."""
+    def __init__(self, stats_by_ticker: dict, raises_for: set = None):
+        self._stats   = stats_by_ticker
+        self._raises  = raises_for or set()
+        self.calls    = []
+    def get_reactions(self, t, refresh=False):
+        self.calls.append((t, refresh))
+        if t in self._raises:
+            raise RuntimeError("boom")
+        return self._stats.get(t)
+
+
+def test_reaction_warmup_counts_by_class():
+    hist = _StubHistory({
+        "AAPL": {"gap_class": "calm"},
+        "TSLA": {"gap_class": "volatile"},
+        "MSFT": {"gap_class": "normal"},
+        "GOOG": {"gap_class": "normal"},
+    })
+    out = mr.run_earnings_reaction_warmup(
+        polygon_client   = None,
+        earnings_history = hist,
+        tickers          = ["AAPL", "TSLA", "MSFT", "GOOG"],
+        sleep_sec        = 0,
+    )
+    assert out["refreshed"] == 4
+    assert out["errors"]    == 0
+    assert out["classes"]["calm"]     == 1
+    assert out["classes"]["volatile"] == 1
+    assert out["classes"]["normal"]   == 2
+    # refresh=True is passed every time
+    assert all(refresh is True for _, refresh in hist.calls)
+
+
+def test_reaction_warmup_skips_tickers_with_no_history():
+    hist = _StubHistory({
+        "AAPL": {"gap_class": "calm"},
+        # MSFT / UNKN return None → counted as 'unknown'
+    })
+    out = mr.run_earnings_reaction_warmup(
+        polygon_client   = None,
+        earnings_history = hist,
+        tickers          = ["AAPL", "MSFT", "UNKN"],
+        sleep_sec        = 0,
+    )
+    assert out["refreshed"]            == 1
+    assert out["classes"]["unknown"]   == 2
+
+
+def test_reaction_warmup_records_errors_without_crashing():
+    hist = _StubHistory({"AAPL": {"gap_class": "calm"}}, raises_for={"TSLA"})
+    out = mr.run_earnings_reaction_warmup(
+        polygon_client   = None,
+        earnings_history = hist,
+        tickers          = ["AAPL", "TSLA"],
+        sleep_sec        = 0,
+    )
+    assert out["refreshed"] == 1
+    assert out["errors"]    == 1
+
+
+def test_reaction_warmup_empty_watchlist_returns_zeros():
+    out = mr.run_earnings_reaction_warmup(
+        polygon_client   = None,
+        earnings_history = _StubHistory({}),
+        tickers          = [],
+    )
+    assert out == {"refreshed": 0, "errors": 0,
+                   "classes": {"calm": 0, "normal": 0, "volatile": 0, "unknown": 0}}
+
+
+def test_reaction_warmup_job_swallows_exceptions(monkeypatch):
+    monkeypatch.setattr(
+        mr, "run_earnings_reaction_warmup",
+        lambda polygon_client: (_ for _ in ()).throw(RuntimeError("yfinance dead")),
+    )
+    # Wrapper must not raise.
+    mr._job_earnings_reaction_warmup(polygon_client=None)

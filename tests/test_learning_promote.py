@@ -268,3 +268,118 @@ def test_cli_promote_error_exits_nonzero(iso_logs, capsys):
     out = capsys.readouterr().out
     assert exit_code == 1
     assert "❌" in out
+
+
+# ─────────────────────────────────────────
+# SAFETY REVIEW
+# Tests below cover failure modes a hostile or malformed spec could hit.
+# ─────────────────────────────────────────
+
+def test_validate_rejects_module_path_injection(iso_logs):
+    """A spec naming a module outside TUNABLE_PARAMS is rejected by the
+    whitelist check, regardless of whether the path resolves to anything
+    real on disk."""
+    _, spec = _write_spec(iso_logs, module="../../etc/passwd",
+                          var="ADX_TREND_MIN")
+    ok, err = p.validate_spec(spec)
+    assert not ok
+    assert "TUNABLE_PARAMS" in err
+
+
+def test_validate_rejects_var_name_with_special_chars(iso_logs):
+    """A var name that's not on the whitelist is rejected, even if it
+    happens to match an existing variable in the source."""
+    _, spec = _write_spec(iso_logs, var="VIX_CALM_MAX; os.system('rm')")
+    ok, err = p.validate_spec(spec)
+    assert not ok
+    assert "TUNABLE_PARAMS" in err
+
+
+def test_list_accepted_skips_corrupt_json(iso_logs):
+    """A corrupt .json in the hypotheses dir doesn't crash list_accepted."""
+    _write_spec(iso_logs, id="hyp_good", verdict="accepted")
+    bad = Path(iso_logs) / "learning" / "hypotheses" / "hyp_bad.json"
+    bad.write_text("{this is not valid json")
+    out = p.list_accepted()
+    assert [s["id"] for s in out] == ["hyp_good"]
+
+
+def test_apply_edit_refuses_when_multiple_matches(iso_logs, tmp_path, monkeypatch):
+    """Two `VAR = NUMBER` lines in the file → ambiguous, refuse rather
+    than silently picking one."""
+    src_dir = tmp_path / "src2"
+    (src_dir / "signals").mkdir(parents=True)
+    src_file = src_dir / "signals" / "regime_detector.py"
+    src_file.write_text(
+        "ADX_TREND_MIN = 25.0\n"
+        "# second definition (this should never happen in real code)\n"
+        "ADX_TREND_MIN = 30.0\n"
+    )
+    monkeypatch.setattr(p, "REPO_ROOT", str(src_dir))
+    _, spec = _write_spec(iso_logs)
+    ok, _, err = p.apply_edit(spec)
+    assert not ok
+    assert "Multiple" in err
+    # Source untouched
+    assert "ADX_TREND_MIN = 25.0" in src_file.read_text()
+    assert "ADX_TREND_MIN = 30.0" in src_file.read_text()
+
+
+def test_promote_force_allows_non_accepted_end_to_end(iso_logs, fake_source, monkeypatch):
+    """--force lets an inconclusive verdict promote end-to-end (not just
+    pass validate_spec)."""
+    monkeypatch.setattr(p, "is_git_clean", lambda *a, **k: True)
+    _write_spec(iso_logs, verdict="inconclusive")
+    result = p.promote("hyp_test_a", force=True, no_commit=True)
+    assert result["ok"]
+    assert "ADX_TREND_MIN = 27.0" in fake_source.read_text()
+
+
+def test_promote_git_commit_failure_leaves_edit_visible(iso_logs, fake_source, monkeypatch):
+    """If git_commit fails, the source file IS modified but the spec is
+    NOT marked promoted — so the user can `git diff` and decide."""
+    monkeypatch.setattr(p, "is_git_clean", lambda *a, **k: True)
+    monkeypatch.setattr(p, "git_commit",
+                        lambda spec, diff, cwd=None: (False, "fatal: index lock"))
+    _write_spec(iso_logs)
+    result = p.promote("hyp_test_a")
+    assert not result["ok"]
+    assert "Git commit failed" in result["error"]
+    # File edit went through
+    assert "ADX_TREND_MIN = 27.0" in fake_source.read_text()
+    # Half-state diff is surfaced + a helpful note
+    assert result.get("diff")
+    assert "not committed" in result.get("note", "")
+    # Spec NOT marked promoted (so re-running after fixing git works)
+    reloaded = p.load_spec("hyp_test_a")
+    assert not reloaded.get("promoted")
+
+
+def test_promote_idempotent_after_success(iso_logs, fake_source, monkeypatch):
+    """Re-running promote on an already-promoted spec is a clean refusal,
+    not a double-edit."""
+    monkeypatch.setattr(p, "is_git_clean", lambda *a, **k: True)
+    _write_spec(iso_logs)
+    first = p.promote("hyp_test_a", no_commit=True)
+    assert first["ok"]
+    # Second run: validate_spec catches `promoted: true`
+    second = p.promote("hyp_test_a", no_commit=True)
+    assert not second["ok"]
+    assert "Already promoted" in second["error"]
+    # Source value unchanged from the first promote (no second substitution)
+    assert fake_source.read_text().count("ADX_TREND_MIN = 27.0") == 1
+
+
+def test_apply_edit_rejects_non_numeric_found_value(iso_logs, tmp_path, monkeypatch):
+    """If somehow the source line says `ADX_TREND_MIN = 'foo'`, the
+    regex won't match and we get a clean 'No line found' error rather
+    than crashing on float() conversion."""
+    src_dir = tmp_path / "src3"
+    (src_dir / "signals").mkdir(parents=True)
+    src_file = src_dir / "signals" / "regime_detector.py"
+    src_file.write_text("ADX_TREND_MIN = 'not_a_number'\n")
+    monkeypatch.setattr(p, "REPO_ROOT", str(src_dir))
+    _, spec = _write_spec(iso_logs)
+    ok, _, err = p.apply_edit(spec)
+    assert not ok
+    assert "No 'ADX_TREND_MIN" in err
