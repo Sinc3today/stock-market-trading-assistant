@@ -39,7 +39,17 @@ class OptionsLayer:
     """
     Recommends options strategy based on stock signal + IV context.
     Primary focus: debit spreads. Full support for all spread types.
+
+    When `options_chain` is injected, real Polygon chain data is used
+    for strike selection + pricing. Otherwise the layer falls back to
+    theoretical strikes derived from price + width (the pre-paid-tier
+    behaviour, preserved for backwards compatibility and tests).
     """
+
+    def __init__(self, options_chain=None):
+        # Optional data.options_chain.OptionsChain — only available with
+        # Polygon Options Starter+. Module degrades gracefully without it.
+        self.options_chain = options_chain
 
     def analyze(
         self,
@@ -85,8 +95,22 @@ class OptionsLayer:
         # ── DTE ──────────────────────────────────────────────────
         dte_rec = self._recommend_dte(mode)
 
+        # ── Real chain enrichment (Polygon Options Starter+) ─────
+        # If injected, replace theoretical legs + risk/reward with
+        # actual Polygon snapshot data. Falls through quietly on any
+        # failure so the brief is always produced.
+        real_legs:   list | None = None
+        real_rr:     dict | None = None
+        real_meta:   dict | None = None
+        if self.options_chain is not None:
+            real_legs, real_rr, real_meta = self._try_real_chain(
+                strategy, direction, stock_price, dte_rec["dte"]
+            )
+
         # ── Max profit / max loss ────────────────────────────────
-        risk_reward = self._calculate_risk_reward(strategy, legs)
+        risk_reward = real_rr or self._calculate_risk_reward(strategy, legs)
+        if real_legs:
+            legs = real_legs
 
         # ── Recommendation strength ──────────────────────────────
         rec, rec_emoji = self._build_recommendation(
@@ -99,6 +123,7 @@ class OptionsLayer:
             "strategy":       strategy,
             "direction":      direction,
             "stock_score":    score,
+            "source":         "polygon_chain" if real_legs else "theoretical",
 
             # IV
             "iv_rank":        iv_rank,
@@ -185,6 +210,105 @@ class OptionsLayer:
     # ─────────────────────────────────────────
     # LEG BUILDING
     # ─────────────────────────────────────────
+
+    # ─────────────────────────────────────────
+    # REAL CHAIN ENRICHMENT (Polygon Options Starter+)
+    # ─────────────────────────────────────────
+
+    def _try_real_chain(
+        self,
+        strategy:    str,
+        direction:   str,
+        stock_price: float,
+        dte_target:  int,
+    ) -> tuple[list | None, dict | None, dict | None]:
+        """
+        Convert real Polygon chain data into the (legs, risk_reward, meta)
+        shape the rest of the OptionsLayer uses. Returns (None, None, None)
+        on any failure so the caller falls through to theoretical math.
+        """
+        try:
+            if strategy == "iron_condor":
+                ic = self.options_chain.find_iron_condor(
+                    ticker     = "SPY",
+                    spot       = stock_price,
+                    dte_target = dte_target,
+                )
+                if not ic:
+                    return None, None, None
+                legs = [
+                    self._chain_leg_to_legacy(ic["short_call"], action="sell", note="Sell OTM call"),
+                    self._chain_leg_to_legacy(ic["long_call"],  action="buy",  note="Buy OTM call (wing)"),
+                    self._chain_leg_to_legacy(ic["short_put"],  action="sell", note="Sell OTM put"),
+                    self._chain_leg_to_legacy(ic["long_put"],   action="buy",  note="Buy OTM put (wing)"),
+                ]
+                rr = {
+                    "net_premium": ic.get("net_credit", 0),
+                    "max_profit":  ic.get("max_profit", 0),
+                    "max_loss":    ic.get("max_loss", 0),
+                    "rr_ratio":    self._safe_ratio(ic.get("max_profit"), ic.get("max_loss")),
+                }
+                return legs, rr, {"expiration": ic["expiration"], "dte": ic["dte"]}
+
+            if strategy in ("debit_spread", "credit_spread"):
+                kind = "debit" if strategy == "debit_spread" else "credit"
+                sp = self.options_chain.find_vertical_spread(
+                    ticker     = "SPY",
+                    direction  = direction,
+                    kind       = kind,
+                    spot       = stock_price,
+                    dte_target = dte_target,
+                )
+                if not sp:
+                    return None, None, None
+                legs = [
+                    self._chain_leg_to_legacy(sp["buy_leg"],  action="buy",  note="Buy"),
+                    self._chain_leg_to_legacy(sp["sell_leg"], action="sell", note="Sell"),
+                ]
+                rr = {
+                    "net_premium": None,  # let downstream display whichever side
+                    "max_profit":  sp.get("max_profit", 0),
+                    "max_loss":    sp.get("max_loss", 0),
+                    "rr_ratio":    self._safe_ratio(sp.get("max_profit"), sp.get("max_loss")),
+                }
+                return legs, rr, {"expiration": sp["expiration"], "dte": sp["dte"]}
+
+            # single-leg / other strategies fall through to theoretical
+            return None, None, None
+        except Exception as e:
+            logger.warning(f"OptionsLayer: real chain lookup failed: {e}")
+            return None, None, None
+
+    @staticmethod
+    def _chain_leg_to_legacy(contract: dict, action: str, note: str) -> dict:
+        """Map a chain-shape contract into the leg dict the rest of the
+        OptionsLayer / discord formatter / TradeRecorder expect."""
+        delta_s = (f"{contract.get('delta'):+.2f}"
+                   if isinstance(contract.get("delta"), (int, float)) else "?")
+        mid     = contract.get("mid")
+        mid_s   = f"${mid:.2f}" if isinstance(mid, (int, float)) else "—"
+        oi      = contract.get("open_interest")
+        return {
+            "action":        action,
+            "option_type":   contract.get("type"),    # legacy shape compat
+            "type":          contract.get("type"),
+            "strike":        contract.get("strike"),
+            "ticker":        contract.get("ticker"),
+            "expiration":    contract.get("expiration"),
+            "mid":           mid,
+            "delta":         contract.get("delta"),
+            "iv":            contract.get("iv"),
+            "open_interest": oi,
+            "note":          f"{note} {contract.get('ticker')} K=${contract.get('strike')} Δ={delta_s} mid={mid_s}",
+        }
+
+    @staticmethod
+    def _safe_ratio(profit, loss) -> float:
+        try:
+            p, l = float(profit), float(loss)
+            return round(p / l, 2) if l > 0 else 0.0
+        except (TypeError, ValueError):
+            return 0.0
 
     def _build_legs(
         self,

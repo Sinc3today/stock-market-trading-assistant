@@ -35,6 +35,7 @@ from loguru import logger
 
 from signals.regime_detector import RegimeDetector, Regime, RegimeResult
 from signals.options_layer   import OptionsLayer
+from data.options_chain      import OptionsChain
 
 
 # ─────────────────────────────────────────
@@ -76,12 +77,16 @@ class SPYDailyStrategy:
         vix_client     = None,   # data.vix_client.VIXClient  (stub — build next)
         ivr_client     = None,   # data.ivr_client.IVRClient  (stub — build next)
         event_calendar = None,   # list[date] — FOMC, CPI, NFP, OPEX dates
+        options_chain  = None,   # data.options_chain.OptionsChain (Polygon Options Starter+)
     ):
         self.polygon  = polygon_client
         self.vix      = vix_client
         self.ivr      = ivr_client
         self.detector = RegimeDetector(event_calendar=event_calendar)
-        self.options  = OptionsLayer()
+        # If options_chain is not injected, instantiate one — it'll just
+        # return None from its API calls on free tier, and OptionsLayer
+        # will fall through to theoretical legs.
+        self.options  = OptionsLayer(options_chain=options_chain or OptionsChain())
 
     # ─────────────────────────────────────────
     # MAIN ENTRY
