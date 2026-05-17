@@ -4,6 +4,93 @@
 
 ---
 
+## 2026-05-17 (UX) | Plain-English on /today + /macro + leaner test cadence
+
+**Why:** Carry forward the Pushover UX win to the dashboard pages.
+User shouldn't have to mentally translate between "trending_up_calm"
+on /today and "Steady uptrend, low volatility" on Pushover — same
+vocabulary everywhere.
+
+Also user pointed out (correctly) that running the full pytest suite
+on every commit was wasteful for small UI text changes — adopted a
+leaner cadence (saved as memory).
+
+**What changed (`0b9728d`):**
+
+Three coordinated edits to alerts/web_app.py + signals/morning_briefer.py:
+
+1. **Label maps** (single source of truth at top of web_app.py):
+   - `_REGIME_LABEL`        — all 5 regime enums → plain English
+   - `_VIX_FLAG_LABEL`      — calm / cautious / stress / extreme_stress → plain
+   - `_SECTOR_SIGNAL_LABEL` — trending_aligned / rotating / dispersed → plain
+   - `_regime_label(regime)` helper used by /today
+
+2. **/today render** — every technical label replaced:
+   - Regime badge: "Steady uptrend, low volatility" not "TRENDING_UP_CALM"
+   - "Why this trade today" not "Thesis"
+   - "Days to expiry" not "DTE"
+   - "Risk / Reward" not "R/R"
+   - "Skip this trade if" not "Skip if"
+   - "Market conditions" not "Macro Context"
+   - Volatility / Sector strength / Events next 48h labels
+   - **Prefers `plain_summary` over `narrative`** when both present
+
+3. **/macro render** — same vocabulary:
+   - "Market Volatility" not "VIX Term Structure"
+   - "Sector Strength (vs market, last 20 days)" not "Sector Breadth"
+   - "Today / 1-week / 3-month / 6-month expectation" not "VIX/VIX9D/VIX3M/VIX6M"
+   - "Outperforming the market" / "Underperforming the market"
+   - Plain-English ratio interpretation: "Market expects calm" /
+     "Traders pricing in fear" depending on contango ratio
+
+4. **morning_briefer._save_plan** — persists `plain_summary` field
+   so /today can read it (was only on the brief dict, not the plan).
+
+**Test guards** (+2 new): assert that no raw regime string leaks into
+/today across all 4 enum values, and that plain_summary is preferred
+over narrative when both are present.
+
+**Live verified:**
+
+```
+$ curl /today | grep regime-form
+(empty)   ← no raw "trending_up_calm" anywhere
+
+$ curl /today | grep plain
+"Steady uptrend, low volatility"  ✓
+"Why this trade today"            ✓
+"Days to expiry"                  ✓
+"Skip this trade if"              ✓
+```
+
+Latest Pushover sent to user's phone with cleanest version yet:
+
+```
+💰 SELL PUT CREDIT SPREAD on SPY
+Market is climbing steadily with low fear. Selling puts below current
+price lets you collect premium as stock prices grind higher—skipping
+if anxiety spikes.
+
+Trade:
+  Buy SPY $734 put
+  Sell SPY $739 put
+Expires: Jun 26 (40 days)
+
+🚫 Skip if:
+• Skip if volatility jumps above 22 before open—signals fear replacing calm
+• Don't take this trade if SPY opens below $735—would break recent uptrend
+• Avoid if tech stocks reverse sharply lower—yesterday's leader flipping
+```
+
+**Workflow change (memory'd):** Going forward — targeted tests per
+commit (sub-second), full suite only before `git push` or for
+cross-module changes. Old cadence ran 2.5 min × every commit. Saved
+to memory at feedback_test_cadence.md.
+
+**Test result:** 413 passed, 4 deselected, ~156s (was 411, +2 new).
+
+---
+
 ## 2026-05-16 (UX) | Plain-English Pushover format
 
 **Why:** Live Pushover test gave the user a real look at the format.
