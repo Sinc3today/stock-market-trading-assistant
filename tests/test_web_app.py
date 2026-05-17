@@ -504,9 +504,9 @@ def test_levels_picker_form_populated_with_watchlist(
 
 
 def test_mobile_css_media_query_present(client, app_modules):
-    """Every page should ship the @media(max-width:600px) rules."""
+    """Every page should ship the mobile @media rules."""
     r = client.get("/today")
-    assert "@media (max-width:600px)" in r.text
+    assert "@media (max-width:760px)" in r.text
     # The grid stack rule is what makes /macro readable on phone
     assert "grid-template-columns:1fr" in r.text
 
@@ -514,6 +514,218 @@ def test_mobile_css_media_query_present(client, app_modules):
 def test_nav_includes_levels_link(client, app_modules):
     r = client.get("/macro")
     assert 'href="/levels"' in r.text
+
+
+# ─────────────────────────────────────────
+# Hamburger nav + group structure
+# ─────────────────────────────────────────
+
+def test_nav_renders_brand_and_hamburger_toggle(client, app_modules):
+    r = client.get("/macro")
+    assert "nav-brand"          in r.text
+    assert "nav-toggle"         in r.text
+    assert "nav-toggle-input"   in r.text
+    # The CSS-only toggle relies on the :checked sibling selector
+    assert ":checked ~ .nav-links" in r.text
+
+
+def test_nav_renders_three_grouped_sections(client, app_modules):
+    r = client.get("/macro")
+    # Group labels are visible on mobile; rendered for all viewports
+    for label in (">Now<", ">Trades<", ">Tools<"):
+        assert label in r.text
+
+
+def test_nav_groups_contain_expected_links(client, app_modules):
+    r = client.get("/today")
+    for href in ("/today", "/levels", "/macro", "/",
+                 "/trades", "/journal", "/chats",
+                 "/chat", "/backtest"):
+        assert f'href="{href}"' in r.text
+
+
+# ─────────────────────────────────────────
+# /levels: cookie persistence + auto-refresh
+# ─────────────────────────────────────────
+
+def test_levels_default_uses_cookie_when_no_query(client, app_modules, monkeypatch):
+    """A returning visit with the levels_ticker cookie should land on that
+    ticker, not SPY."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+
+    df = pd.DataFrame([{
+        "timestamp": datetime(2026, 3, 1) + timedelta(days=i),
+        "open": 200, "high": 201, "low": 199, "close": 200, "volume": 1,
+    } for i in range(40)]).set_index("timestamp")
+    captured = {"ticker": None}
+    def fake_get_bars(self, ticker, **kw):
+        captured["ticker"] = ticker
+        return df
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", fake_get_bars)
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls",
+                        lambda *a, **kw: {"call_walls": [], "put_walls": [],
+                                          "max_pain": None, "spot": kw.get("spot"),
+                                          "expiration": None})
+
+    r = client.get("/levels", cookies={"levels_ticker": "NVDA"})
+    assert r.status_code == 200
+    assert "NVDA Levels"     in r.text
+    assert captured["ticker"] == "NVDA"
+
+
+def test_levels_route_sets_cookie_on_response(client, app_modules, monkeypatch):
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+
+    df = pd.DataFrame([{
+        "timestamp": datetime(2026, 3, 1) + timedelta(days=i),
+        "open": 200, "high": 201, "low": 199, "close": 200, "volume": 1,
+    } for i in range(40)]).set_index("timestamp")
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", lambda *a, **kw: df)
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls",
+                        lambda *a, **kw: {"call_walls": [], "put_walls": [],
+                                          "max_pain": None, "spot": kw.get("spot"),
+                                          "expiration": None})
+
+    r = client.get("/levels/AAPL")
+    assert r.cookies.get("levels_ticker") == "AAPL"
+
+
+def test_levels_query_param_overrides_cookie(client, app_modules, monkeypatch):
+    """?ticker= takes precedence over the cookie (so the picker form
+    always lands where the user just clicked)."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+    df = pd.DataFrame([{
+        "timestamp": datetime(2026, 3, 1) + timedelta(days=i),
+        "open": 200, "high": 201, "low": 199, "close": 200, "volume": 1,
+    } for i in range(40)]).set_index("timestamp")
+    captured = {"ticker": None}
+    def fake_get_bars(self, ticker, **kw):
+        captured["ticker"] = ticker
+        return df
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", fake_get_bars)
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls",
+                        lambda *a, **kw: {"call_walls": [], "put_walls": [],
+                                          "max_pain": None, "spot": kw.get("spot"),
+                                          "expiration": None})
+
+    r = client.get("/levels?ticker=TSLA", cookies={"levels_ticker": "NVDA"})
+    assert r.status_code == 200
+    assert "TSLA Levels"      in r.text
+    assert captured["ticker"] == "TSLA"
+
+
+def test_levels_page_includes_auto_refresh_meta(client, app_modules, monkeypatch):
+    import data.polygon_client as pc
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", lambda *a, **kw: None)
+    r = client.get("/levels")
+    assert 'http-equiv="refresh"' in r.text
+    assert 'content="300"'        in r.text
+
+
+def test_other_pages_do_not_auto_refresh(client, app_modules):
+    """The refresh meta tag should only land on /levels; /today, /macro,
+    /chat etc must stay stable (chat would lose typing if it refreshed)."""
+    for path in ("/today", "/macro", "/chat", "/"):
+        r = client.get(path)
+        assert 'http-equiv="refresh"' not in r.text
+
+
+# ─────────────────────────────────────────
+# /today SPY sparkline thumbnail
+# ─────────────────────────────────────────
+
+def test_today_renders_sparkline_when_spy_data_available(client, app_modules, monkeypatch):
+    """/today fetches SPY closes and embeds a sparkline + link to /levels/SPY."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+
+    df = pd.DataFrame([{
+        "timestamp": datetime(2026, 3, 1) + timedelta(days=i),
+        "open": 500 + i, "high": 501 + i, "low": 499 + i,
+        "close": 500 + i, "volume": 1,
+    } for i in range(35)]).set_index("timestamp")
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", lambda *a, **kw: df)
+
+    # Seed a plan so /today doesn't short-circuit to the empty card
+    from journal.plan_logger import PlanLogger
+    from datetime import date
+    PlanLogger().save_plan({
+        "date":      date.today().isoformat(),
+        "regime":    "trending_up_calm",
+        "action":    "BUY",
+        "strategy":  "debit_spread",
+        "play":      "Bull debit",
+        "rr_ratio":  "2.0",
+        "recommended_dte": 30,
+        "max_profit": 150,
+        "max_loss":  200,
+        "exit_rule": "...",
+        "thesis":    "Steady uptrend",
+    })
+
+    r = client.get("/today")
+    assert r.status_code == 200
+    # Sparkline is an inline SVG with the SPY thumbnail card linking to /levels/SPY
+    assert 'href="/levels/SPY"' in r.text
+    assert "<svg"               in r.text
+    assert "<polyline"          in r.text
+
+
+def test_today_renders_without_sparkline_when_polygon_fails(client, app_modules, monkeypatch):
+    import data.polygon_client as pc
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars",
+                        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("polygon down")))
+    from journal.plan_logger import PlanLogger
+    from datetime import date
+    PlanLogger().save_plan({
+        "date":      date.today().isoformat(),
+        "regime":    "trending_up_calm",
+        "action":    "BUY",
+        "strategy":  "debit_spread",
+        "play":      "Bull debit",
+        "rr_ratio":  "2.0",
+        "recommended_dte": 30,
+        "max_profit": 150,
+        "max_loss":  200,
+        "exit_rule": "...",
+        "thesis":    "Steady uptrend",
+    })
+    r = client.get("/today")
+    assert r.status_code == 200
+    # No sparkline card when Polygon fails (but page still renders)
+    assert "<polyline"        not in r.text
+    # H1 gets HTML-escaped, so check for the escaped form
+    assert "Today&#x27;s Play"     in r.text
+
+
+def test_sparkline_empty_list_returns_empty_string(client, app_modules):
+    _, web_app = app_modules
+    assert web_app._render_sparkline_svg([])     == ""
+    assert web_app._render_sparkline_svg([1.0])  == ""
+
+
+def test_sparkline_uses_green_when_up_red_when_down(client, app_modules):
+    _, web_app = app_modules
+    up   = web_app._render_sparkline_svg([100.0, 105.0])
+    down = web_app._render_sparkline_svg([100.0, 95.0])
+    assert "#3fb950" in up
+    assert "#f85149" in down
 
 
 def test_macro_page_renders_snapshots(client, app_modules, tmp_path):

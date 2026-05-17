@@ -4,6 +4,61 @@
 
 ---
 
+## 2026-05-17 (PM-9) | Hamburger nav, cookie ticker memory, sparkline on /today
+
+**Why:** 9 tabs in one row was disorganised on desktop and overflow-scrolled
+on mobile. Two-tab nav looked broken on phones. Also: /levels lost your
+last-picked ticker on every visit, and the chart didn't refresh without
+a manual reload.
+
+**What changed:**
+
+- **Nav restructure (`alerts/web_app.py`):**
+  - 9 flat links replaced by `_NAV_GROUPS`: **Now** (Today/Levels/Macro/
+    Alerts), **Trades** (Trades/Journal/Chats), **Tools** (Chat/Backtest).
+  - Brand link `📊 SMTA` pinned left, group dividers between sections on
+    desktop, group labels visible on mobile.
+  - **Hamburger toggle** uses a hidden checkbox + `:checked ~ .nav-links`
+    sibling selector — pure CSS, zero JS. Visible only below 760px;
+    desktop keeps the inline nav.
+  - Mobile breakpoint widened 600px → 760px so the iPad-mini portrait
+    width also gets the collapsed nav.
+
+- **/levels cookie persistence:**
+  - 90-day `levels_ticker` cookie set on every successful render.
+  - `levels_page_default()` precedence: `?ticker=` query → cookie →
+    SPY fallback. The picker form's GET still wins because it explicitly
+    passes `?ticker=`.
+
+- **/levels auto-refresh:** `<meta http-equiv="refresh" content="300">`
+  added only in `_render_levels`'s `extra_head`. 5-min cadence is light
+  on Polygon, fresh enough for intraday monitoring. Test verifies
+  /today, /macro, /chat, / do NOT carry the refresh tag (would clobber
+  chat input state).
+
+- **/today SPY sparkline thumbnail:**
+  - New `_render_sparkline_svg(closes, w, h)` — pure inline SVG polyline,
+    green when up over the window, red when down. No JS, no external
+    deps, /today stays light.
+  - New `_render_spy_thumbnail(closes)` — small card with current price,
+    30-day % change, and a tap-target link to `/levels/SPY`.
+  - `today_page()` fetches 30 SPY closes via PolygonClient; on failure
+    the sparkline is silently omitted (page still 200s).
+
+- **Tests:** +12 in `tests/test_web_app.py`:
+  - Nav: brand + toggle present, three group labels render, all 9 links
+    still reachable.
+  - /levels cookie: cookie alone selects ticker, query overrides cookie,
+    response sets the cookie.
+  - Auto-refresh meta present on /levels, absent on /today /macro /chat /.
+  - /today sparkline: rendered with seeded SPY, omitted on Polygon fail,
+    empty-list / single-value sparkline returns `""`, green/red color
+    direction.
+
+**Tests:** full suite (touches every page header via nav redesign).
+
+---
+
 ## 2026-05-17 (PM-8) | Per-ticker /levels/{TICKER} + watchlist picker
 
 **Why:** The /levels page was SPY-only. The watchlist has names we

@@ -31,7 +31,7 @@ from typing import Any
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Cookie
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -217,12 +217,28 @@ def _ask_claude(alert: dict, user_message: str, history: list[dict]) -> str:
 # ─────────────────────────────────────────
 
 _NAV_CSS = """
+/* ── Sticky header with brand + groupable links ────────── */
 .nav{position:sticky;top:0;z-index:10;background:#0d1117;
-     border-bottom:1px solid #30363d;margin:-1rem -1rem 1rem;padding:.6rem 1rem;
-     display:flex;gap:.4rem;overflow-x:auto;-webkit-overflow-scrolling:touch}
-.nav a{flex:0 0 auto;color:#8b949e;text-decoration:none;padding:.35rem .75rem;
-       border-radius:6px;font-size:.85rem;font-weight:500;white-space:nowrap}
-.nav a:hover{color:#c9d1d9;background:#161b22}
+     border-bottom:1px solid #30363d;margin:-1rem -1rem 1rem;padding:.55rem 1rem;
+     display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
+.nav-brand{color:#58a6ff;text-decoration:none;font-weight:700;font-size:.95rem;
+           white-space:nowrap;letter-spacing:.02em}
+.nav-toggle-input{display:none}
+.nav-toggle{display:none;background:transparent;border:1px solid #30363d;
+            color:#c9d1d9;border-radius:6px;padding:.35rem .65rem;cursor:pointer;
+            font-size:1.1rem;line-height:1;user-select:none;-webkit-user-select:none}
+.nav-toggle:hover{border-color:#58a6ff}
+.nav-links{display:flex;align-items:center;gap:.4rem;flex:1;flex-wrap:wrap;
+           margin-left:auto}
+.nav-group{display:flex;align-items:center;gap:.25rem;padding:0 .35rem;
+           border-left:1px solid #21262d}
+.nav-group:first-child{border-left:none;padding-left:0}
+.nav-group-label{display:none;color:#6e7681;font-size:.7rem;text-transform:uppercase;
+                 letter-spacing:.06em;margin-right:.25rem}
+.nav a:not(.nav-brand){flex:0 0 auto;color:#8b949e;text-decoration:none;
+       padding:.4rem .7rem;border-radius:6px;font-size:.85rem;font-weight:500;
+       white-space:nowrap}
+.nav a:not(.nav-brand):hover{color:#c9d1d9;background:#161b22}
 .nav a.active{color:#fff;background:#1f6feb}
 .pnl-pos{color:#3fb950}
 .pnl-neg{color:#f85149}
@@ -256,13 +272,22 @@ h1{font-size:1.4rem;margin-bottom:1rem;color:#58a6ff}
                    padding:.45rem 1rem;cursor:pointer;font-weight:600}
 .lvl-picker button:hover{background:#388bfd}
 
-/* ── Mobile: collapse 2-col grids, tighten chrome, bigger tap targets */
-@media (max-width:600px){
+/* ── Mobile: hamburger nav, single-col grids, bigger tap targets */
+@media (max-width:760px){
   body{padding:.6rem}
   h1{font-size:1.2rem;margin-bottom:.6rem}
   .alert-card{padding:.7rem .8rem}
-  .nav a{padding:.5rem .9rem;font-size:.9rem}   /* ~44px tall */
-  .nav{margin:-.6rem -.6rem .8rem;padding:.5rem .6rem}
+  .nav{margin:-.6rem -.6rem .8rem;padding:.5rem .6rem;flex-wrap:nowrap}
+  .nav-toggle{display:inline-block}
+  .nav-links{display:none;flex:1 0 100%;flex-direction:column;align-items:stretch;
+             gap:.25rem;margin-top:.6rem;margin-left:0;
+             border-top:1px solid #21262d;padding-top:.6rem}
+  .nav-toggle-input:checked ~ .nav-links{display:flex}
+  .nav-group{flex-direction:column;align-items:stretch;gap:.15rem;padding:.4rem 0;
+             border-left:none;border-top:1px solid #161b22}
+  .nav-group:first-child{border-top:none;padding-top:0}
+  .nav-group-label{display:block;padding:0 .5rem .15rem}
+  .nav a:not(.nav-brand){padding:.65rem .8rem;font-size:.95rem}   /* ~44px tall */
   .grid{grid-template-columns:1fr !important;gap:.4rem !important}
   .row{flex-direction:column}
   #lvl-chart{height:340px !important}
@@ -308,25 +333,46 @@ def _esc(v: Any) -> str:
     return html.escape(str(v if v is not None else "—"))
 
 
-_NAV_LINKS = [
-    ("today",    "/today",    "Today"),
-    ("chat",     "/chat",     "Chat"),
-    ("alerts",   "/",         "Alerts"),
-    ("trades",   "/trades",   "Trades"),
-    ("journal",  "/journal",  "Journal"),
-    ("chats",    "/chats",    "Chats"),
-    ("macro",    "/macro",    "Macro"),
-    ("levels",   "/levels",   "Levels"),
-    ("backtest", "/backtest", "Backtest"),
+_NAV_GROUPS = [
+    ("Now", [
+        ("today",  "/today",  "Today"),
+        ("levels", "/levels", "Levels"),
+        ("macro",  "/macro",  "Macro"),
+        ("alerts", "/",       "Alerts"),
+    ]),
+    ("Trades", [
+        ("trades",  "/trades",  "Trades"),
+        ("journal", "/journal", "Journal"),
+        ("chats",   "/chats",   "Chats"),
+    ]),
+    ("Tools", [
+        ("chat",     "/chat",     "Chat"),
+        ("backtest", "/backtest", "Backtest"),
+    ]),
 ]
 
 
 def _render_nav(active: str) -> str:
-    items = []
-    for key, href, label in _NAV_LINKS:
-        cls = "active" if key == active else ""
-        items.append(f'<a href="{href}" class="{cls}">{label}</a>')
-    return f'<nav class="nav">{"".join(items)}</nav>'
+    groups_html = []
+    for label, items in _NAV_GROUPS:
+        links = []
+        for key, href, text in items:
+            cls = "active" if key == active else ""
+            links.append(f'<a href="{href}" class="{cls}">{text}</a>')
+        groups_html.append(
+            f'<div class="nav-group">'
+            f'<span class="nav-group-label">{label}</span>'
+            f'{"".join(links)}'
+            f'</div>'
+        )
+    return (
+        f'<nav class="nav">'
+        f'<a href="/today" class="nav-brand">📊 SMTA</a>'
+        f'<input type="checkbox" id="nav-toggle" class="nav-toggle-input">'
+        f'<label for="nav-toggle" class="nav-toggle" aria-label="Open menu">☰</label>'
+        f'<div class="nav-links">{"".join(groups_html)}</div>'
+        f'</nav>'
+    )
 
 
 def _render_page(
@@ -784,7 +830,73 @@ def _regime_label(regime: str | None) -> str:
     return _REGIME_LABEL.get(regime.lower(), regime.replace("_", " ").title())
 
 
-def _render_today(plan: dict | None) -> str:
+def _render_sparkline_svg(closes: list[float], width: int = 320, height: int = 60) -> str:
+    """
+    Render a tiny inline SVG sparkline from a list of closes. No external
+    deps. Returns "" when there's not enough data to draw a line.
+    """
+    if not closes or len(closes) < 2:
+        return ""
+    lo, hi = min(closes), max(closes)
+    span = (hi - lo) or 1
+    n = len(closes)
+    points = []
+    for i, c in enumerate(closes):
+        x = round(i * (width - 4) / (n - 1) + 2, 2)
+        y = round((height - 4) - (c - lo) / span * (height - 6) + 2, 2)
+        points.append(f"{x},{y}")
+    last_y = points[-1].split(",")[1]
+    color  = "#3fb950" if closes[-1] >= closes[0] else "#f85149"
+    return (
+        f'<svg viewBox="0 0 {width} {height}" width="100%" '
+        f'preserveAspectRatio="none" style="display:block">'
+        f'<polyline fill="none" stroke="{color}" stroke-width="1.5" '
+        f'points="{" ".join(points)}"/>'
+        f'<circle cx="{points[-1].split(",")[0]}" cy="{last_y}" r="2.5" '
+        f'fill="{color}"/></svg>'
+    )
+
+
+def _render_spy_thumbnail(spy_closes: list[float]) -> str:
+    """Tiny SPY card for /today — sparkline + current price + 30d change %.
+    Links to the full /levels/SPY view."""
+    if not spy_closes or len(spy_closes) < 2:
+        return ""
+    last  = spy_closes[-1]
+    first = spy_closes[0]
+    pct   = (last - first) / first * 100 if first else 0
+    pct_cls = "pnl-pos" if pct >= 0 else "pnl-neg"
+    spark = _render_sparkline_svg(spy_closes)
+    return f'''
+<a class="alert-card" href="/levels/SPY" style="display:block;text-decoration:none">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.3rem">
+    <span><b>SPY</b> <span class="muted" style="font-size:.75rem">last {len(spy_closes)}d</span></span>
+    <span><b>${last:,.2f}</b> <span class="{pct_cls}" style="font-size:.85rem">({pct:+.2f}%)</span></span>
+  </div>
+  {spark}
+  <div class="muted" style="font-size:.75rem;margin-top:.3rem">Tap for full chart + levels</div>
+</a>'''
+
+
+def _fetch_spy_closes_for_today(days: int = 30) -> list[float]:
+    """Best-effort SPY-closes fetch for the /today thumbnail.
+    Returns [] on any failure — caller renders nothing."""
+    try:
+        from data.polygon_client import PolygonClient
+        df = PolygonClient().get_bars(
+            "SPY", timeframe=config.SWING_PRIMARY_TIMEFRAME,
+            limit=days + 5, days_back=days * 2 + 10,
+        )
+        if df is None or len(df) == 0:
+            return []
+        col = next(c for c in df.columns if c.lower() == "close")
+        return [float(v) for v in df[col].tail(days)]
+    except Exception as e:
+        logger.warning(f"/today sparkline: SPY fetch failed: {e}")
+        return []
+
+
+def _render_today(plan: dict | None, spy_closes: list[float] | None = None) -> str:
     """Today's morning brief: regime, play, narrative, skip/watch conditions."""
     if not plan:
         body = (
@@ -897,7 +1009,9 @@ def _render_today(plan: dict | None) -> str:
   <div class="grid">{"".join(macro_bits)}</div>
 </div>'''
 
-    body = play_html + summary_html + skip_html + watch_html + macro_html
+    spy_thumb = _render_spy_thumbnail(spy_closes or [])
+
+    body = play_html + spy_thumb + summary_html + skip_html + watch_html + macro_html
     return _render_page(
         title       = "Trading Assistant - Today",
         heading     = "Today's Play",
@@ -1377,6 +1491,12 @@ function renderJournal(items) {{
 
 _PLOTLY_CDN = '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>'
 
+# /levels auto-refresh: every 5 min when the tab is left open.
+# Long enough to be cheap on Polygon, short enough to feel "live" for
+# someone monitoring intraday. The user can disable by leaving the
+# picker open — most browsers pause meta-refresh while a form has focus.
+_LEVELS_AUTO_REFRESH_META = '<meta http-equiv="refresh" content="300">'
+
 
 def _build_levels_figure(
     spy_df, mas: dict, swing: dict, walls: dict,
@@ -1618,7 +1738,7 @@ def _render_levels(
         body        = body,
         css         = _INDEX_CSS,
         active_nav  = "levels",
-        extra_head  = _PLOTLY_CDN,
+        extra_head  = _PLOTLY_CDN + _LEVELS_AUTO_REFRESH_META,
     )
 
 
@@ -1686,10 +1806,12 @@ def macro_page():
 
 @app.get("/today", response_class=HTMLResponse)
 def today_page():
-    """Today's morning brief: play, thesis, skip/watch conditions, macro."""
+    """Today's morning brief: play, thesis, skip/watch conditions, macro,
+    plus a small SPY sparkline that links to the full /levels/SPY view."""
     from datetime import date
-    plan = PlanLogger().get_plan(date.today().isoformat())
-    return HTMLResponse(_render_today(plan))
+    plan       = PlanLogger().get_plan(date.today().isoformat())
+    spy_closes = _fetch_spy_closes_for_today(days=30) if plan else []
+    return HTMLResponse(_render_today(plan, spy_closes=spy_closes))
 
 
 def _build_levels_view(ticker: str) -> str:
@@ -1718,18 +1840,42 @@ def _build_levels_view(ticker: str) -> str:
     return _render_levels(ticker, df, mas, swing, walls)
 
 
+LEVELS_TICKER_COOKIE = "levels_ticker"
+
+
+def _levels_response(symbol: str) -> HTMLResponse:
+    """Build the response + persist the active ticker in a 90-day cookie so
+    the next visit lands on the same chart."""
+    body = _build_levels_view(symbol)
+    resp = HTMLResponse(body)
+    resp.set_cookie(
+        key      = LEVELS_TICKER_COOKIE,
+        value    = symbol,
+        max_age  = 60 * 60 * 24 * 90,   # 90 days
+        samesite = "lax",
+        httponly = False,
+    )
+    return resp
+
+
 @app.get("/levels", response_class=HTMLResponse)
-def levels_page_default(ticker: str | None = None):
-    """SPY by default; ?ticker=AAPL also accepted for the picker form's GET."""
-    sym = _normalise_ticker(ticker, fallback="SPY")
-    return HTMLResponse(_build_levels_view(sym))
+def levels_page_default(
+    ticker:         str | None = None,
+    levels_ticker:  str | None = Cookie(default=None),
+):
+    """
+    Picks ticker from (in order): explicit ?ticker= query → last-visited
+    cookie → SPY. Picker form GETs hit this route on submit.
+    """
+    sym = _normalise_ticker(ticker or levels_ticker, fallback="SPY")
+    return _levels_response(sym)
 
 
 @app.get("/levels/{ticker}", response_class=HTMLResponse)
 def levels_page_for_ticker(ticker: str):
     """Per-ticker chart + S/R levels. Ticker is validated; invalid → SPY."""
     sym = _normalise_ticker(ticker, fallback="SPY")
-    return HTMLResponse(_build_levels_view(sym))
+    return _levels_response(sym)
 
 
 def _macro_chat_instance() -> MacroChat:
