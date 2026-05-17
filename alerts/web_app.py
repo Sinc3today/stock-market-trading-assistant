@@ -38,6 +38,7 @@ from pydantic import BaseModel
 import config
 from alerts import alert_store
 from journal.trade_recorder import TradeRecorder
+from signals import macro_runner
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
@@ -281,6 +282,7 @@ _NAV_LINKS = [
     ("trades",  "/trades",  "Trades"),
     ("journal", "/journal", "Journal"),
     ("chats",   "/chats",   "Chats"),
+    ("macro",   "/macro",   "Macro"),
 ]
 
 
@@ -428,6 +430,100 @@ def _render_journal(entries: list[dict]) -> str:
         body        = body,
         css         = _INDEX_CSS,
         active_nav  = "journal",
+    )
+
+
+_FLAG_CLASS = {
+    "calm":           "status-win",
+    "cautious":       "status-be",
+    "stress":         "status-loss",
+    "extreme_stress": "status-loss",
+    "unknown":        "status-open",
+}
+
+_SIGNAL_CLASS = {
+    "trending_aligned": "status-win",
+    "rotating":         "status-be",
+    "dispersed":        "status-loss",
+    "unknown":          "status-open",
+}
+
+
+def _render_macro(vix: dict | None, sector: dict | None) -> str:
+    """Today's macro snapshot — VIX term structure + sector breadth."""
+
+    # ── VIX section ────────────────────────────
+    if vix:
+        flag       = vix.get("flag") or "unknown"
+        flag_cls   = _FLAG_CLASS.get(flag, "status-open")
+        ratio      = vix.get("ratio")
+        ratio_str  = f"{ratio:.3f}" if isinstance(ratio, (int, float)) else "—"
+        asof_str   = _esc((vix.get("asof") or "")[:19].replace("T", " "))
+
+        def _fmt(v): return f"{v:.2f}" if isinstance(v, (int, float)) else "—"
+
+        vix_grid = (
+            f'<div><span>VIX9D</span><b>{_fmt(vix.get("VIX9D"))}</b></div>'
+            f'<div><span>VIX</span><b>{_fmt(vix.get("VIX"))}</b></div>'
+            f'<div><span>VIX3M</span><b>{_fmt(vix.get("VIX3M"))}</b></div>'
+            f'<div><span>VIX6M</span><b>{_fmt(vix.get("VIX6M"))}</b></div>'
+        )
+        vix_html = f'''
+<div class="alert-card">
+  <div><b>VIX Term Structure</b>
+       <span class="badge {flag_cls}" style="margin-left:.5rem">{html.escape(flag.upper())}</span></div>
+  <div class="muted" style="margin:.4rem 0">
+    Contango ratio (VIX/VIX3M): <b>{ratio_str}</b>
+    {"&middot; backwardation = stress" if isinstance(ratio, (int,float)) and ratio > 1.0 else ""}
+  </div>
+  <div class="grid">{vix_grid}</div>
+  <div class="muted" style="margin-top:.5rem">{asof_str} UTC</div>
+</div>'''
+    else:
+        vix_html = '<div class="empty">No VIX snapshot yet. Runs daily at 08:55 ET.</div>'
+
+    # ── Sector section ──────────────────────────
+    if sector:
+        signal      = sector.get("signal") or "unknown"
+        signal_cls  = _SIGNAL_CLASS.get(signal, "status-open")
+        dispersion  = sector.get("dispersion")
+        d_str       = f"{dispersion:.2f}" if isinstance(dispersion, (int, float)) else "—"
+        leaders     = sector.get("leaders")  or []
+        laggards    = sector.get("laggards") or []
+        horizon     = sector.get("horizon") or 20
+        s_asof      = _esc((sector.get("asof") or "")[:19].replace("T", " "))
+
+        def _row(items, color_cls):
+            return "".join(
+                f'<div><span>{html.escape(t)}</span>'
+                f'<b class="{color_cls}">{v:+.2f}</b></div>'
+                for t, v in items
+            )
+
+        sector_html = f'''
+<div class="alert-card">
+  <div><b>Sector Breadth ({horizon}d RS vs SPY)</b>
+       <span class="badge {signal_cls}" style="margin-left:.5rem">{html.escape(signal.upper())}</span></div>
+  <div class="muted" style="margin:.4rem 0">Dispersion: <b>{d_str}</b></div>
+
+  <div style="margin-top:.6rem"><span class="muted">Leaders</span></div>
+  <div class="grid">{_row(leaders, "pnl-pos")}</div>
+
+  <div style="margin-top:.6rem"><span class="muted">Laggards</span></div>
+  <div class="grid">{_row(laggards, "pnl-neg")}</div>
+
+  <div class="muted" style="margin-top:.5rem">{s_asof} UTC</div>
+</div>'''
+    else:
+        sector_html = '<div class="empty">No sector snapshot yet. Runs daily at 10:00 ET.</div>'
+
+    body = vix_html + sector_html
+    return _render_page(
+        title       = "Trading Assistant - Macro",
+        heading     = "Macro Snapshot",
+        body        = body,
+        css         = _INDEX_CSS,
+        active_nav  = "macro",
     )
 
 
@@ -717,6 +813,14 @@ def chats_page():
     """List of alerts that have any chat history, newest activity first."""
     threads = alert_store.get_alerts_with_chat(limit=50)
     return HTMLResponse(_render_chats(threads))
+
+
+@app.get("/macro", response_class=HTMLResponse)
+def macro_page():
+    """VIX term structure + sector breadth snapshot."""
+    vix    = macro_runner.get_latest_vix()
+    sector = macro_runner.get_latest_sector()
+    return HTMLResponse(_render_macro(vix, sector))
 
 
 @app.get("/alerts/{alert_id}", response_class=HTMLResponse)

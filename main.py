@@ -24,6 +24,7 @@ from data.ivr_client                 import IVRClient
 from data.event_calendar             import EventCalendar
 from scheduler.spy_daily_scheduler   import register_spy_jobs
 from learning.scheduler              import register_learning_jobs
+from signals.macro_runner            import register_macro_jobs
 # ── Logging setup ────────────────────────────────────────────
 os.makedirs(config.LOG_DIR, exist_ok=True)
 
@@ -417,6 +418,17 @@ if __name__ == "__main__":
         logger.info("✅ Self-learning jobs registered")
     except Exception as e:
         logger.error(f"Self-learning jobs failed to register: {e}")
+
+    # Macro daily snapshots: VIX term structure + sector breadth
+    try:
+        register_macro_jobs(
+            scheduler      = scheduler,
+            polygon_client = PolygonClient(),
+            post_fn        = notifier.message,
+        )
+        logger.info("✅ Macro snapshot jobs registered")
+    except Exception as e:
+        logger.error(f"Macro snapshot jobs failed to register: {e}")
     # Start alert web app (subprocess so uvicorn owns its own event loop)
     logger.info(
         f"Starting alert web app on "

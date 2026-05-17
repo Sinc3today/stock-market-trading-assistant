@@ -156,8 +156,9 @@ def test_recent_alerts_list(client, app_modules, sample_alert):
 def test_nav_appears_on_index(client):
     r = client.get("/")
     assert r.status_code == 200
-    # Nav links to all four aggregated views
-    for href in ('href="/"', 'href="/trades"', 'href="/journal"', 'href="/chats"'):
+    # Nav links to all five aggregated views
+    for href in ('href="/"', 'href="/trades"', 'href="/journal"',
+                 'href="/chats"', 'href="/macro"'):
         assert href in r.text
 
 
@@ -225,3 +226,56 @@ def test_chats_page_renders_thread(client, app_modules, sample_alert):
     # Last message preview (assistant's)
     assert "workable for an iron condor"               in r.text
     assert f'/alerts/{alert_id}'                       in r.text
+
+
+def test_macro_page_empty(client, app_modules):
+    """No snapshot files yet — page renders 'no snapshot' for both panels."""
+    _, web_app = app_modules
+    # Force the macro_runner to look at an empty tmp dir.
+    import signals.macro_runner as mr
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        old = mr._MACRO_DIR
+        mr._MACRO_DIR = d
+        try:
+            r = client.get("/macro")
+            assert r.status_code == 200
+            assert "Macro Snapshot"     in r.text   # h1 always present
+            assert "No VIX snapshot"    in r.text
+            assert "No sector snapshot" in r.text
+        finally:
+            mr._MACRO_DIR = old
+
+
+def test_macro_page_renders_snapshots(client, app_modules, tmp_path):
+    """Seed both snapshot files and verify the page surfaces values + flags."""
+    import json
+    import signals.macro_runner as mr
+
+    old = mr._MACRO_DIR
+    mr._MACRO_DIR = str(tmp_path)
+    try:
+        with open(os.path.join(str(tmp_path), "vix_latest.json"), "w") as f:
+            json.dump({"VIX9D": 14.0, "VIX": 15.0, "VIX3M": 16.0, "VIX6M": 17.0,
+                       "ratio": 0.94, "flag": "calm", "asof": "2026-05-16T20:00:00"}, f)
+        with open(os.path.join(str(tmp_path), "sector_latest.json"), "w") as f:
+            json.dump({
+                "leaders":  [("XLK", 4.2), ("XLY", 3.0), ("XLF", 2.5)],
+                "laggards": [("XLE", -3.5), ("XLU", -2.1), ("XLP", -1.4)],
+                "dispersion": 2.10, "signal": "rotating",
+                "rs": {"XLK": 4.2}, "asof": "2026-05-16T20:30:00", "horizon": 20,
+            }, f)
+
+        r = client.get("/macro")
+        assert r.status_code == 200
+        assert "CALM"     in r.text
+        assert "ROTATING" in r.text
+        assert "XLK"      in r.text
+        assert "XLE"      in r.text
+        assert "0.940"    in r.text or "0.94" in r.text
+    finally:
+        mr._MACRO_DIR = old
+
+
+# Needed by test_macro_page_empty
+import os
