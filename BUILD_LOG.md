@@ -4,6 +4,69 @@
 
 ---
 
+## 2026-05-16 (latest+1) | Macro-aware /chat — ask Claude with full daily context
+
+**Why:** The morning brief tells you WHAT today's play is, but doesn't
+answer follow-ups. "Should I take this with Fed at 2pm?" "What
+happened the last 3 times we saw this regime + VIX state?" Built a
+general chat with FULL daily context (vs. /alerts/{id}/chat which is
+scoped to one alert).
+
+**What was built (2 feature commits + this docs entry):**
+
+`05d126a` — feat: macro_chat module
+  - `alerts/macro_chat.py` — MacroChat class:
+    - `build_context()` aggregates morning brief + macro snapshots +
+      KB recent (30d) + recent trades (20) + 60d prediction accuracy
+      + events (next 48h from event_calendar).
+    - `context_summary()` returns a one-line breadcrumb shown in UI.
+    - `ask(message)` calls Claude with system prompt + context + chat
+      history; persists both turns to `logs/macro_chat.jsonl` only on
+      success.
+    - `history(limit=50)`, `append_turn()`, `reset_history()`.
+  - Static system prompt cached via Anthropic prompt cache.
+  - 14 new tests covering each source, event filter, corrupt-line
+    skipping, mocked Claude happy path, empty/no-key edges.
+
+`3824079` — feat: /chat web route
+  - `GET /chat` renders the chat interface (mobile-first, 380px
+    scrollable history, breadcrumb at top showing what Claude sees,
+    Send + Reset buttons, Ctrl/Cmd+Enter to send, three example
+    prompts in empty state).
+  - `POST /chat` sends one message, returns reply.
+  - `POST /chat/reset` clears history with confirm dialog.
+  - Nav now: `[Today] [Chat] [Alerts] [Trades] [Journal] [Chats] [Macro]`
+    — Chat sits second since it's the natural follow-up to glancing
+    at the morning brief.
+  - 4 new tests.
+
+**Test result:** 336 passed, 4 deselected (integration), ~141s
+(was 318). All 7 routes live.
+
+**Phone experience:**
+
+- Tap home-screen icon → [Chat]
+- Type "should I take today's play given Fed at 2pm?"
+- Claude has the full bundle: today's brief, current macro, KB recent,
+  trades, predictions. Reply references actual numbers from your data.
+- History persists across reloads. Reset clears it.
+
+**Open follow-ups (updated):**
+
+1. ✅ Live "prediction resolved" Pushover
+2. **Promotion workflow CLI** ← still queued, infrastructure
+3. ✅ Cross-alert FastAPI views
+4. ✅ VIX TS + sector breadth
+5. ✅ Morning brief 2.0 with skip/watch
+6. ✅ Macro-aware chat
+7. Per-ticker earnings calendar (would let the chat answer "what's
+   coming this week for my watchlist?")
+8. Expiry-based exit for `[AUTO-PAPER]` positions
+9. VIX wiring in off-hours replay (small, ~30 min)
+10. Backtest dashboard surface
+
+---
+
 ## 2026-05-16 (latest) | Morning Brief 2.0 — play card with skip/watch + /today route
 
 **Why:** With macro modules (VIX TS + sector breadth) live, the
