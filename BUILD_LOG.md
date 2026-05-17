@@ -4,6 +4,73 @@
 
 ---
 
+## 2026-05-16 (UX) | Plain-English Pushover format
+
+**Why:** Live Pushover test gave the user a real look at the format.
+Their feedback: "very technical and I'll need simpler but direct
+analysis to make sense of it." Reading "trending_up_calm: BULL PUT
+CREDIT SPREAD — IVR elevated, sell the put side... VIX3M ratio
+inverts..." from a phone in 5 seconds is not an actionable experience.
+
+**The fix (`7c4ce79`):**
+
+Two coordinated changes:
+
+1. **BRIEFER_SYSTEM prompt** — new `plain_summary` JSON field with
+   an explicit jargon ban-list: ADX, IVR, contango, backwardation,
+   dispersion, VIX3M, delta, theta, "trending_up_calm" etc. Skip and
+   watch conditions must reference actual prices, not indicator
+   thresholds.
+
+2. **_format_pushover rewrite** — emoji + plain action verb +
+   thesis + real trade structure + skip rules:
+
+   ```
+   💰 SELL PUT CREDIT SPREAD on SPY
+   Strong uptrend + people willing to pay for protection = sell puts
+   below the market. SPY is 9% above its 200-day average and
+   volatility is expensive, so collect premium on downside strikes.
+
+   Trade:
+     Buy SPY $734 put
+     Sell SPY $739 put
+   Expires: Jun 26 (41 days)
+
+   🚫 Skip if:
+   • Skip if SPY opens below $735 — that breaks the uptrend setup
+   • Don't take this trade if volatility spikes above 22 intraday
+   • Avoid if tech sector reverses hard at the open
+   ```
+
+   Compared to before:
+
+   ```
+   trending_up_calm: BULL PUT CREDIT SPREAD — IVR elevated, sell the
+   put side. Strategy: credit_spread (R/R —)
+   Bull put spread on SPY (DTE45) justified by strong trend (ADX 38.3,
+   +9.3% above 200MA) and IVR=50...
+   ```
+
+   Strategy → action verb + emoji map:
+     iron_condor      → 🦅 SELL IRON CONDOR
+     credit_spread    → 💰 SELL [PUT|CALL] CREDIT SPREAD
+     debit_spread     → 📈 BUY [PUT|CALL] DEBIT SPREAD
+     single_leg       → 🎯 BUY SINGLE OPTION
+     skip-day         → 🛑 No trade today
+
+**Discord card still gets the technical narrative** — that's where
+indicator detail is appropriate (more screen real estate, time to
+read). Phone is for "tap, decide, move on."
+
+**Tests:** +3 new — jargon ban-list guard (catches future leaks),
+skip card "🛑 No trade today" path, real strikes rendered when
+legs carry chain data. 411 passed (was 409, +2 net).
+
+**Live verified:** Sent both old + new Pushovers to user's phone for
+A/B comparison. New version received approval.
+
+---
+
 ## 2026-05-16 (post-upgrade #3) | Portfolio Greeks tracker + live Pushover test
 
 **Why:** Real chain data per leg means we can roll up portfolio-wide
