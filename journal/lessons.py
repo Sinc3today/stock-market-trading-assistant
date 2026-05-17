@@ -401,7 +401,8 @@ class LessonsJournal:
         try:
             with open(self.lessons_path, "r") as f:
                 return json.load(f)
-        except Exception:
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Lessons: failed to load {self.lessons_path}: {e}")
             return []
 
     def _save(self, lessons: list):

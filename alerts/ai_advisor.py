@@ -166,7 +166,8 @@ class AIAdvisor:
             with open(self._history_path, "r") as f:
                 all_convos = json.load(f)
             return all_convos[-limit:]
-        except Exception:
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"AIAdvisor: failed to load {self._history_path}: {e}")
             return []
 
     def _save_to_history(

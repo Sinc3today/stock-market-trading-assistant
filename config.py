@@ -139,6 +139,12 @@ MARKET_OPEN                = "09:30"
 MARKET_CLOSE               = "16:00"
 INTRADAY_SCAN_INTERVAL_MIN = 5
 
+# News scanner / Polygon API rate limits.
+# Polygon free tier = 5 req/sec; 1.5s between ticker fetches keeps us safe.
+POLYGON_RATE_LIMIT_SEC = 1.5
+POLYGON_TIMEOUT_SEC    = 10
+NEWS_ARTICLES_LIMIT    = 10   # per-ticker fetch + market summary cap
+
 # ─────────────────────────────────────────
 # PATHS
 # ─────────────────────────────────────────

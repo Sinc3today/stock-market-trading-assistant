@@ -370,7 +370,8 @@ class TradeRecorder:
         try:
             with open(self.trades_path, "r") as f:
                 return json.load(f)
-        except Exception:
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"TradeRecorder: failed to load {self.trades_path}: {e}")
             return []
 
     def _save(self, trades: list):

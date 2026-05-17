@@ -63,7 +63,7 @@ class NewsScanner:
 
         # Fetch news per watchlist ticker with delay
         for ticker in all_tickers:
-            time.sleep(1.5)  # Respect free tier rate limit
+            time.sleep(config.POLYGON_RATE_LIMIT_SEC)
             articles = self._fetch_ticker_news(ticker, hours_back)
             if articles:
                 ticker_news[ticker] = articles
@@ -136,12 +136,12 @@ class NewsScanner:
             params = {
                 "ticker":              ticker,
                 "published_utc.gte":   since.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "limit":               10,
+                "limit":               config.NEWS_ARTICLES_LIMIT,
                 "sort":                "published_utc",
                 "order":               "desc",
                 "apiKey":              config.POLYGON_API_KEY,
             }
-            resp = requests.get(url, params=params, timeout=10)
+            resp = requests.get(url, params=params, timeout=config.POLYGON_TIMEOUT_SEC)
             resp.raise_for_status()
             data = resp.json()
 
@@ -180,7 +180,7 @@ class NewsScanner:
         seen_titles  = set()
 
         for ticker in market_tickers:
-            time.sleep(1.5)
+            time.sleep(config.POLYGON_RATE_LIMIT_SEC)
             articles = self._fetch_ticker_news(ticker, hours_back)
             for article in articles:
                 title = article.get("title", "")
@@ -188,7 +188,7 @@ class NewsScanner:
                     seen_titles.add(title)
                     all_articles.append(article)
 
-        return all_articles[:10]
+        return all_articles[:config.NEWS_ARTICLES_LIMIT]
 
     # ─────────────────────────────────────────
     # DISCORD POSTING
