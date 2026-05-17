@@ -4,6 +4,83 @@
 
 ---
 
+## 2026-05-16 (late night) | Codebase audit sweep — delete dead code, extract config, add tests
+
+**Why:** After the cross-alert views landed, user asked for "a clean
+sweep of the code and what needs to be optimized." Spawned an Explore
+agent to audit the whole repo. The audit's HIGH findings were
+overstated for a single-user bot (the "N+1 in TradeRecorder" is ~10ms
+per page load) but it surfaced a handful of genuine cleanups worth
+doing.
+
+**What changed (2 commits):**
+
+**Commit `872226a` — dead-code deletes**
+
+- `alerts/dashboard.py` (1597 lines) — Streamlit dashboard never
+  started by main.py. Superseded for mobile by the FastAPI
+  `/trades` `/journal` `/chats` views landed earlier tonight.
+  Confirmed no referrers in code or markdown.
+- `write_backtest.py`, `write_init.py` — one-shot scaffolding scripts
+  that wrote files which are now committed. No further purpose.
+- `main.py` — dropped the "Dashboard runs separately" docstring hint
+  and the "python -m streamlit run alerts/dashboard.py" startup-log
+  line, since both pointed at the deleted file.
+
+**Commit `83fd3b3` — config extraction + logging + tests**
+
+- `config.py` — new constants per CLAUDE.md rule #9:
+    - `POLYGON_RATE_LIMIT_SEC = 1.5`
+    - `POLYGON_TIMEOUT_SEC    = 10`
+    - `NEWS_ARTICLES_LIMIT    = 10`
+- `scanners/news_scanner.py` — replaced 4 hardcoded magic numbers
+  (`time.sleep(1.5)` ×2, `limit=10`, `timeout=10`, `[:10]`) with
+  the new config constants.
+- Silent JSON-load failures now log a warning instead of swallowing
+  the exception. Missing-file behavior unchanged. Touched:
+    - `journal/trade_recorder.py:_load`
+    - `journal/lessons.py:_load`
+    - `alerts/ai_advisor.py:get_history`
+- `tests/test_learning_off_hours.py` (NEW, 6 tests) — covers replay
+  with no near-misses, no CSV, no API key fallback, Claude JSON parse,
+  malformed Claude reply, HTTP error swallowed. Fixture uses
+  `monkeypatch.delenv("ANTHROPIC_API_KEY")` so we can't accidentally
+  hit the live API (caught this when the first run did).
+- `tests/test_learning_scheduler.py` (NEW, 9 tests) — verifies
+  `register_learning_jobs` adds the 6 expected jobs with correct
+  kwargs (polygon_client/post_fn on the outcome_resolver job,
+  post_fn on the reflector job), and each `job_*` wrapper catches
+  exceptions from its underlying module.
+
+**Audit findings deliberately NOT acted on:**
+
+- Helper extraction for JSON load + EST timestamp formatting
+  duplicated across ~10 files. Premature abstraction for a
+  single-user bot — would touch too many files for too little ROI.
+- TradeRecorder N+1 file reads (re-loads trades.json on every getter).
+  Agent flagged HIGH but real impact is ~10ms per /trades page load.
+- Adding the missing tests for `data/`, `signals/`, `scanners/` modules.
+  Real gap but not "cleanup" — backlog for a dedicated session.
+
+**Test result:** 261 passed, 4 deselected, ~140s (was 246).
+Net file-count change: -3 files, ~2000 lines deleted, ~270 added.
+
+**Open follow-ups (updated order):**
+
+1. ~~Live "prediction resolved" Pushover~~ ✅
+2. Promotion workflow CLI (`python -m learning.promote <hyp_id>`)
+3. ~~Web app cross-alert views~~ ✅ (`/learning` + `/hypotheses`
+   pages still pending, depend on #2)
+4. Expiry-based exit for `[AUTO-PAPER]` positions
+5. VIX wiring in off-hours replay
+6. Add `ruff` to a `pyproject.toml [tool.ruff]` block with
+   E701/E702/E741/E402/E712 disabled so future lint runs only flag
+   real issues
+7. Backlog: add tests for `data/`, `signals/`, `scanners/` modules
+   with no current coverage (~10 modules)
+
+---
+
 ## 2026-05-16 (night) | Cross-alert /trades /journal /chats in FastAPI app
 
 **Why:** After bookmarking the dashboard to the iPhone home screen, user
