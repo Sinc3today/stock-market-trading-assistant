@@ -268,12 +268,51 @@ def test_brief_writes_plan_with_macro_context(iso_logs):
 # FORMATTERS
 # ─────────────────────────────────────────
 
-def test_pushover_message_includes_play_and_skip(iso_logs):
+def test_pushover_message_is_plain_english_with_action(iso_logs):
+    """New format: emoji + plain-English action verb + thesis. No jargon."""
     briefer = MorningBriefer(spy_strategy=_StubStrategy(_base_card()), api_key=None)
     brief = briefer.build_today()
     msg = brief["pushover_message"]
-    assert "Iron Condor" in msg
-    assert "iron_condor" in msg or "Strategy:" in msg
+    # Action verb in plain English (not "iron_condor" raw)
+    assert "IRON CONDOR" in msg.upper()
+    # Emoji prefix for scannability
+    assert msg[0] in ("💰", "📈", "🦅", "🎯", "📊", "🛑")
+    # No raw jargon that the user explicitly flagged
+    for jargon in ("trending_up_calm", "IVR=", "VIX3M", "ADX=", "contango"):
+        assert jargon not in msg, f"jargon '{jargon}' leaked into Pushover"
+
+
+def test_pushover_skip_card_says_no_trade(iso_logs):
+    briefer = MorningBriefer(
+        spy_strategy=_StubStrategy(_base_card(tradeable=False, play="HIGH_VOL_SKIP")),
+        api_key=None,
+    )
+    msg = briefer.build_today()["pushover_message"]
+    assert "No trade today" in msg
+    assert msg[0] == "🛑"
+
+
+def test_pushover_shows_real_strikes_when_legs_have_them(iso_logs):
+    """When OptionsChain populated legs with strikes, Pushover shows them."""
+    card = _base_card()
+    card["options"] = {
+        "strategy": "credit_spread",
+        "max_profit": 250, "max_loss": 750, "rr_ratio": "0.33",
+        "recommended_dte": 14, "exit_rule": "Close at 50%",
+        "legs": [
+            {"action": "buy",  "type": "put", "strike": 734.0,
+             "ticker": "O:SPY260626P00734000", "expiration": "2026-06-26"},
+            {"action": "sell", "type": "put", "strike": 739.0,
+             "ticker": "O:SPY260626P00739000", "expiration": "2026-06-26"},
+        ],
+    }
+    briefer = MorningBriefer(spy_strategy=_StubStrategy(card), api_key=None)
+    msg = briefer.build_today()["pushover_message"]
+    assert "Buy SPY $734 put"  in msg
+    assert "Sell SPY $739 put" in msg
+    # Friendly expiration line
+    assert "Expires:" in msg
+    assert "Max win:" in msg or "$250" in msg
 
 
 def test_discord_message_appended_with_thesis_and_macro(iso_logs, tmp_path):

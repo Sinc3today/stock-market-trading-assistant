@@ -53,17 +53,25 @@ You receive:
 - Sector breadth (signal, leaders, laggards from yesterday)
 - Today's high-impact events (FOMC, CPI, NFP)
 
-You must return ONLY a JSON object with these three fields:
+You must return ONLY a JSON object with these four fields:
 
 {
-  "narrative":        "<= 240 chars. One-paragraph thesis. Reference actual numbers from the inputs. Honest about contradictions.",
-  "skip_conditions":  ["concrete skip rule 1", "...up to 3 items"],
-  "watch_conditions": ["concrete contingency 1", "...up to 3 items"]
+  "plain_summary":    "<= 180 chars. Tells the trader IN PLAIN ENGLISH what today's setup is and why this play makes sense. No jargon.",
+  "narrative":        "<= 240 chars. Slightly more technical thesis for the Discord card. May reference indicator names.",
+  "skip_conditions":  ["plain-English skip rule 1", "...up to 3 items"],
+  "watch_conditions": ["plain-English contingency 1", "...up to 3 items"]
 }
 
-Rules:
-- Skip and watch conditions are short imperative phrases referencing actual prices, indicators, or events. Example: "Skip if VIX opens > 17", "Switch to iron condor if SPY gaps less than 0.3%".
-- If the macro context CONTRADICTS the recommended play (e.g. VIX backwardation flag with an iron condor play), flag that explicitly in skip_conditions.
+LANGUAGE RULES — this is the most important thing:
+- WRITE FOR A SMART NON-EXPERT. The trader knows markets but isn't reading academic finance papers.
+- PLAIN ENGLISH ONLY in `plain_summary`, `skip_conditions`, `watch_conditions`. NO jargon: no "ADX", "IVR", "contango", "backwardation", "dispersion", "VIX3M", "delta", "theta", "regime", "trending_up_calm".
+- Reference ACTUAL PRICES not indicator levels. Say "if SPY opens below $735" not "if SPY gaps down >0.5%".
+- Say "the market" not "SPY", "stock prices" not "the index", "volatility" not "VIX", "sector rotation" not "dispersion".
+- Action-first phrasing: start skip conditions with "Skip if", "Don't take this trade if", "Avoid if". Start watch conditions with verbs: "Take profit when", "Tighten the spread if", "Roll up strikes if".
+- If you must reference an indicator (rare), explain what it means in the same sentence.
+
+OTHER RULES:
+- If the macro context CONTRADICTS the recommended play, flag that in skip_conditions in plain terms ("Skip — volatility says people are scared, not calm").
 - If there's a high-impact event today (FOMC, CPI), skip_conditions should mention skipping until after the release.
 - Do NOT recommend a different play -- the regime detector has already chosen. Your job is to add context, not override.
 - Do NOT include disclaimers, intros, or markdown. Pure JSON only.
@@ -108,10 +116,12 @@ class MorningBriefer:
 
         if parsed:
             narrative        = parsed.get("narrative", "").strip()
+            plain_summary    = parsed.get("plain_summary", "").strip() or narrative
             skip_conditions  = self._clean_list(parsed.get("skip_conditions", []))
             watch_conditions = self._clean_list(parsed.get("watch_conditions", []))
         else:
             narrative, skip_conditions, watch_conditions = self._fallback_synthesis(base, macro)
+            plain_summary = narrative
             if parse_err:
                 logger.warning(f"MorningBriefer: Claude parse failed ({parse_err}) -- using fallback")
 
@@ -119,9 +129,10 @@ class MorningBriefer:
             **base,
             "macro_context":    macro,
             "narrative":        narrative,
+            "plain_summary":    plain_summary,
             "skip_conditions":  skip_conditions,
             "watch_conditions": watch_conditions,
-            "pushover_message": self._format_pushover(base, narrative, skip_conditions),
+            "pushover_message": self._format_pushover(base, plain_summary, skip_conditions),
             "discord_message":  self._format_discord(base, macro, narrative,
                                                      skip_conditions, watch_conditions),
         }
@@ -343,19 +354,115 @@ class MorningBriefer:
     # ── FORMATTERS ────────────────────────────────────
 
     @staticmethod
-    def _format_pushover(base: dict, narrative: str, skip: list[str]) -> str:
-        """Short body for Pushover. Title is set by the notifier."""
-        regime  = base.get("regime", "?")
-        play    = base.get("play", "?")
-        opts    = base.get("options") or {}
-        strat   = opts.get("strategy") or "—"
-        rr      = opts.get("rr_ratio") or "—"
-        head = f"{regime}: {play}\nStrategy: {strat} (R/R {rr})"
-        if narrative:
-            head += f"\n\n{narrative[:240]}"
+    def _format_pushover(base: dict, plain_summary: str, skip: list[str]) -> str:
+        """
+        Phone-first Pushover body. Scannable, plain English, shows the
+        actual trade structure when chain data is available.
+
+        Layout:
+            <emoji> <ACTION> on <TICKER>
+            <one-line thesis in plain English>
+
+            Trade: <legs with strikes if real-chain data>
+            Expires: <human date> (<dte> days)
+
+            🚫 Skip if:
+            • <plain skip 1>
+            • <plain skip 2>
+            • <plain skip 3>
+        """
+        opts      = base.get("options") or {}
+        tradeable = base.get("tradeable", False)
+        if not tradeable:
+            return (
+                f"🛑 No trade today\n"
+                f"{plain_summary or base.get('play', '?')}"
+            )[:1024]
+
+        # Plain-English action verb derived from the strategy.
+        strategy = (opts.get("strategy") or "").lower()
+        verb, emoji = {
+            "iron_condor":   ("SELL IRON CONDOR",  "🦅"),
+            "credit_spread": ("SELL CREDIT SPREAD","💰"),
+            "debit_spread":  ("BUY DEBIT SPREAD",  "📈"),
+            "single_leg":    ("BUY SINGLE OPTION", "🎯"),
+        }.get(strategy, ("ENTER TRADE", "📊"))
+
+        # Direction tag — "PUTS" / "CALLS" / "" — pulled from legs when possible.
+        legs = opts.get("legs") or []
+        types = {(l.get("type") or l.get("option_type") or "").lower() for l in legs if l}
+        if types == {"put"}:
+            verb = verb.replace("CREDIT SPREAD", "PUT CREDIT SPREAD").replace(
+                "DEBIT SPREAD",  "PUT DEBIT SPREAD"
+            )
+        elif types == {"call"}:
+            verb = verb.replace("CREDIT SPREAD", "CALL CREDIT SPREAD").replace(
+                "DEBIT SPREAD",  "CALL DEBIT SPREAD"
+            )
+
+        lines = [f"{emoji} {verb} on SPY"]
+        if plain_summary:
+            lines.append(plain_summary[:200])
+
+        # Trade structure block — only when we have real legs with strikes.
+        trade_lines = MorningBriefer._format_legs_for_pushover(legs)
+        if trade_lines:
+            lines.append("")
+            lines.extend(trade_lines)
+
+        # Expiration line in friendly format.
+        exp_iso = next((l.get("expiration") for l in legs if l and l.get("expiration")), None)
+        dte     = opts.get("recommended_dte")
+        if exp_iso:
+            try:
+                from datetime import date as _d
+                exp_d = _d.fromisoformat(exp_iso[:10])
+                friendly = exp_d.strftime("%b %-d")
+                days = (exp_d - _d.today()).days
+                lines.append(f"Expires: {friendly} ({days} days)")
+            except (ValueError, TypeError):
+                if dte:
+                    lines.append(f"Expires: ~{dte} days from now")
+        elif dte:
+            lines.append(f"Expires: ~{dte} days from now")
+
+        # Max profit / max loss in dollars
+        mp = opts.get("max_profit"); ml = opts.get("max_loss")
+        if isinstance(mp, (int, float)) and mp > 0 and isinstance(ml, (int, float)) and ml > 0:
+            lines.append(f"Max win: ${mp:.0f}   Max loss: ${ml:.0f}")
+
         if skip:
-            head += "\n\nSkip if:\n" + "\n".join(f"• {s}" for s in skip[:3])
-        return head[:1024]
+            lines.append("")
+            lines.append("🚫 Skip if:")
+            for s in skip[:3]:
+                lines.append(f"• {s}")
+
+        return "\n".join(lines)[:1024]
+
+    @staticmethod
+    def _format_legs_for_pushover(legs: list[dict]) -> list[str]:
+        """
+        Render legs as: "Sell SPY $739 put / Buy SPY $734 put"
+        Returns [] when legs lack strikes or only have theoretical notes.
+        """
+        if not legs:
+            return []
+        rendered = []
+        for leg in legs:
+            strike = leg.get("strike")
+            t      = (leg.get("type") or leg.get("option_type") or "").lower()
+            action = (leg.get("action") or "").lower()
+            if not (strike and t and action):
+                # Theoretical leg (no strike) — fall back to the note string
+                note = leg.get("note")
+                if note:
+                    rendered.append(f"  {note}")
+                continue
+            verb = "Sell" if action == "sell" else "Buy"
+            rendered.append(f"  {verb} SPY ${strike:g} {t}")
+        if not rendered:
+            return []
+        return ["Trade:"] + rendered
 
     @staticmethod
     def _format_discord(
