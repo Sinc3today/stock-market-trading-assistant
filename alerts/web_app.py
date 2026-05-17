@@ -42,6 +42,7 @@ from journal.trade_recorder import TradeRecorder
 from journal.plan_logger import PlanLogger
 from signals import macro_runner
 from data.earnings_calendar import EarningsCalendar
+from data import backtest_summary
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
@@ -286,13 +287,14 @@ def _esc(v: Any) -> str:
 
 
 _NAV_LINKS = [
-    ("today",   "/today",   "Today"),
-    ("chat",    "/chat",    "Chat"),
-    ("alerts",  "/",        "Alerts"),
-    ("trades",  "/trades",  "Trades"),
-    ("journal", "/journal", "Journal"),
-    ("chats",   "/chats",   "Chats"),
-    ("macro",   "/macro",   "Macro"),
+    ("today",    "/today",    "Today"),
+    ("chat",     "/chat",     "Chat"),
+    ("alerts",   "/",         "Alerts"),
+    ("trades",   "/trades",   "Trades"),
+    ("journal",  "/journal",  "Journal"),
+    ("chats",    "/chats",    "Chats"),
+    ("macro",    "/macro",    "Macro"),
+    ("backtest", "/backtest", "Backtest"),
 ]
 
 
@@ -457,6 +459,168 @@ _SIGNAL_CLASS = {
     "dispersed":        "status-loss",
     "unknown":          "status-open",
 }
+
+
+_VERDICT_CLASS = {
+    "accepted":     "status-win",
+    "rejected":     "status-loss",
+    "inconclusive": "status-be",
+    "pending":      "status-open",
+}
+
+
+def _render_backtest(
+    stats: dict,
+    hypotheses: dict,
+    accuracy: dict,
+    kb_groups: list[dict],
+) -> str:
+    """Backtest dashboard — what the bot has measured about itself."""
+    # ── Overview card ──────────────────────────
+    ov  = stats.get("overview")  or {}
+    src = _esc(stats.get("source") or "?")
+    sharpe = ov.get("sharpe")
+    wr     = ov.get("win_rate_pct")
+    sharpe_str = f"{sharpe:.2f}" if isinstance(sharpe, (int, float)) else "—"
+    wr_str     = f"{wr:.1f}%"    if isinstance(wr, (int, float))     else "—"
+
+    overview_html = f'''
+<div class="alert-card">
+  <div><b>Production Baseline</b>
+       <span class="muted" style="float:right;font-size:.75rem">{src}</span></div>
+  <div class="grid" style="margin-top:.5rem">
+    <div><span>Sharpe (annual)</span><b>{sharpe_str}</b></div>
+    <div><span>Win Rate</span><b>{wr_str}</b></div>
+    <div><span>Years backtested</span><b>{_esc(stats.get("years"))}</b></div>
+    <div><span>Version</span><b>{_esc(stats.get("version"))}</b></div>
+  </div>
+</div>'''
+
+    # ── Per-regime ─────────────────────────────
+    regime_rows = []
+    for r in stats.get("by_regime") or []:
+        wr_r  = r.get("win_rate_pct")
+        wr_r_str = f"{wr_r:.1f}%" if isinstance(wr_r, (int, float)) else "—"
+        tradeable = r.get("tradeable", True)
+        badge_cls = "status-win" if tradeable else "status-loss"
+        badge_txt = "TRADED" if tradeable else "SKIPPED"
+        wr_cls = (
+            "pnl-pos" if (isinstance(wr_r, (int, float)) and wr_r >= 60)
+            else "pnl-neg" if (isinstance(wr_r, (int, float)) and wr_r <  35)
+            else "pnl-zero"
+        )
+        regime_rows.append(f'''
+<div style="padding:.45rem 0;border-bottom:1px solid #21262d">
+  <div style="display:flex;justify-content:space-between">
+    <span><b>{_esc(r.get("regime"))}</b>
+          <span class="badge {badge_cls}" style="font-size:.65rem;margin-left:.4rem">{badge_txt}</span></span>
+    <span class="{wr_cls}"><b>{wr_r_str}</b></span>
+  </div>
+  <div class="muted" style="margin-top:.15rem">{_esc(r.get("note") or "")}</div>
+</div>''')
+
+    regime_html = f'''
+<div class="alert-card">
+  <div><b>By Regime</b></div>
+  <div style="margin-top:.4rem">{"".join(regime_rows) or '<div class="muted">No regime data.</div>'}</div>
+</div>'''
+
+    # ── Hypotheses ─────────────────────────────
+    def _hypo_section(verdict: str, items: list[dict]) -> str:
+        if not items:
+            return ""
+        cls  = _VERDICT_CLASS.get(verdict, "status-open")
+        rows = []
+        for spec in items[:5]:   # cap at 5 per bucket
+            sharpe_delta = spec.get("sharpe_delta")
+            pnl_delta    = spec.get("pnl_delta")
+            sd = f"{sharpe_delta:+.2f}" if isinstance(sharpe_delta, (int, float)) else "—"
+            pd = f"${pnl_delta:+,.0f}"  if isinstance(pnl_delta, (int, float))    else "—"
+            rows.append(
+                f'<div style="padding:.4rem 0;border-bottom:1px solid #21262d">'
+                f'<div><b>{_esc(spec.get("var") or spec.get("id"))}</b> '
+                f'<span class="muted">→ {_esc(spec.get("proposed_value"))}</span></div>'
+                f'<div class="muted" style="margin-top:.15rem;font-size:.8rem">'
+                f'ΔSharpe {sd} · ΔP&amp;L {pd}</div>'
+                f'<div class="muted" style="margin-top:.15rem">{_esc((spec.get("rationale") or "")[:240])}</div>'
+                f'</div>'
+            )
+        return (
+            f'<div class="alert-card">'
+            f'<div><b>Hypotheses — {verdict.title()}</b> '
+            f'<span class="badge {cls}" style="margin-left:.4rem">{len(items)}</span></div>'
+            f'<div style="margin-top:.4rem">{"".join(rows)}</div>'
+            f'</div>'
+        )
+
+    hypo_html = "".join(
+        _hypo_section(v, hypotheses.get(v, []))
+        for v in ("accepted", "pending", "inconclusive", "rejected")
+    )
+    if not hypo_html:
+        hypo_html = (
+            '<div class="alert-card">'
+            '<div><b>Hypotheses</b></div>'
+            '<div class="muted" style="margin-top:.5rem">'
+            'No hypotheses yet. The Saturday weekly job produces one '
+            'per week — `logs/learning/hypotheses/` is empty.</div>'
+            '</div>'
+        )
+
+    # ── Prediction accuracy ────────────────────
+    acc_n = accuracy.get("sample") or 0
+    acc_p = accuracy.get("accuracy")
+    acc_p_str = f"{acc_p:.1f}%" if isinstance(acc_p, (int, float)) else "—"
+    acc_cls = (
+        "pnl-pos" if (isinstance(acc_p, (int, float)) and acc_p >= 60)
+        else "pnl-neg" if (isinstance(acc_p, (int, float)) and acc_p < 40 and acc_n > 0)
+        else "pnl-zero"
+    )
+    acc_html = f'''
+<div class="alert-card">
+  <div><b>Prediction Accuracy</b></div>
+  <div class="grid" style="margin-top:.5rem">
+    <div><span>Last 60 days</span><b class="{acc_cls}">{acc_p_str}</b></div>
+    <div><span>Resolved sample</span><b>{acc_n}</b></div>
+  </div>
+</div>'''
+
+    # ── KB observations ────────────────────────
+    if kb_groups:
+        kb_rows = []
+        for g in kb_groups:
+            kb_rows.append(
+                f'<div style="padding:.45rem 0;border-bottom:1px solid #21262d">'
+                f'<div style="display:flex;justify-content:space-between">'
+                f'<b>{_esc(g.get("category"))}</b>'
+                f'<span class="badge">{g.get("count")}</span></div>'
+                f'<div class="muted" style="margin-top:.15rem">{_esc(g.get("latest_claim"))}</div>'
+                f'<div class="muted" style="font-size:.75rem">latest: {_esc(g.get("latest_date"))}</div>'
+                f'</div>'
+            )
+        kb_html = (
+            f'<div class="alert-card">'
+            f'<div><b>KB Observations (last 30d)</b></div>'
+            f'<div style="margin-top:.4rem">{"".join(kb_rows)}</div>'
+            f'</div>'
+        )
+    else:
+        kb_html = (
+            '<div class="alert-card">'
+            '<div><b>KB Observations</b></div>'
+            '<div class="muted" style="margin-top:.5rem">'
+            'No KB entries in the last 30 days yet.</div>'
+            '</div>'
+        )
+
+    body = overview_html + regime_html + acc_html + hypo_html + kb_html
+    return _render_page(
+        title       = "Trading Assistant - Backtest",
+        heading     = "Backtest & Self-Learning",
+        body        = body,
+        css         = _INDEX_CSS,
+        active_nav  = "backtest",
+    )
 
 
 def _render_macro_chat(history: list[dict], context_summary: str) -> str:
@@ -1124,6 +1288,17 @@ def macro_chat_reset():
     """Clear the macro chat history."""
     MacroChat().reset_history()
     return JSONResponse({"ok": True})
+
+
+@app.get("/backtest", response_class=HTMLResponse)
+def backtest_page():
+    """Production baseline + hypothesis history + KB + prediction accuracy."""
+    return HTMLResponse(_render_backtest(
+        stats      = backtest_summary.production_stats(),
+        hypotheses = backtest_summary.hypotheses_by_status(),
+        accuracy   = backtest_summary.prediction_accuracy(),
+        kb_groups  = backtest_summary.kb_observations_by_category(),
+    ))
 
 
 @app.get("/alerts/{alert_id}", response_class=HTMLResponse)

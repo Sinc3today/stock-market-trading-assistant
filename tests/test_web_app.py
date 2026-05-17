@@ -156,10 +156,10 @@ def test_recent_alerts_list(client, app_modules, sample_alert):
 def test_nav_appears_on_index(client):
     r = client.get("/")
     assert r.status_code == 200
-    # Nav links to all seven views
+    # Nav links to all eight views
     for href in ('href="/today"', 'href="/chat"', 'href="/"',
                  'href="/trades"', 'href="/journal"', 'href="/chats"',
-                 'href="/macro"'):
+                 'href="/macro"', 'href="/backtest"'):
         assert href in r.text
 
 
@@ -389,6 +389,66 @@ def test_macro_chat_reset_clears_history(client, app_modules):
     r = client.post("/chat/reset")
     assert r.status_code == 200
     assert MacroChat().history() == []
+
+
+# ─────────────────────────────────────────
+# Backtest dashboard
+# ─────────────────────────────────────────
+
+def test_backtest_page_baseline_only(client, app_modules):
+    """No hypotheses, no KB, no predictions — still renders production baseline."""
+    r = client.get("/backtest")
+    assert r.status_code == 200
+    assert "Production Baseline"   in r.text
+    assert "1.73"                  in r.text   # default Sharpe from docs
+    assert "74.1%"                 in r.text   # iron condor edge
+    assert "By Regime"             in r.text
+    assert "Prediction Accuracy"   in r.text
+    # Empty-state messages for the two dynamic sections
+    assert "No hypotheses yet"     in r.text
+    assert "No KB entries"         in r.text
+
+
+def test_backtest_page_renders_hypotheses_and_kb(client, app_modules, tmp_path):
+    """Seed a hypothesis spec + KB entry + a resolved prediction."""
+    import json
+    from datetime import date
+    from learning.knowledge_base import KnowledgeBase, KBEntry
+    from learning.predictions    import PredictionLog, Prediction
+
+    # Seed an accepted hypothesis
+    hyp_dir = os.path.join(str(tmp_path), "learning", "hypotheses")
+    os.makedirs(hyp_dir, exist_ok=True)
+    with open(os.path.join(hyp_dir, "hyp_a.json"), "w") as f:
+        json.dump({
+            "id": "hyp_a", "verdict": "accepted",
+            "var": "ADX_TREND_MIN", "proposed_value": 27.0,
+            "sharpe_delta": 0.15, "pnl_delta": 350.0,
+            "rationale": "Tighter ADX gate cuts whipsaw losses",
+        }, f)
+
+    # Seed a KB entry + resolved prediction
+    KnowledgeBase().append(KBEntry(
+        date=date.today().isoformat(), category="market_context",
+        claim="VIX flipped cautious after CPI beat", confidence=0.7,
+    ))
+    pl = PredictionLog()
+    pl.save(Prediction(date="2026-05-15", regime="choppy_low_vol",
+                        direction="bullish", tradeable=True, entry_spy=700.0))
+    pl.mark_resolved("2026-05-15", actual_close=705.0,
+                      outcome="correct", resolution_date="2026-05-15")
+
+    r = client.get("/backtest")
+    assert r.status_code == 200
+    # Hypothesis details surfaced
+    assert "ADX_TREND_MIN"                  in r.text
+    assert "Tighter ADX gate"               in r.text
+    assert "+0.15"                          in r.text or "0.15" in r.text
+    # KB grouping shown
+    assert "market_context"                 in r.text
+    assert "VIX flipped cautious"           in r.text
+    # Prediction accuracy box reflects the resolved entry
+    assert "100.0%" in r.text or "100%" in r.text
 
 
 # Needed by test_macro_page_empty
