@@ -5,8 +5,8 @@ Starts the Discord bot, premarket scanner, swing scanner, and intraday scanner.
 Run with:
     python main.py
 
-Dashboard runs separately:
-    python -m streamlit run alerts/dashboard.py
+The web dashboard (alerts, trades, journal, chats) is started automatically
+as a uvicorn subprocess. See alerts/web_app.py.
 """
 
 import subprocess
@@ -441,8 +441,7 @@ if __name__ == "__main__":
     logger.info("✅ All systems running")
     logger.info("   Scanners:  scheduled and waiting")
     logger.info("   Discord:   online")
-    logger.info(f"  Web app:   http://localhost:{config.WEB_SERVER_PORT}/alerts/<id>")
-    logger.info("   Dashboard: python -m streamlit run alerts/dashboard.py")
+    logger.info(f"  Web app:   http://localhost:{config.WEB_SERVER_PORT}/")
     logger.info("   Stop:      Ctrl+C")
     logger.info("=" * 52)
 
