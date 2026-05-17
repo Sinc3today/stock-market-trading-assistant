@@ -4,6 +4,64 @@
 
 ---
 
+## 2026-05-16 (evening, laptop pickup) | Live prediction-resolved Pushover + tunnel moved to Linux
+
+**Session length:** ~30 min after returning to the Linux box.
+
+**Context:** Resumed from the morning handoff (commit `5b6a376`). User
+killed the Windows-side `cloudflared` service from an admin PowerShell
+so this Linux host could take over `alerts.nexus-lab.work`. Picked
+Phase 2 follow-up #4 (live "prediction resolved" notification) as the
+quick win.
+
+**What changed:**
+
+- `cloudflare/tunnel_config.yml` — credentials path moved to
+  `/home/nexus/.cloudflared/…` and backend bumped from `:8000` → `:8002`
+  to match `WEB_SERVER_PORT` in `.env`. Linux box is now the canonical
+  tunnel host. (commit `326348f`)
+
+- `learning/outcome_resolver.py` — new `format_resolved_message(prediction)`
+  helper. Pure function; returns a 1-2-line Pushover/Discord summary
+  (✅ CORRECT / ❌ WRONG / — skip) with SPY entry → close + % move.
+  Skip days still emit a quiet heartbeat line.
+
+- `learning/scheduler.py` — `job_outcome_resolver` now accepts `post_fn`
+  and pings it with the formatted message right after a successful
+  resolve. `register_learning_jobs` already had `post_fn` in scope from
+  `main.py` (`notifier.message`), so the wiring is one kwarg deep.
+  Notification failure is caught and logged so it can't break the job.
+
+- `tests/test_learning_outcome_resolver.py` — 5 new tests:
+  formatter output for correct/wrong/skip + scheduler job pings
+  post_fn on success and skips it when there's no prediction.
+
+**Test result:** 239 passed, 4 deselected (integration), ~141s
+(was 234 before — no regressions, +5 new).
+
+**Commits:**
+- `326348f` chore: move cloudflared tunnel to Linux host (port 8002)
+- `527d492` feat: live "prediction resolved" notification at 16:05 ET
+
+**What this closes:** Phase 2 follow-up #4. Day-of feedback no longer
+waits for the 19:01 reflector — the user gets a Pushover at 16:05 ET
+saying whether today's directional call landed.
+
+**Open for next session (in original handoff order):**
+
+1. ~~Live "prediction resolved" Pushover~~ ✅ done this session
+2. Promotion workflow CLI (`python -m learning.promote <hyp_id>`)
+3. Web app `/learning` + `/hypotheses` routes
+4. Expiry-based exit for `[AUTO-PAPER]` positions
+5. VIX wiring in off-hours replay
+
+Recommend tackling #2 (promotion CLI) next — accepted hypotheses
+currently pile up in `logs/learning/hypotheses/` with no path to
+production. Without #2, the weekly Saturday loop produces output
+nobody acts on.
+
+---
+
 ## 2026-05-16 | Self-learning loop scaffold (paper exec + reflection + hypothesis + backtest)
 
 **Why:** Goal is an assistant that keeps building skill on its own when the
