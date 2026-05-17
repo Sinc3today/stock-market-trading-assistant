@@ -123,6 +123,36 @@ def test_ask_claude_handles_malformed_json(iso_dirs, monkeypatch):
     assert KnowledgeBase().all() == []
 
 
+def test_vix_for_uses_exact_match(iso_dirs):
+    learner = OffHoursLearner(api_key=None,
+                              vix_history={date(2026, 5, 14): 18.2,
+                                           date(2026, 5, 15): 17.9})
+    assert learner._vix_for(learner._load_vix_history(),
+                            date(2026, 5, 15), fallback=16.0) == 17.9
+
+
+def test_vix_for_falls_back_to_nearest_prior(iso_dirs):
+    learner = OffHoursLearner(api_key=None,
+                              vix_history={date(2026, 5, 14): 18.2,
+                                           date(2026, 5, 15): 17.9})
+    # Sunday 2026-05-17 → should pick Friday 2026-05-15
+    assert learner._vix_for(learner._load_vix_history(),
+                            date(2026, 5, 17), fallback=16.0) == 17.9
+
+
+def test_vix_for_uses_fallback_when_lookup_empty(iso_dirs):
+    learner = OffHoursLearner(api_key=None, vix_history={})
+    assert learner._vix_for(learner._load_vix_history(),
+                            date(2026, 5, 17), fallback=16.0) == 16.0
+
+
+def test_vix_for_uses_fallback_when_all_dates_after(iso_dirs):
+    learner = OffHoursLearner(api_key=None,
+                              vix_history={date(2026, 5, 20): 19.0})
+    assert learner._vix_for(learner._load_vix_history(),
+                            date(2026, 5, 17), fallback=16.0) == 16.0
+
+
 def test_ask_claude_swallows_http_errors(iso_dirs, monkeypatch):
     """Network error during Claude call returns [] and logs, doesn't crash."""
     learner = OffHoursLearner(api_key="sk-test-key")

@@ -75,9 +75,14 @@ class OffHoursLearner:
         self,
         knowledge_base: KnowledgeBase | None = None,
         api_key:        str | None    = None,
+        vix_history             = None,   # injectable for tests: dict[date, float]
     ):
-        self.kb      = knowledge_base or KnowledgeBase()
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self.kb           = knowledge_base or KnowledgeBase()
+        self.api_key      = api_key or os.getenv("ANTHROPIC_API_KEY")
+        # vix_history is None -> load from CBOE CSV on first replay.
+        # Test fixtures can inject a {date: vix_close} dict to avoid
+        # hitting the network.
+        self._vix_history = vix_history
 
     # ── MAIN ──────────────────────────────────────────
 
@@ -152,6 +157,11 @@ class OffHoursLearner:
         detector = RegimeDetector()
         dates    = sorted(df.index)
 
+        # Load VIX history once (CBOE CSV via VIXClient). Falls back to
+        # an empty dict if the fetch fails — replay still runs with a
+        # 16.0 default per-day, same as the old behaviour.
+        vix_lookup = self._load_vix_history()
+
         near: list[dict] = []
         for i, today in enumerate(dates[-REPLAY_DAYS:]):
             idx = dates.index(today)
@@ -160,10 +170,10 @@ class OffHoursLearner:
             hist = df.loc[dates[max(0, idx-250):idx]].copy()
             hist.index = pd.to_datetime(hist.index)
 
-            # Use a flat-ish VIX proxy: we don't have history per-day at zero cost here,
-            # so reuse the same default (16) the production backtest falls back to.
-            vix_today = 16.0
-            ivr_today = 30.0
+            # Use real historical VIX when we have it, else fall back
+            # to the same 16.0 default the production backtest uses.
+            vix_today = self._vix_for(vix_lookup, today, fallback=16.0)
+            ivr_today = 30.0   # IVR history is per-ticker; out of scope for now
             try:
                 r = detector.classify(
                     spy_daily_df = hist,
@@ -204,6 +214,41 @@ class OffHoursLearner:
             })
 
         return near
+
+    # ── VIX HISTORY ───────────────────────────────────
+
+    def _load_vix_history(self) -> dict:
+        """
+        Return {date: close} for the VIX. Uses the injected dict if the
+        test fixture provided one, otherwise pulls from VIXClient.get_history.
+        On any failure returns {} so the replay still runs with the fallback.
+        """
+        if self._vix_history is not None:
+            return self._vix_history
+        try:
+            from data.vix_client import VIXClient
+            df = VIXClient().get_history(days=REPLAY_DAYS + 60)
+            if df is None or len(df) == 0:
+                return {}
+            return {d: float(c) for d, c in df["close"].items()}
+        except Exception as e:
+            logger.warning(f"OffHoursLearner: VIX history load failed -- {e}")
+            return {}
+
+    @staticmethod
+    def _vix_for(lookup: dict, target: date, fallback: float) -> float:
+        """
+        Return VIX for target date, or the nearest preceding day, else
+        the fallback. Keeps weekends/holidays from punching a hole.
+        """
+        if not lookup:
+            return fallback
+        if target in lookup:
+            return lookup[target]
+        prior = [d for d in lookup if d <= target]
+        if not prior:
+            return fallback
+        return lookup[max(prior)]
 
     # ── CLAUDE ────────────────────────────────────────
 
