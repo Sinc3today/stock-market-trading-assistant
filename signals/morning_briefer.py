@@ -334,6 +334,7 @@ class MorningBriefer:
             payload = brief.get("plan_payload") or {}
             payload.update({
                 "narrative":        brief.get("narrative"),
+                "plain_summary":    brief.get("plain_summary"),
                 "skip_conditions":  brief.get("skip_conditions"),
                 "watch_conditions": brief.get("watch_conditions"),
                 "macro_context":    brief.get("macro_context"),

@@ -241,9 +241,9 @@ def test_macro_page_empty(client, app_modules):
         try:
             r = client.get("/macro")
             assert r.status_code == 200
-            assert "Macro Snapshot"     in r.text   # h1 always present
-            assert "No VIX snapshot"    in r.text
-            assert "No sector snapshot" in r.text
+            assert "Macro Snapshot"            in r.text
+            assert "No volatility snapshot"    in r.text
+            assert "No sector snapshot"        in r.text
         finally:
             mr._MACRO_DIR = old
 
@@ -294,11 +294,14 @@ def test_macro_page_renders_snapshots(client, app_modules, tmp_path):
 
         r = client.get("/macro")
         assert r.status_code == 200
-        assert "CALM"     in r.text
-        assert "ROTATING" in r.text
-        assert "XLK"      in r.text
-        assert "XLE"      in r.text
-        assert "0.940"    in r.text or "0.94" in r.text
+        # Plain-English flag + signal labels now
+        assert "Low (market expects calm)"                in r.text
+        assert "Some sectors leading, others lagging"     in r.text
+        assert "XLK"     in r.text
+        assert "XLE"     in r.text
+        # Raw enum names should NOT leak
+        assert "CALM"     not in r.text
+        assert "ROTATING" not in r.text
     finally:
         mr._MACRO_DIR = old
 
@@ -341,14 +344,55 @@ def test_today_page_renders_full_brief(client, app_modules):
 
     r = client.get("/today")
     assert r.status_code == 200
-    assert "CHOPPY_LOW_VOL"                       in r.text
-    assert "Iron Condor"                           in r.text
-    assert "$250"                                  in r.text   # max profit
-    assert "Skip if VIX opens"                     in r.text
-    assert "Tighten condor"                        in r.text
-    assert "Iron condor still in play"             in r.text
-    assert "calm"                                  in r.text   # VIX flag
-    assert "CPI"                                   in r.text
+    # Regime renders as plain English, not raw "choppy_low_vol"
+    assert "Sideways market, low volatility" in r.text
+    assert "choppy_low_vol"                  not in r.text
+    assert "Iron Condor"                      in r.text
+    assert "$250"                             in r.text   # max profit
+    assert "Skip if VIX opens"                in r.text   # original test seed
+    assert "Tighten condor"                   in r.text
+    assert "Iron condor still in play"        in r.text   # narrative fallback
+    # VIX flag renders plain (not raw "calm")
+    assert "Low (market expects calm)"        in r.text
+    assert "CPI"                              in r.text
+
+
+def test_today_page_uses_plain_summary_when_present(client, app_modules):
+    """When the brief provides plain_summary, /today uses it instead of narrative."""
+    from journal.plan_logger import PlanLogger
+    from datetime import date
+    PlanLogger().save_plan({
+        "date":             date.today().isoformat(),
+        "ticker":           "SPY",
+        "regime":           "trending_up_calm",
+        "play":             "Bull Call Debit Spread",
+        "strategy":         "debit_spread",
+        "plain_summary":    "Strong uptrend lets us buy cheap calls.",
+        "narrative":        "ADX 38, +9% above 200MA, IVR=30",  # jargon — should NOT show
+    })
+    r = client.get("/today")
+    assert "Strong uptrend lets us buy cheap calls" in r.text
+    assert "ADX 38"                                  not in r.text   # narrative not used
+    # Regime rendered plain
+    assert "Steady uptrend, low volatility"          in r.text
+    assert "trending_up_calm"                        not in r.text
+
+
+def test_today_page_no_raw_regime_names(client, app_modules):
+    """Guard: no raw enum string leaks into /today rendering."""
+    from journal.plan_logger import PlanLogger
+    from datetime import date
+    for regime in ("trending_up_calm", "trending_down_calm",
+                    "choppy_low_vol", "choppy_high_vol"):
+        PlanLogger().save_plan({
+            "date":   date.today().isoformat(),
+            "ticker": "SPY",
+            "regime": regime,
+            "play":   "test",
+            "strategy": "iron_condor",
+        })
+        r = client.get("/today")
+        assert regime not in r.text, f"raw regime {regime!r} leaked into /today"
 
 
 # ─────────────────────────────────────────

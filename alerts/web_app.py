@@ -723,6 +723,41 @@ chatBox.scrollTop = chatBox.scrollHeight;
     )
 
 
+# ── Plain-English label maps ─────────────────────────
+# Keep technical names accessible (regimes, flags) but always render the
+# user-facing version. New mappings go here so /today, /macro, and any
+# future page share the same vocabulary.
+
+_REGIME_LABEL = {
+    "trending_up_calm":   "Steady uptrend, low volatility",
+    "trending_down_calm": "Steady downtrend, low volatility",
+    "choppy_low_vol":     "Sideways market, low volatility",
+    "choppy_high_vol":    "Sideways market, high volatility",
+    "trending_high_vol":  "Trending market, high volatility",
+}
+
+_VIX_FLAG_LABEL = {
+    "calm":           "Low (market expects calm)",
+    "cautious":       "Rising (some near-term jitters)",
+    "stress":         "High (fear rising)",
+    "extreme_stress": "Extreme (vol event likely)",
+    "unknown":        "Unknown",
+}
+
+_SECTOR_SIGNAL_LABEL = {
+    "trending_aligned": "All sectors moving together",
+    "rotating":         "Some sectors leading, others lagging",
+    "dispersed":        "Heavy rotation (sideways-friendly)",
+    "unknown":          "Unknown",
+}
+
+
+def _regime_label(regime: str | None) -> str:
+    if not regime:
+        return "?"
+    return _REGIME_LABEL.get(regime.lower(), regime.replace("_", " ").title())
+
+
 def _render_today(plan: dict | None) -> str:
     """Today's morning brief: regime, play, narrative, skip/watch conditions."""
     if not plan:
@@ -740,50 +775,52 @@ def _render_today(plan: dict | None) -> str:
             active_nav="today",
         )
 
-    regime    = _esc(plan.get("regime") or "?")
-    play      = _esc(plan.get("play") or plan.get("action") or "—")
-    strategy  = _esc(plan.get("strategy") or "—")
-    rr        = _esc(plan.get("rr_ratio") or "—")
-    dte       = _esc(plan.get("recommended_dte") or "—")
-    max_p     = plan.get("max_profit")
-    max_l     = plan.get("max_loss")
-    max_p_str = f"${max_p:,.0f}" if isinstance(max_p, (int, float)) else "—"
-    max_l_str = f"${max_l:,.0f}" if isinstance(max_l, (int, float)) else "—"
-    narrative = _esc(plan.get("narrative") or "")
-    skips     = plan.get("skip_conditions") or []
-    watches   = plan.get("watch_conditions") or []
-    exit_rule = _esc(plan.get("exit_rule") or "—")
-    macro     = plan.get("macro_context") or {}
-    vix_ts    = macro.get("vix_ts") or {}
-    sector    = macro.get("sector") or {}
-    events    = macro.get("events") or []
-    plan_date = _esc(plan.get("date") or "")
+    regime_raw   = plan.get("regime") or "?"
+    regime_plain = _esc(_regime_label(regime_raw))
+    play         = _esc(plan.get("play") or plan.get("action") or "—")
+    strategy     = _esc(plan.get("strategy") or "—")
+    rr           = _esc(plan.get("rr_ratio") or "—")
+    dte          = _esc(plan.get("recommended_dte") or "—")
+    max_p        = plan.get("max_profit")
+    max_l        = plan.get("max_loss")
+    max_p_str    = f"${max_p:,.0f}" if isinstance(max_p, (int, float)) else "—"
+    max_l_str    = f"${max_l:,.0f}" if isinstance(max_l, (int, float)) else "—"
+    # Prefer the plain_summary field for the thesis; fall back to the
+    # more technical narrative if we don't have one yet.
+    summary      = _esc(plan.get("plain_summary") or plan.get("narrative") or "")
+    skips        = plan.get("skip_conditions") or []
+    watches      = plan.get("watch_conditions") or []
+    exit_rule    = _esc(plan.get("exit_rule") or "—")
+    macro        = plan.get("macro_context") or {}
+    vix_ts       = macro.get("vix_ts") or {}
+    sector       = macro.get("sector") or {}
+    events       = macro.get("events") or []
+    plan_date    = _esc(plan.get("date") or "")
 
-    # Determine signal_cls for the regime badge
-    is_skip   = (plan.get("action") == "SKIP") or not plan.get("strategy")
+    is_skip    = (plan.get("action") == "SKIP") or not plan.get("strategy")
     regime_cls = "status-loss" if is_skip else "status-win"
 
     play_html = f'''
 <div class="alert-card">
   <div style="margin-bottom:.6rem">
-    <span class="badge {regime_cls}" style="font-size:.85rem">{regime.upper()}</span>
+    <span class="badge {regime_cls}" style="font-size:.85rem">{regime_plain}</span>
     <span class="muted" style="float:right">{plan_date}</span>
   </div>
   <div style="font-size:1.1rem;margin-bottom:.4rem"><b>{play}</b></div>
   <div class="grid">
     <div><span>Strategy</span><b>{strategy}</b></div>
-    <div><span>R/R</span><b>{rr}</b></div>
-    <div><span>DTE</span><b>{dte}</b></div>
-    <div><span>Max P / L</span><b>{max_p_str} / {max_l_str}</b></div>
+    <div><span>Risk / Reward</span><b>{rr}</b></div>
+    <div><span>Days to expiry</span><b>{dte}</b></div>
+    <div><span>Max win / loss</span><b>{max_p_str} / {max_l_str}</b></div>
   </div>
   <div class="muted" style="margin-top:.5rem">Exit: {exit_rule}</div>
 </div>'''
 
-    narrative_html = (
+    summary_html = (
         f'<div class="alert-card"><div class="muted" style="text-transform:uppercase;'
-        f'font-size:.75rem;margin-bottom:.4rem">Thesis</div>'
-        f'<div>{narrative}</div></div>'
-        if narrative else ""
+        f'font-size:.75rem;margin-bottom:.4rem">Why this trade today</div>'
+        f'<div>{summary}</div></div>'
+        if summary else ""
     )
 
     def _condition_card(label, items, css_cls):
@@ -801,37 +838,40 @@ def _render_today(plan: dict | None) -> str:
   {rows}
 </div>'''
 
-    skip_html  = _condition_card("Skip if",  skips,   "status-loss")
-    watch_html = _condition_card("Watch for", watches, "status-be")
+    skip_html  = _condition_card("Skip this trade if",  skips,   "status-loss")
+    watch_html = _condition_card("Watch for",            watches, "status-be")
 
-    # Macro context summary
+    # Market conditions summary — plain English labels
     macro_bits = []
-    if vix_ts.get("flag"):
+    flag = vix_ts.get("flag")
+    if flag:
         macro_bits.append(
-            f'<div><span>VIX TS</span><b>{_esc(vix_ts.get("flag"))} '
-            f'(r={_esc(vix_ts.get("ratio"))})</b></div>'
+            f'<div><span>Volatility</span>'
+            f'<b>{_esc(_VIX_FLAG_LABEL.get(flag, flag))}</b></div>'
         )
-    if sector.get("signal"):
+    signal = sector.get("signal")
+    if signal:
         macro_bits.append(
-            f'<div><span>Sectors</span><b>{_esc(sector.get("signal"))}</b></div>'
+            f'<div><span>Sector strength</span>'
+            f'<b>{_esc(_SECTOR_SIGNAL_LABEL.get(signal, signal))}</b></div>'
         )
     if events:
         events_str = ", ".join(
             f"{_esc(e.get('event'))} ({_esc(e.get('days_away'))}d)" for e in events
         )
-        macro_bits.append(f'<div><span>Events 48h</span><b>{events_str}</b></div>')
+        macro_bits.append(f'<div><span>Events next 48h</span><b>{events_str}</b></div>')
 
     macro_html = ""
     if macro_bits:
         macro_html = f'''
 <div class="alert-card">
   <div class="muted" style="text-transform:uppercase;font-size:.75rem;margin-bottom:.4rem">
-    Macro Context
+    Market conditions
   </div>
   <div class="grid">{"".join(macro_bits)}</div>
 </div>'''
 
-    body = play_html + narrative_html + skip_html + watch_html + macro_html
+    body = play_html + summary_html + skip_html + watch_html + macro_html
     return _render_page(
         title       = "Trading Assistant - Today",
         heading     = "Today's Play",
@@ -846,42 +886,52 @@ def _render_macro(vix: dict | None, sector: dict | None,
                   greeks: dict | None = None) -> str:
     """Today's macro snapshot — VIX term structure + sector breadth."""
 
-    # ── VIX section ────────────────────────────
+    # ── Volatility section ──────────────────────
     if vix:
         flag       = vix.get("flag") or "unknown"
         flag_cls   = _FLAG_CLASS.get(flag, "status-open")
+        flag_plain = _VIX_FLAG_LABEL.get(flag, flag)
         ratio      = vix.get("ratio")
         ratio_str  = f"{ratio:.3f}" if isinstance(ratio, (int, float)) else "—"
         asof_str   = _esc((vix.get("asof") or "")[:19].replace("T", " "))
 
         def _fmt(v): return f"{v:.2f}" if isinstance(v, (int, float)) else "—"
 
+        # Plain interpretation of the ratio
+        if isinstance(ratio, (int, float)):
+            if ratio > 1.10:
+                ratio_explain = "Traders pricing in fear (volatility likely rising)"
+            elif ratio > 1.00:
+                ratio_explain = "Slight near-term jitters"
+            elif ratio < 0.90:
+                ratio_explain = "Market expects extended calm"
+            else:
+                ratio_explain = "Market expects calm"
+        else:
+            ratio_explain = ""
+
         vix_grid = (
-            f'<div><span>VIX9D</span><b>{_fmt(vix.get("VIX9D"))}</b></div>'
-            f'<div><span>VIX</span><b>{_fmt(vix.get("VIX"))}</b></div>'
-            f'<div><span>VIX3M</span><b>{_fmt(vix.get("VIX3M"))}</b></div>'
-            f'<div><span>VIX6M</span><b>{_fmt(vix.get("VIX6M"))}</b></div>'
+            f'<div><span>Today</span><b>{_fmt(vix.get("VIX"))}</b></div>'
+            f'<div><span>1-week expectation</span><b>{_fmt(vix.get("VIX9D"))}</b></div>'
+            f'<div><span>3-month expectation</span><b>{_fmt(vix.get("VIX3M"))}</b></div>'
+            f'<div><span>6-month expectation</span><b>{_fmt(vix.get("VIX6M"))}</b></div>'
         )
         vix_html = f'''
 <div class="alert-card">
-  <div><b>VIX Term Structure</b>
-       <span class="badge {flag_cls}" style="margin-left:.5rem">{html.escape(flag.upper())}</span></div>
-  <div class="muted" style="margin:.4rem 0">
-    Contango ratio (VIX/VIX3M): <b>{ratio_str}</b>
-    {"&middot; backwardation = stress" if isinstance(ratio, (int,float)) and ratio > 1.0 else ""}
-  </div>
+  <div><b>Market Volatility</b>
+       <span class="badge {flag_cls}" style="margin-left:.5rem">{html.escape(flag_plain)}</span></div>
+  <div class="muted" style="margin:.4rem 0">{html.escape(ratio_explain)}</div>
   <div class="grid">{vix_grid}</div>
-  <div class="muted" style="margin-top:.5rem">{asof_str} UTC</div>
+  <div class="muted" style="margin-top:.5rem">Updated {asof_str} UTC</div>
 </div>'''
     else:
-        vix_html = '<div class="empty">No VIX snapshot yet. Runs daily at 08:55 ET.</div>'
+        vix_html = '<div class="empty">No volatility snapshot yet. Runs daily at 08:55 ET.</div>'
 
-    # ── Sector section ──────────────────────────
+    # ── Sectors section ─────────────────────────
     if sector:
         signal      = sector.get("signal") or "unknown"
         signal_cls  = _SIGNAL_CLASS.get(signal, "status-open")
-        dispersion  = sector.get("dispersion")
-        d_str       = f"{dispersion:.2f}" if isinstance(dispersion, (int, float)) else "—"
+        signal_plain = _SECTOR_SIGNAL_LABEL.get(signal, signal)
         leaders     = sector.get("leaders")  or []
         laggards    = sector.get("laggards") or []
         horizon     = sector.get("horizon") or 20
@@ -890,23 +940,22 @@ def _render_macro(vix: dict | None, sector: dict | None,
         def _row(items, color_cls):
             return "".join(
                 f'<div><span>{html.escape(t)}</span>'
-                f'<b class="{color_cls}">{v:+.2f}</b></div>'
+                f'<b class="{color_cls}">{v:+.2f}%</b></div>'
                 for t, v in items
             )
 
         sector_html = f'''
 <div class="alert-card">
-  <div><b>Sector Breadth ({horizon}d RS vs SPY)</b>
-       <span class="badge {signal_cls}" style="margin-left:.5rem">{html.escape(signal.upper())}</span></div>
-  <div class="muted" style="margin:.4rem 0">Dispersion: <b>{d_str}</b></div>
+  <div><b>Sector Strength (vs market, last {horizon} days)</b>
+       <span class="badge {signal_cls}" style="margin-left:.5rem">{html.escape(signal_plain)}</span></div>
 
-  <div style="margin-top:.6rem"><span class="muted">Leaders</span></div>
+  <div style="margin-top:.6rem"><span class="muted">Outperforming the market</span></div>
   <div class="grid">{_row(leaders, "pnl-pos")}</div>
 
-  <div style="margin-top:.6rem"><span class="muted">Laggards</span></div>
+  <div style="margin-top:.6rem"><span class="muted">Underperforming the market</span></div>
   <div class="grid">{_row(laggards, "pnl-neg")}</div>
 
-  <div class="muted" style="margin-top:.5rem">{s_asof} UTC</div>
+  <div class="muted" style="margin-top:.5rem">Updated {s_asof} UTC</div>
 </div>'''
     else:
         sector_html = '<div class="empty">No sector snapshot yet. Runs daily at 10:00 ET.</div>'
