@@ -47,10 +47,14 @@ class HypothesisRunner:
         self,
         knowledge_base: KnowledgeBase | None = None,
         backtest_fn:    Callable | None      = None,
+        post_fn:        Callable[[str], None] | None = None,
     ):
         self.kb = knowledge_base or KnowledgeBase()
         # Injectable for tests; default is the real backtest closure
         self._backtest_fn = backtest_fn or self._default_backtest
+        # Notifier — fired when a verdict is "accepted" so the user knows
+        # there's something ready to promote. Skipped if None.
+        self._post_fn = post_fn
 
     # ── PUBLIC API ────────────────────────────────────
 
@@ -124,6 +128,23 @@ class HypothesisRunner:
             f"HypothesisRunner: {spec.get('id')} -> {verdict} "
             f"(sharpe {deltas['sharpe_delta']:+.3f}, pnl {deltas['pnl_delta']:+})"
         )
+
+        # If the verdict is "accepted", surface it to the user so they
+        # know there's a promote command waiting. Without this ping the
+        # whole self-learning loop has a silent last mile.
+        if verdict == "accepted" and self._post_fn:
+            try:
+                self._post_fn(
+                    f"**Hypothesis accepted: {spec.get('id')}**\n"
+                    f"{spec.get('module')}.{spec.get('var')}: "
+                    f"{spec.get('current_value')} → {spec.get('proposed_value')}\n"
+                    f"ΔSharpe {deltas['sharpe_delta']:+.2f} · "
+                    f"ΔP&L {deltas['pnl_delta']:+,}\n\n"
+                    f"Apply with: python -m learning.promote {spec.get('id')}"
+                )
+            except Exception as e:
+                logger.warning(f"HypothesisRunner: accept notify failed: {e}")
+
         return spec
 
     # ── VERDICT ───────────────────────────────────────

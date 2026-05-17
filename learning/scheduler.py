@@ -77,9 +77,9 @@ def job_hypothesis_engine():
         logger.exception(f"learning.hypothesis_engine failed: {e}")
 
 
-def job_hypothesis_runner():
+def job_hypothesis_runner(post_fn=None):
     try:
-        ran = HypothesisRunner().run_pending()
+        ran = HypothesisRunner(post_fn=post_fn).run_pending()
         logger.info(f"learning.hypothesis_runner -> {len(ran)} hypotheses processed")
     except Exception as e:
         logger.exception(f"learning.hypothesis_runner failed: {e}")
@@ -141,6 +141,7 @@ def register_learning_jobs(
     scheduler.add_job(
         job_hypothesis_runner,
         CronTrigger(day_of_week="sat", hour=11, minute=0, timezone=eastern),
+        kwargs={"post_fn": post_fn},
         id="learning_hypothesis_runner",
         name="Learning: hypothesis backtest",
         replace_existing=True,

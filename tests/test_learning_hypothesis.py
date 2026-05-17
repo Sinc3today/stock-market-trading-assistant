@@ -167,6 +167,31 @@ def test_runner_inconclusive(iso):
     assert ran[0]["status"] == "inconclusive"
 
 
+def test_runner_post_fn_fires_on_accept(iso):
+    """Accept verdict -> post_fn called with a promote-command hint."""
+    _write_pending_spec(iso)
+    captured: list[str] = []
+    runner = HypothesisRunner(
+        backtest_fn = _bt_fn_accept,
+        post_fn     = lambda m: captured.append(m),
+    )
+    ran = runner.run_pending()
+    assert ran[0]["status"] == "accepted"
+    assert len(captured) == 1
+    assert "python -m learning.promote" in captured[0]
+
+
+def test_runner_post_fn_skipped_on_inconclusive(iso):
+    _write_pending_spec(iso)
+    captured: list[str] = []
+    runner = HypothesisRunner(
+        backtest_fn = _bt_fn_inconclusive,
+        post_fn     = lambda m: captured.append(m),
+    )
+    runner.run_pending()
+    assert captured == []
+
+
 def test_runner_skips_already_processed(iso):
     spec, path = _write_pending_spec(iso)
     HypothesisRunner(backtest_fn=_bt_fn_accept).run_pending()
