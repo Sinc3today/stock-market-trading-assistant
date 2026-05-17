@@ -728,6 +728,129 @@ def test_sparkline_uses_green_when_up_red_when_down(client, app_modules):
     assert "#f85149" in down
 
 
+# ─────────────────────────────────────────
+# Hamburger auto-close on link tap
+# ─────────────────────────────────────────
+
+def test_nav_includes_auto_close_script(client, app_modules):
+    """Tapping a link on mobile should close the hamburger panel before
+    the next page loads. Verify the inline script is present and targets
+    the right elements."""
+    r = client.get("/macro")
+    assert 'getElementById("nav-toggle")'          in r.text
+    assert 'querySelectorAll(".nav-links a")'      in r.text
+    assert 't.checked=false'                       in r.text
+
+
+# ─────────────────────────────────────────
+# /today wall summary card
+# ─────────────────────────────────────────
+
+def _seed_today_plan():
+    from journal.plan_logger import PlanLogger
+    from datetime import date
+    PlanLogger().save_plan({
+        "date":     date.today().isoformat(),
+        "regime":   "trending_up_calm",
+        "action":   "BUY",
+        "strategy": "debit_spread",
+        "play":     "Bull debit",
+        "rr_ratio": "2.0",
+        "recommended_dte": 30,
+        "max_profit": 150, "max_loss": 200,
+        "exit_rule": "...", "thesis":   "Steady uptrend",
+    })
+
+
+def _stub_spy_bars(monkeypatch, closes: list[float]):
+    """Stub PolygonClient.get_bars to return a DataFrame whose last N closes
+    match `closes`."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+
+    rows = []
+    for i, c in enumerate(closes):
+        d = datetime(2026, 3, 1) + timedelta(days=i)
+        rows.append({"timestamp": d, "open": c, "high": c+1, "low": c-1,
+                     "close": c, "volume": 1})
+    df = pd.DataFrame(rows).set_index("timestamp")
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", lambda *a, **kw: df)
+
+
+def test_today_renders_wall_summary_when_walls_available(
+    client, app_modules, monkeypatch,
+):
+    """When SPY closes + walls both available, /today shows the
+    'where SPY sits vs heavy strikes' card with call/put/max-pain rows."""
+    _seed_today_plan()
+    _stub_spy_bars(monkeypatch, [500.0] * 28 + [505.0, 510.0])
+
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls", lambda *a, **kw: {
+        "call_walls": [{"strike": 520.0, "open_interest": 20_000,
+                        "distance_pct": 2.0, "side": "call"}],
+        "put_walls":  [{"strike": 495.0, "open_interest": 18_000,
+                        "distance_pct": -3.0, "side": "put"}],
+        "max_pain":   505.0,
+        "spot":       510.0,
+        "expiration": "2026-06-20",
+    })
+
+    r = client.get("/today")
+    assert r.status_code == 200
+    assert "Where SPY sits vs heavy strikes" in r.text
+    assert "Resistance (call wall)"          in r.text
+    assert "Support (put wall)"              in r.text
+    assert "Max pain"                        in r.text
+    assert "$520"                            in r.text
+    assert "$495"                            in r.text
+    assert "expiry 2026-06-20"               in r.text
+
+
+def test_today_omits_wall_summary_when_walls_empty(
+    client, app_modules, monkeypatch,
+):
+    """No walls → the summary card is silently dropped (page still 200s)."""
+    _seed_today_plan()
+    _stub_spy_bars(monkeypatch, [500.0, 501.0, 502.0])
+
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls", lambda *a, **kw: {
+        "call_walls": [], "put_walls": [], "max_pain": None,
+        "spot": 502.0, "expiration": None,
+    })
+
+    r = client.get("/today")
+    assert r.status_code == 200
+    assert "Where SPY sits vs heavy strikes" not in r.text
+
+
+def test_wall_summary_picks_nearest_above_below_spot(client, app_modules):
+    """Helper picks the nearest call wall above spot + nearest put wall
+    below — not the first ones in the list."""
+    _, web_app = app_modules
+    walls = {
+        "call_walls": [
+            {"strike": 530.0, "open_interest": 30_000, "distance_pct": 6.0, "side": "call"},
+            {"strike": 515.0, "open_interest": 10_000, "distance_pct": 3.0, "side": "call"},
+        ],
+        "put_walls":  [
+            {"strike": 480.0, "open_interest": 25_000, "distance_pct": -4.0, "side": "put"},
+            {"strike": 495.0, "open_interest":  8_000, "distance_pct": -1.0, "side": "put"},
+        ],
+        "max_pain":   500.0,
+        "expiration": "2026-06-20",
+    }
+    html_out = web_app._render_spy_walls_summary(walls, spot=500.0)
+    # Nearest above spot = 515, nearest below = 495 (NOT 530 or 480)
+    assert "$515" in html_out
+    assert "$495" in html_out
+    assert "$530" not in html_out
+    assert "$480" not in html_out
+
+
 def test_macro_page_renders_snapshots(client, app_modules, tmp_path):
     """Seed both snapshot files and verify the page surfaces values + flags."""
     import json

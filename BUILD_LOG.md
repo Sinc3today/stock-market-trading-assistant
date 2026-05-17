@@ -4,6 +4,57 @@
 
 ---
 
+## 2026-05-17 (PM-10) | Hamburger auto-close + /today wall summary + row wrapping
+
+Three small polishes around the new dashboard chrome:
+
+**1. Hamburger panel auto-closes on link tap (`alerts/web_app.py`):**
+
+Previously, picking a link on mobile kept the panel open through the
+navigation, so the next page loaded with the menu still down. Tiny
+inline `<script>` in `_render_nav` listens to nav-link clicks and
+flips `nav-toggle.checked = false`. No-op on desktop where the
+toggle isn't visible. ~6 lines of minified JS, no framework.
+
+**2. /today "Where SPY sits vs heavy strikes" card:**
+
+Extends the /today SPY sparkline (PM-9) with an inline summary of:
+  - Nearest call wall ABOVE current spot (red, resistance)
+  - Max pain (orange)
+  - Nearest put wall BELOW current spot (green, support)
+All annotated with % distance from spot. The whole card is a tap
+target → `/levels/SPY` for the full chart + walls table.
+
+`_render_spy_walls_summary(walls, spot)` is pure and reuses the
+PM-7 `signals/options_walls.load_walls()`. `today_page()` fetches
+walls only when SPY closes were available — Polygon failure on
+either side just drops the card. The "Nearest above/below spot"
+selection is non-trivial: a wall 6% above spot is less useful than
+one 3% above, so we sort and pick the closest in-direction strike
+rather than the first one in the list.
+
+**3. Row wrapping for crowded cards:**
+
+`.alert-row` is used by /alerts, /trades, /journal, /chats —
+historically `display:flex;justify-content:space-between`. On narrow
+screens, long timestamps + badges + monetary values would push past
+the card edge. Added `flex-wrap:wrap;gap:.3rem;align-items:center`
+so the second item drops to a new line when there isn't room. Mobile
+@media block also bumps the row spacing and tightens card-body
+line-height for readability.
+
+**Tests:** +4 in `tests/test_web_app.py`:
+- Nav auto-close script present (function name + selector + assignment).
+- /today renders the walls summary when walls + spot are available.
+- /today silently omits the summary when walls are empty.
+- `_render_spy_walls_summary()` picks NEAREST above/below spot, not
+  the first in the list.
+
+**Tests:** full suite (touches nav script + /today render path; small
+but cross-cutting enough to warrant the full run).
+
+---
+
 ## 2026-05-17 (PM-9) | Hamburger nav, cookie ticker memory, sparkline on /today
 
 **Why:** 9 tabs in one row was disorganised on desktop and overflow-scrolled

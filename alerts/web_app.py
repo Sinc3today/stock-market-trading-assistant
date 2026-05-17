@@ -258,7 +258,8 @@ h1{font-size:1.4rem;margin-bottom:1rem;color:#58a6ff}
 .alert-card{background:#161b22;border:1px solid #30363d;border-radius:8px;
             padding:.9rem 1rem;margin-bottom:.75rem;text-decoration:none;color:inherit;display:block}
 .alert-card:hover{border-color:#58a6ff}
-.alert-row{display:flex;justify-content:space-between;font-size:.9rem;margin-top:.25rem}
+.alert-row{display:flex;justify-content:space-between;font-size:.9rem;margin-top:.25rem;
+           flex-wrap:wrap;gap:.3rem;align-items:center}
 .muted{color:#8b949e;font-size:.85rem}
 .badge{display:inline-block;padding:.1rem .5rem;border-radius:4px;font-size:.75rem;
        background:#21262d;border:1px solid #30363d;margin-right:.25rem}
@@ -291,6 +292,9 @@ h1{font-size:1.4rem;margin-bottom:1rem;color:#58a6ff}
   .grid{grid-template-columns:1fr !important;gap:.4rem !important}
   .row{flex-direction:column}
   #lvl-chart{height:340px !important}
+  /* Card rows: more breathing room between badge + value + timestamp */
+  .alert-row{margin-top:.4rem}
+  .alert-card > div:not(.alert-row){line-height:1.45}
 }
 """ + _NAV_CSS
 
@@ -365,6 +369,17 @@ def _render_nav(active: str) -> str:
             f'{"".join(links)}'
             f'</div>'
         )
+    # Tiny inline script: tapping a nav link on mobile closes the
+    # hamburger panel so the next page doesn't load with the menu still
+    # open. No-op on desktop where the toggle isn't visible.
+    auto_close = (
+        '<script>'
+        'document.addEventListener("DOMContentLoaded",function(){'
+        'var t=document.getElementById("nav-toggle");if(!t)return;'
+        'document.querySelectorAll(".nav-links a").forEach(function(a){'
+        'a.addEventListener("click",function(){t.checked=false})})});'
+        '</script>'
+    )
     return (
         f'<nav class="nav">'
         f'<a href="/today" class="nav-brand">📊 SMTA</a>'
@@ -372,6 +387,7 @@ def _render_nav(active: str) -> str:
         f'<label for="nav-toggle" class="nav-toggle" aria-label="Open menu">☰</label>'
         f'<div class="nav-links">{"".join(groups_html)}</div>'
         f'</nav>'
+        f'{auto_close}'
     )
 
 
@@ -878,6 +894,73 @@ def _render_spy_thumbnail(spy_closes: list[float]) -> str:
 </a>'''
 
 
+def _render_spy_walls_summary(walls: dict | None, spot: float | None) -> str:
+    """
+    Compact wall summary card for /today: nearest call wall above price,
+    nearest put wall below, max pain, all with % distance. Renders
+    nothing when walls are unavailable or there's no spot to anchor.
+    """
+    if not walls or spot is None:
+        return ""
+    calls = walls.get("call_walls") or []
+    puts  = walls.get("put_walls")  or []
+    mp    = walls.get("max_pain")
+    if not calls and not puts and mp is None:
+        return ""
+
+    # Pick nearest above-spot call wall + nearest below-spot put wall
+    above = sorted([c for c in calls if c.get("strike", 0) > spot],
+                   key=lambda c: c["strike"])[:1]
+    below = sorted([p for p in puts  if p.get("strike", 0) < spot],
+                   key=lambda p: -p["strike"])[:1]
+
+    rows = []
+    for c in above:
+        rows.append(
+            f'<div><span>Resistance (call wall)</span>'
+            f'<b style="color:#f85149">${c["strike"]:,.0f}</b>'
+            f'<span class="muted" style="margin-left:.4rem">{c["distance_pct"]:+.2f}%</span></div>'
+        )
+    if mp is not None:
+        d = round((mp - spot) / spot * 100, 2)
+        rows.append(
+            f'<div><span>Max pain</span>'
+            f'<b style="color:#f0883e">${mp:,.0f}</b>'
+            f'<span class="muted" style="margin-left:.4rem">{d:+.2f}%</span></div>'
+        )
+    for p in below:
+        rows.append(
+            f'<div><span>Support (put wall)</span>'
+            f'<b style="color:#3fb950">${p["strike"]:,.0f}</b>'
+            f'<span class="muted" style="margin-left:.4rem">{p["distance_pct"]:+.2f}%</span></div>'
+        )
+    if not rows:
+        return ""
+
+    exp = walls.get("expiration")
+    exp_str = (
+        f' <span class="muted" style="font-size:.75rem">expiry {_esc(exp)}</span>'
+        if exp else ""
+    )
+    return f'''
+<a class="alert-card" href="/levels/SPY" style="text-decoration:none">
+  <div style="margin-bottom:.4rem"><b>Where SPY sits vs heavy strikes</b>{exp_str}</div>
+  <div class="grid">{"".join(rows)}</div>
+</a>'''
+
+
+def _fetch_spy_walls_for_today(spot: float | None) -> dict:
+    """Best-effort SPY walls for the /today summary. Empty dict on failure."""
+    if not spot:
+        return {}
+    try:
+        from signals.options_walls import load_walls
+        return load_walls("SPY", spot=float(spot), top_n=3) or {}
+    except Exception as e:
+        logger.warning(f"/today walls: SPY chain fetch failed: {e}")
+        return {}
+
+
 def _fetch_spy_closes_for_today(days: int = 30) -> list[float]:
     """Best-effort SPY-closes fetch for the /today thumbnail.
     Returns [] on any failure — caller renders nothing."""
@@ -896,7 +979,11 @@ def _fetch_spy_closes_for_today(days: int = 30) -> list[float]:
         return []
 
 
-def _render_today(plan: dict | None, spy_closes: list[float] | None = None) -> str:
+def _render_today(
+    plan:       dict | None,
+    spy_closes: list[float] | None = None,
+    spy_walls:  dict | None        = None,
+) -> str:
     """Today's morning brief: regime, play, narrative, skip/watch conditions."""
     if not plan:
         body = (
@@ -1010,8 +1097,10 @@ def _render_today(plan: dict | None, spy_closes: list[float] | None = None) -> s
 </div>'''
 
     spy_thumb = _render_spy_thumbnail(spy_closes or [])
+    spy_spot  = (spy_closes or [None])[-1] if spy_closes else None
+    walls_html = _render_spy_walls_summary(spy_walls or {}, spy_spot)
 
-    body = play_html + spy_thumb + summary_html + skip_html + watch_html + macro_html
+    body = play_html + spy_thumb + walls_html + summary_html + skip_html + watch_html + macro_html
     return _render_page(
         title       = "Trading Assistant - Today",
         heading     = "Today's Play",
@@ -1806,12 +1895,16 @@ def macro_page():
 
 @app.get("/today", response_class=HTMLResponse)
 def today_page():
-    """Today's morning brief: play, thesis, skip/watch conditions, macro,
-    plus a small SPY sparkline that links to the full /levels/SPY view."""
+    """Today's morning brief: play, thesis, skip/watch, macro, plus a
+    SPY sparkline and a "where price sits vs heavy strikes" summary."""
     from datetime import date
     plan       = PlanLogger().get_plan(date.today().isoformat())
     spy_closes = _fetch_spy_closes_for_today(days=30) if plan else []
-    return HTMLResponse(_render_today(plan, spy_closes=spy_closes))
+    spot       = spy_closes[-1] if spy_closes else None
+    spy_walls  = _fetch_spy_walls_for_today(spot)   if spot     else {}
+    return HTMLResponse(_render_today(
+        plan, spy_closes=spy_closes, spy_walls=spy_walls,
+    ))
 
 
 def _build_levels_view(ticker: str) -> str:
