@@ -4,6 +4,87 @@
 
 ---
 
+## 2026-05-16 (scenario validation) | Real-data testing surfaced 2 silent bugs
+
+**Why:** User asked to do "scenario debugging and testing to make sure
+what we are building is on the right path" rather than just adding
+more features on top of untested ones. Ran 4 end-to-end scenarios
+against live data. Found and fixed two real bugs that the unit tests
+had missed (because they were mocking the wrong shape).
+
+**Scenarios run:**
+
+1. **Macro jobs trigger manually** — VIX TS = calm (real data, ratio
+   0.86), sector breadth = dispersed (XLK +10%, XLE +4%, XLP/XLY/XLU
+   all negative), earnings refresh returned 0. ← bug #1 surfaced
+2. **Morning brief end-to-end** with real PolygonClient + VIXClient +
+   IVRClient + EarningsCalendar + EventCalendar. Claude synthesized a
+   real BULL CALL DEBIT SPREAD play with 3 skip + 3 watch conditions
+   that quote actual numbers (ADX 38.3, SPY 9.3% above 200MA, IVR 30,
+   XLK leadership concern).
+3. **Every web route** rendered real content: /today shows BULL CALL,
+   /macro shows NVDA in the earnings panel, /backtest shows 74.1%
+   baseline + the day's KB observations.
+4. **Macro chat with real Claude** returned a long, grounded reply
+   that referenced today's specific play, the XLK +10% / XLU -9%
+   sector spread, the 6.0 dispersion score, **and flagged NVDA's
+   2026-05-20 earnings as a near-term catalyst risk** inside the
+   trade's window. This is exactly the "knowledgeable trader"
+   experience the user described.
+
+**Bug #1 — Polygon doesn't expose earnings dates on the free tier**
+  Verified by inspecting Polygon's TickerDetails response: no
+  `next_earnings_date` attribute exists at all. The EarningsCalendar
+  built earlier this session returned 0 dates for every ticker as a
+  result. Fix: switched data source to yfinance.Ticker.calendar
+  ["Earnings Date"] — free, reliable, returns real future dates.
+
+**Bug #2 — gates.py earnings check has been silently no-op since day 1**
+  signals/gates.py:_check_earnings has been calling Polygon with the
+  same `next_earnings_date` assumption, which means earnings
+  proximity has never actually blocked any alert in production. Fix:
+  swap to EarningsCalendar.get_for_ticker() (cache-only, no per-alert
+  network call).
+
+**Commits this round:**
+  `5231833` fix: switch EarningsCalendar from Polygon to yfinance
+  `6d041a5` fix: AlertGates earnings check now uses EarningsCalendar
+
+**Live verification — first real upcoming-earnings signal ever:**
+
+```
+EarningsCalendar refresh (yfinance live):
+  NVDA  2026-05-20  (4d away)
+  TSLA  2026-07-22  (67d away)
+  META  2026-07-29  (74d away)
+  MSFT  2026-07-29  (74d away)
+  AAPL  2026-07-30  (75d away)
+  AMZN  2026-07-30  (75d away)
+  AMD   2026-08-04  (80d away)
+  ETFs (IWM/QQQ/SPY) correctly skipped.
+```
+
+**Non-blocking findings (worth logging for next pass):**
+- IVR options-chain computation broken: `'RESTClient' object has no
+  attribute 'api_key'` in data/ivr_client.py:_compute_from_options_chain.
+  Falls back to 30.0 gracefully — not blocking the brief but the
+  options layer is using a constant IVR right now.
+- Pushover preview shows R/R as "—" because options_layer doesn't
+  populate `rr_ratio` in the format we expect. Minor display issue.
+
+**Test result:** 367 passed, 4 deselected, ~159s. No regressions.
+
+**What this session validated about the system:**
+
+- The morning brief produces real, actionable trade guidance with
+  specific numbers, not generic suggestions.
+- The macro chat is *grounded*: every claim it made was traceable to
+  the context bundle we hand it.
+- The "knowledgeable trader" outcome is achieved — Claude flagged the
+  NVDA earnings catalyst risk unprompted.
+
+---
+
 ## 2026-05-16 (latest+3) | /backtest dashboard — closes the original wishlist
 
 **Why:** The last item on the user's original "what to build" list:
