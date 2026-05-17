@@ -4,6 +4,50 @@
 
 ---
 
+## 2026-05-17 (PM-5) | Polygon-backed backtest re-run CLIs
+
+**Why:** Stocks Starter now serves the full 5y SPY daily window in a
+single `get_bars()`, so we no longer have to source the backtest
+through yfinance. Manually refreshing the CSV + re-running the
+backtest + transcribing the summary into `data/backtest_summary.py`
+was friction the `/backtest` dashboard could just sidestep. Two
+small CLIs close that loop.
+
+**What changed:**
+
+- **`backtests/refresh_history.py` (new):** `python -m backtests.refresh_history`
+  pulls SPY 5y from Polygon, normalizes to the lowercased OHLCV shape
+  the loader expects, diffs against the existing CSV (`+N new, -M dropped`),
+  and writes `backtests/spy_history.csv`. `--dry-run` for safety;
+  `--years N` to widen/narrow the window.
+
+- **`backtests/rerun.py` (new):** wraps `refresh_history` + `SPYBacktest`
+  + the existing `print_report`, then compresses the results into the
+  shape `data/backtest_summary.production_stats()` expects and writes
+  `logs/backtest_summary.json` via `save_production_stats()`. The
+  `/backtest` dashboard reads from that file on its next page load,
+  no transcription needed. Prints a delta line vs the prior summary:
+
+      Sharpe       : 1.73 → 1.81  (+0.08)
+      Win rate %   : 50.3 → 51.7  (+1.40)
+
+  Flags: `--skip-refresh` (reuse current CSV), `--no-save` (print only).
+
+- **`tests/test_backtest_rerun.py` (new, 10 tests):**
+  - `compute_summary()` shape + win-rate / per-regime aggregation +
+    empty-results handling.
+  - `format_deltas()` positive / negative (unicode minus) / missing-field
+    rendering.
+  - `diff_against_existing()` no-CSV, added+removed counting, corrupt-CSV
+    treated as empty.
+
+Skipped: end-to-end `SPYBacktest` execution (slow, needs CSV fixture).
+Smoke-tested both CLI argparse paths with `--help`.
+
+**Tests:** targeted (two new modules, no cross-module wiring).
+
+---
+
 ## 2026-05-17 (PM-4) | Wire EarningsHistory into MorningBriefer + AlertGates
 
 **Why:** PM-3 built the reaction-stats data layer. Two consumers needed
