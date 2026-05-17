@@ -26,19 +26,32 @@ class FakeScheduler:
         self.jobs.append({"fn": fn, "trigger": trigger, **kwargs})
 
 
-def test_register_learning_jobs_adds_six_jobs():
+def test_register_learning_jobs_adds_all_jobs():
     s = FakeScheduler()
     sched.register_learning_jobs(s, polygon_client=None, post_fn=None)
-    assert len(s.jobs) == 6
+    assert len(s.jobs) == 7
     job_ids = {j["id"] for j in s.jobs}
     assert job_ids == {
         "learning_paper_broker",
         "learning_outcome_resolver",
+        "learning_expiry_resolver",
         "learning_reflector",
         "learning_hypothesis_engine",
         "learning_hypothesis_runner",
         "learning_off_hours",
     }
+
+
+def test_expiry_resolver_job_receives_polygon_client_and_post_fn():
+    """Expiry resolver needs SPY close (polygon) and a notifier (post_fn)."""
+    s = FakeScheduler()
+    polygon = object()
+    post_fn = lambda msg: None
+    sched.register_learning_jobs(s, polygon_client=polygon, post_fn=post_fn)
+
+    expiry_job = next(j for j in s.jobs if j["id"] == "learning_expiry_resolver")
+    assert expiry_job["kwargs"]["polygon_client"] is polygon
+    assert expiry_job["kwargs"]["post_fn"]        is post_fn
 
 
 def test_outcome_resolver_job_receives_polygon_client_and_post_fn():

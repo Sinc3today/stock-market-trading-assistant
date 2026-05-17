@@ -6,6 +6,7 @@ Call register_learning_jobs(scheduler, polygon_client, post_fn) from main.py
 
     09:16 ET (Mon-Fri)  paper_broker.execute_today()
     16:05 ET (Mon-Fri)  outcome_resolver.resolve_today()
+    16:10 ET (Mon-Fri)  expiry_resolver.resolve_expired()
     19:01 ET (Mon-Fri)  reflector.reflect_today()
     Sat 10:00 ET        hypothesis_engine.propose_weekly()
     Sat 11:00 ET        hypothesis_runner.run_pending()
@@ -31,6 +32,7 @@ from learning.reflector         import Reflector
 from learning.hypothesis_engine import HypothesisEngine
 from learning.hypothesis_runner import HypothesisRunner
 from learning.off_hours_learner import OffHoursLearner
+from learning.expiry_resolver   import ExpiryResolver, format_expiry_message
 
 
 # ── JOB WRAPPERS ──────────────────────────────────────
@@ -56,6 +58,19 @@ def job_outcome_resolver(polygon_client, post_fn=None):
                     logger.warning(f"learning.outcome_resolver notify failed: {e}")
     except Exception as e:
         logger.exception(f"learning.outcome_resolver failed: {e}")
+
+
+def job_expiry_resolver(polygon_client, post_fn=None):
+    try:
+        closed = ExpiryResolver(polygon_client=polygon_client).resolve_expired()
+        logger.info(f"learning.expiry_resolver -> {len(closed)} closed")
+        if closed and post_fn:
+            try:
+                post_fn(format_expiry_message(closed))
+            except Exception as e:
+                logger.warning(f"learning.expiry_resolver notify failed: {e}")
+    except Exception as e:
+        logger.exception(f"learning.expiry_resolver failed: {e}")
 
 
 def job_reflector(post_fn=None):
@@ -122,6 +137,15 @@ def register_learning_jobs(
     )
 
     scheduler.add_job(
+        job_expiry_resolver,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=10, timezone=eastern),
+        kwargs={"polygon_client": polygon_client, "post_fn": post_fn},
+        id="learning_expiry_resolver",
+        name="Learning: expiry resolver",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
         job_reflector,
         CronTrigger(day_of_week="mon-fri", hour=19, minute=1, timezone=eastern),
         kwargs={"post_fn": post_fn},
@@ -158,6 +182,7 @@ def register_learning_jobs(
     logger.info("Learning jobs registered:")
     logger.info("   09:16 ET (Mon-Fri) - paper broker")
     logger.info("   16:05 ET (Mon-Fri) - outcome resolver")
+    logger.info("   16:10 ET (Mon-Fri) - expiry resolver")
     logger.info("   19:01 ET (Mon-Fri) - daily reflector")
     logger.info("   Sat 10:00 ET       - hypothesis engine")
     logger.info("   Sat 11:00 ET       - hypothesis runner")

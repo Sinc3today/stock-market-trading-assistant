@@ -4,6 +4,55 @@
 
 ---
 
+## 2026-05-17 (PM-2) | Expiry-based exit for AUTO-PAPER positions
+
+**Why:** Multi-day spreads recorded by `paper_broker` (debit, credit,
+iron condor) had no way to close themselves once their expiry passed.
+The outcome resolver's MTM snapshot kept appending notes but the trade
+stayed `outcome=open` forever — so the P&L journal, dashboards, and
+reflector all saw a permanently-open trade. This closes the loop.
+
+**What changed:**
+
+- **`learning/expiry_resolver.py` (new):** `ExpiryResolver.resolve_expired()`
+  walks open `[AUTO-PAPER]` trades, picks each trade's nearest leg
+  expiration, and if it's `<= today`, computes intrinsic value at SPY
+  close and calls `TradeRecorder.log_exit`.
+  - Pricing: intrinsic-only (no theta — by definition zero at expiry).
+  - Per-strategy sign:
+    - `debit_spread` / `single_leg`: `exit_price = max(0, long − short)`
+    - `credit_spread` / `iron_condor`: `exit_price = max(0, short − long)`
+  - `format_expiry_message()` — Pushover-style summary, one line per
+    closed trade with ✅/❌ and net $.
+
+- **`learning/scheduler.py`:** registered `job_expiry_resolver` at
+  **16:10 ET Mon-Fri** (5 min after outcome resolver, so the MTM snapshot
+  runs first and the close happens on the same SPY EOD print).
+
+- **`tests/test_learning_expiry_resolver.py` (new, 19 tests):** intrinsic
+  math per leg shape, exit-price per strategy, end-to-end credit-spread
+  winner + debit-spread loser, idempotency, AUTO_TAG filter, formatter.
+
+---
+
+## 2026-05-17 (PM) | Real historical VIX in off-hours weekend replay
+
+**Why:** `OffHoursLearner._find_near_misses()` was using a hardcoded
+`vix_today = 16.0` for every replayed day, so any "near-miss" landing
+on the VIX_CALM_MAX boundary was effectively noise — the boundary
+flag fired on the wrong days.
+
+**What changed (`4226581`):**
+
+- Added `_load_vix_history()` (uses VIXClient.get_history; CBOE CSV
+  fallback already in place) and `_vix_for(lookup, target, fallback)`
+  (snap to nearest preceding trading day for weekends/holidays).
+- Test fixtures can inject a `{date: vix}` dict via the new
+  `vix_history` constructor arg so tests don't hit the network.
+- 4 new targeted tests; `tests/test_learning_off_hours.py` 10/10 pass.
+
+---
+
 ## 2026-05-17 (UX) | Plain-English on /today + /macro + leaner test cadence
 
 **Why:** Carry forward the Pushover UX win to the dashboard pages.
