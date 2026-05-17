@@ -82,14 +82,16 @@ class MorningBriefer:
     def __init__(
         self,
         spy_strategy,
-        event_calendar = None,
-        plan_logger:   PlanLogger | None = None,
-        api_key:       str | None = None,
+        event_calendar    = None,
+        earnings_calendar = None,
+        plan_logger:      PlanLogger | None = None,
+        api_key:          str | None = None,
     ):
-        self.spy_strategy   = spy_strategy
-        self.event_calendar = event_calendar
-        self.plans          = plan_logger or PlanLogger()
-        self.api_key        = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self.spy_strategy      = spy_strategy
+        self.event_calendar    = event_calendar
+        self.earnings_calendar = earnings_calendar
+        self.plans             = plan_logger or PlanLogger()
+        self.api_key           = api_key or os.getenv("ANTHROPIC_API_KEY")
 
     # ── MAIN ──────────────────────────────────────────
 
@@ -138,14 +140,26 @@ class MorningBriefer:
     # ── CONTEXT GATHERING ─────────────────────────────
 
     def _gather_macro_context(self) -> dict:
-        vix    = macro_runner.get_latest_vix()    or {}
-        sector = macro_runner.get_latest_sector() or {}
-        events = self._get_today_events()
+        vix      = macro_runner.get_latest_vix()    or {}
+        sector   = macro_runner.get_latest_sector() or {}
+        events   = self._get_today_events()
+        earnings = self._get_today_earnings()
         return {
             "vix_ts":   vix,
             "sector":   sector,
             "events":   events,
+            "earnings": earnings,
         }
+
+    def _get_today_earnings(self) -> list[dict]:
+        """Watchlist tickers reporting today or tomorrow."""
+        if not self.earnings_calendar:
+            return []
+        try:
+            return self.earnings_calendar.get_today_and_tomorrow() or []
+        except Exception as e:
+            logger.warning(f"MorningBriefer: earnings_calendar fetch failed: {e}")
+            return []
 
     def _get_today_events(self) -> list[dict]:
         if not self.event_calendar:
@@ -209,6 +223,11 @@ class MorningBriefer:
             f"EVENTS NEXT 48H:",
             *([f"  - {e.get('event')} ({e.get('days_away')}d away)"
                for e in events] or ["  (none)"]),
+            f"",
+            f"WATCHLIST EARNINGS NEXT 48H:",
+            *([f"  - {e.get('ticker')} earnings on {e.get('earnings_date')} "
+               f"({e.get('days_away')}d away)"
+               for e in (macro.get('earnings') or [])] or ["  (none)"]),
             f"",
             f"Produce the JSON now.",
         ]
@@ -288,6 +307,11 @@ class MorningBriefer:
             for e in events:
                 if e.get("days_away") == 0:
                     skip.append(f"Skip until after {e.get('event')} today")
+        for e in (macro.get("earnings") or []):
+            if e.get("days_away") == 0:
+                skip.append(f"Avoid {e.get('ticker')} -- earnings today")
+            elif e.get("days_away") == 1:
+                watch.append(f"{e.get('ticker')} earnings tomorrow ({e.get('earnings_date')})")
 
         return narrative, skip, watch
 

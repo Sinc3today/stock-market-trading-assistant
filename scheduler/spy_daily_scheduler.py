@@ -32,6 +32,7 @@ import config
 from signals.spy_daily_strategy import SPYDailyStrategy
 from signals.morning_briefer    import MorningBriefer
 from journal.plan_logger         import PlanLogger
+from data.earnings_calendar     import EarningsCalendar
 
 ET = pytz.timezone("US/Eastern")
 
@@ -69,8 +70,9 @@ def job_spy_premarket(
             event_calendar = event_calendar,
         )
         briefer = MorningBriefer(
-            spy_strategy   = strategy,
-            event_calendar = event_calendar,
+            spy_strategy      = strategy,
+            event_calendar    = event_calendar,
+            earnings_calendar = EarningsCalendar(polygon_client=polygon_client),
         )
         brief = briefer.build_today()
 

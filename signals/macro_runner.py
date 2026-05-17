@@ -37,6 +37,7 @@ import config
 from loguru import logger
 
 from data.vix_term_structure   import VIXTermStructure
+from data.earnings_calendar    import EarningsCalendar
 from signals.sector_breadth    import SectorBreadth
 from learning.knowledge_base   import KnowledgeBase, KBEntry
 
@@ -208,6 +209,23 @@ def run_sector_breadth_check(polygon_client, post_fn=None) -> dict:
     return {"changed": True, "signal": today_signal, "prev_signal": prev_signal, "snapshot": snap}
 
 
+# ── EARNINGS REFRESH JOB ─────────────────────────────────
+
+def run_earnings_refresh(polygon_client) -> dict:
+    """
+    Refresh the watchlist earnings calendar cache once per trading day.
+    Cache lives at logs/earnings_calendar.json; web routes read it
+    without further Polygon hits.
+    """
+    try:
+        ec  = EarningsCalendar(polygon_client=polygon_client)
+        out = ec.get_upcoming(days=30, refresh=True)
+        return {"count": len(out)}
+    except Exception as e:
+        logger.exception(f"macro_runner.earnings refresh failed: {e}")
+        return {"error": str(e)}
+
+
 # ── SNAPSHOT READERS (for /macro web route) ──────────────
 
 def get_latest_vix() -> Optional[dict]:
@@ -240,16 +258,34 @@ def _job_sector(polygon_client, post_fn=None):
         logger.exception(f"macro_runner.sector failed: {e}")
 
 
+def _job_earnings(polygon_client):
+    try:
+        result = run_earnings_refresh(polygon_client)
+        logger.info(f"macro_runner.earnings -> {result}")
+    except Exception as e:
+        logger.exception(f"macro_runner.earnings failed: {e}")
+
+
 def register_macro_jobs(scheduler, polygon_client, post_fn=None) -> None:
     """
-    Wire both macro snapshot jobs onto the running APScheduler.
+    Wire macro snapshot jobs onto the running APScheduler.
 
-        08:55 ET (Mon-Fri)  VIX term structure -- before swing scanner
-        10:00 ET (Mon-Fri)  Sector breadth     -- 30 min after open
+        08:50 ET (Mon-Fri)  Earnings calendar refresh
+        08:55 ET (Mon-Fri)  VIX term structure (before swing scanner)
+        10:00 ET (Mon-Fri)  Sector breadth     (30 min after open)
     """
     from apscheduler.triggers.cron import CronTrigger
     import pytz
     eastern = pytz.timezone("US/Eastern")
+
+    scheduler.add_job(
+        _job_earnings,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=50, timezone=eastern),
+        kwargs={"polygon_client": polygon_client},
+        id="macro_earnings",
+        name="Macro: earnings calendar refresh",
+        replace_existing=True,
+    )
 
     scheduler.add_job(
         _job_vix,
@@ -270,5 +306,6 @@ def register_macro_jobs(scheduler, polygon_client, post_fn=None) -> None:
     )
 
     logger.info("Macro jobs registered:")
+    logger.info("   08:50 ET (Mon-Fri) - earnings calendar refresh")
     logger.info("   08:55 ET (Mon-Fri) - VIX term structure")
     logger.info("   10:00 ET (Mon-Fri) - sector breadth")

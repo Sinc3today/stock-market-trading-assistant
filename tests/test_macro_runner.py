@@ -205,22 +205,37 @@ class _FakeScheduler:
         self.jobs.append({"fn": fn, "trigger": trigger, **kwargs})
 
 
-def test_register_macro_jobs_adds_two_jobs():
+def test_register_macro_jobs_adds_three_jobs():
     s = _FakeScheduler()
     register_macro_jobs(s, polygon_client=None, post_fn=None)
-    assert len(s.jobs) == 2
+    assert len(s.jobs) == 3
     ids = {j["id"] for j in s.jobs}
-    assert ids == {"macro_vix", "macro_sector"}
+    assert ids == {"macro_earnings", "macro_vix", "macro_sector"}
 
 
-def test_register_macro_jobs_passes_polygon_to_sector_only():
+def test_register_macro_jobs_routes_polygon_correctly():
     s = _FakeScheduler()
     polygon = object()
     post_fn = lambda m: None
     register_macro_jobs(s, polygon_client=polygon, post_fn=post_fn)
-    sector = next(j for j in s.jobs if j["id"] == "macro_sector")
-    vix    = next(j for j in s.jobs if j["id"] == "macro_vix")
-    assert sector["kwargs"]["polygon_client"] is polygon
-    assert sector["kwargs"]["post_fn"]        is post_fn
-    assert "polygon_client" not in vix["kwargs"]   # VIX uses CBOE, no polygon needed
-    assert vix["kwargs"]["post_fn"]           is post_fn
+    sector   = next(j for j in s.jobs if j["id"] == "macro_sector")
+    vix      = next(j for j in s.jobs if j["id"] == "macro_vix")
+    earnings = next(j for j in s.jobs if j["id"] == "macro_earnings")
+    # Polygon needed for sector + earnings, not VIX (CBOE only)
+    assert sector["kwargs"]["polygon_client"]   is polygon
+    assert earnings["kwargs"]["polygon_client"] is polygon
+    assert "polygon_client" not in vix["kwargs"]
+    # post_fn only needed where there's user-visible output
+    assert sector["kwargs"]["post_fn"] is post_fn
+    assert vix["kwargs"]["post_fn"]    is post_fn
+    assert "post_fn" not in earnings["kwargs"]   # earnings refresh is silent
+
+
+def test_earnings_job_swallows_exceptions(monkeypatch):
+    """A crashing EarningsCalendar must not bubble out of the job wrapper."""
+    monkeypatch.setattr(
+        mr, "run_earnings_refresh",
+        lambda polygon_client: (_ for _ in ()).throw(RuntimeError("polygon down")),
+    )
+    # Should NOT raise.
+    mr._job_earnings(polygon_client=None)

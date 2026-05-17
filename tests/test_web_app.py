@@ -248,6 +248,31 @@ def test_macro_page_empty(client, app_modules):
             mr._MACRO_DIR = old
 
 
+def test_macro_page_renders_earnings_panel(client, app_modules, tmp_path):
+    """Seed the earnings cache and verify /macro shows the panel."""
+    import json
+    from datetime import date, timedelta
+    import config
+    cache_path = os.path.join(str(tmp_path), "earnings_calendar.json")
+    today = date.today()
+    with open(cache_path, "w") as f:
+        json.dump({
+            "fetched_at": today.isoformat(),
+            "entries": [
+                {"ticker": "AAPL",
+                 "earnings_date": (today + timedelta(days=3)).isoformat()},
+                {"ticker": "MSFT",
+                 "earnings_date": (today + timedelta(days=8)).isoformat()},
+            ],
+        }, f)
+
+    r = client.get("/macro")
+    assert r.status_code == 200
+    assert "Watchlist Earnings" in r.text
+    assert "AAPL"               in r.text
+    assert "MSFT"               in r.text
+
+
 def test_macro_page_renders_snapshots(client, app_modules, tmp_path):
     """Seed both snapshot files and verify the page surfaces values + flags."""
     import json

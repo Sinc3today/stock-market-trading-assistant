@@ -93,18 +93,20 @@ class MacroChat:
 
     def __init__(
         self,
-        plan_logger:     PlanLogger | None     = None,
-        trade_recorder:  TradeRecorder | None  = None,
-        knowledge_base:  KnowledgeBase | None  = None,
-        prediction_log:  PredictionLog | None  = None,
-        event_calendar = None,
-        api_key:         str | None            = None,
+        plan_logger:        PlanLogger | None     = None,
+        trade_recorder:     TradeRecorder | None  = None,
+        knowledge_base:     KnowledgeBase | None  = None,
+        prediction_log:     PredictionLog | None  = None,
+        event_calendar    = None,
+        earnings_calendar = None,
+        api_key:            str | None            = None,
     ):
         self.plans       = plan_logger    or PlanLogger()
         self.trades      = trade_recorder or TradeRecorder()
         self.kb          = knowledge_base or KnowledgeBase()
         self.predictions = prediction_log or PredictionLog()
         self.events      = event_calendar
+        self.earnings    = earnings_calendar
         self.api_key     = api_key or os.getenv("ANTHROPIC_API_KEY")
 
     # ── HISTORY ───────────────────────────────────────
@@ -165,6 +167,7 @@ class MacroChat:
         vix_ts     = macro_runner.get_latest_vix()    or {}
         sector     = macro_runner.get_latest_sector() or {}
         events     = self._safe_events(days=2)
+        earnings   = self._safe_earnings(days=7)
         kb_recent  = self._safe(lambda: self.kb.recent(KB_RECENT_DAYS)) or []
         trades     = self._safe(lambda: self.trades.get_all_trades()) or []
         recent_t   = list(reversed(trades))[:TRADES_RECENT_N]
@@ -176,6 +179,7 @@ class MacroChat:
             "vix_term_structure": vix_ts,
             "sector_breadth":     sector,
             "events_next_48h":    events,
+            "earnings_next_7d":   earnings,
             "kb_recent":          kb_recent,
             "recent_trades":      recent_t,
             "prediction_accuracy": pred_acc,
@@ -201,6 +205,9 @@ class MacroChat:
             bits.append(f"sectors {sect['signal']}")
         if evts:
             bits.append(f"events {len(evts)} in 48h")
+        ern_n = len(ctx.get("earnings_next_7d") or [])
+        if ern_n:
+            bits.append(f"earnings {ern_n}/7d")
         bits.append(f"KB {kb_n}/30d")
         bits.append(f"trades {tr_n}")
         if pa.get("sample"):
@@ -301,6 +308,14 @@ class MacroChat:
                 "events_next_48h": evts,
             }, indent=2, default=str),
             "",
+        ]
+
+        ern = ctx.get("earnings_next_7d") or []
+        parts += [
+            f"## EARNINGS NEXT 7D ({len(ern)} watchlist tickers)",
+            *([f"  - {e.get('ticker')}: {e.get('earnings_date')} "
+               f"({e.get('days_away')}d away)" for e in ern] or ["  (none)"]),
+            "",
             f"## KNOWLEDGE BASE (last {len(kb)} entries, {KB_RECENT_DAYS}d window)",
         ]
 
@@ -338,6 +353,15 @@ class MacroChat:
             logger.warning(f"MacroChat: event_calendar fetch failed: {e}")
             return []
         return [e for e in upcoming if e.get("days_away", 99) <= days]
+
+    def _safe_earnings(self, days: int) -> list[dict]:
+        if not self.earnings:
+            return []
+        try:
+            return self.earnings.get_upcoming(days=days) or []
+        except Exception as e:
+            logger.warning(f"MacroChat: earnings_calendar fetch failed: {e}")
+            return []
 
     @staticmethod
     def _safe(fn):

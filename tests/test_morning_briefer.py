@@ -128,6 +128,40 @@ def test_fallback_today_event_adds_skip(iso_logs):
     assert any(e.get("event") == "FOMC" for e in brief["macro_context"]["events"])
 
 
+class _StubEarnings:
+    def __init__(self, today_tomorrow): self._items = today_tomorrow
+    def get_today_and_tomorrow(self): return self._items
+
+
+def test_fallback_earnings_today_adds_skip(iso_logs):
+    earnings = _StubEarnings([
+        {"ticker": "AAPL", "earnings_date": "2026-05-18", "days_away": 0},
+    ])
+    briefer = MorningBriefer(
+        spy_strategy      = _StubStrategy(_base_card()),
+        earnings_calendar = earnings,
+        api_key           = None,
+    )
+    brief = briefer.build_today()
+    assert any("AAPL" in s and "earnings today" in s for s in brief["skip_conditions"])
+
+
+def test_fallback_earnings_tomorrow_adds_watch(iso_logs):
+    earnings = _StubEarnings([
+        {"ticker": "MSFT", "earnings_date": "2026-05-19", "days_away": 1},
+    ])
+    briefer = MorningBriefer(
+        spy_strategy      = _StubStrategy(_base_card()),
+        earnings_calendar = earnings,
+        api_key           = None,
+    )
+    brief = briefer.build_today()
+    assert any("MSFT" in w for w in brief["watch_conditions"])
+    assert brief["macro_context"]["earnings"] == [
+        {"ticker": "MSFT", "earnings_date": "2026-05-19", "days_away": 1}
+    ]
+
+
 def test_event_filter_drops_far_future(iso_logs):
     cal = _StubEventCalendar([
         {"event": "FOMC", "days_away": 0},

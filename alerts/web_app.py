@@ -41,6 +41,7 @@ from alerts.macro_chat import MacroChat
 from journal.trade_recorder import TradeRecorder
 from journal.plan_logger import PlanLogger
 from signals import macro_runner
+from data.earnings_calendar import EarningsCalendar
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
@@ -675,7 +676,8 @@ def _render_today(plan: dict | None) -> str:
     )
 
 
-def _render_macro(vix: dict | None, sector: dict | None) -> str:
+def _render_macro(vix: dict | None, sector: dict | None,
+                  earnings: list[dict] | None = None) -> str:
     """Today's macro snapshot — VIX term structure + sector breadth."""
 
     # ── VIX section ────────────────────────────
@@ -743,7 +745,34 @@ def _render_macro(vix: dict | None, sector: dict | None) -> str:
     else:
         sector_html = '<div class="empty">No sector snapshot yet. Runs daily at 10:00 ET.</div>'
 
-    body = vix_html + sector_html
+    # ── Earnings panel ───────────────────────────
+    if earnings:
+        rows = "".join(
+            f'<div style="display:flex;justify-content:space-between;'
+            f'padding:.4rem 0;border-bottom:1px solid #21262d">'
+            f'<span><b>{_esc(e.get("ticker"))}</b></span>'
+            f'<span class="muted">{_esc(e.get("earnings_date"))} '
+            f'<span class="badge" style="margin-left:.4rem">{_esc(e.get("days_away"))}d</span>'
+            f'</span></div>'
+            for e in earnings
+        )
+        earnings_html = f'''
+<div class="alert-card">
+  <div><b>Watchlist Earnings (next 14 days)</b></div>
+  <div style="margin-top:.5rem">{rows}</div>
+</div>'''
+    elif earnings is None:
+        earnings_html = ""   # source not wired in — render nothing
+    else:
+        earnings_html = (
+            '<div class="alert-card">'
+            '<div><b>Watchlist Earnings</b></div>'
+            '<div class="muted" style="margin-top:.5rem">'
+            'No watchlist earnings in the next 14 days.</div>'
+            '</div>'
+        )
+
+    body = vix_html + sector_html + earnings_html
     return _render_page(
         title       = "Trading Assistant - Macro",
         heading     = "Macro Snapshot",
@@ -1043,10 +1072,17 @@ def chats_page():
 
 @app.get("/macro", response_class=HTMLResponse)
 def macro_page():
-    """VIX term structure + sector breadth snapshot."""
-    vix    = macro_runner.get_latest_vix()
-    sector = macro_runner.get_latest_sector()
-    return HTMLResponse(_render_macro(vix, sector))
+    """VIX term structure + sector breadth + watchlist earnings snapshot."""
+    vix      = macro_runner.get_latest_vix()
+    sector   = macro_runner.get_latest_sector()
+    # Earnings: read from cache only (don't trigger a per-page Polygon refresh).
+    # The daily 08:50 ET job populates the cache; in tests this returns [].
+    earnings = None
+    try:
+        earnings = EarningsCalendar(polygon_client=None).get_upcoming(days=14)
+    except Exception:
+        earnings = None
+    return HTMLResponse(_render_macro(vix, sector, earnings))
 
 
 @app.get("/today", response_class=HTMLResponse)
@@ -1057,10 +1093,16 @@ def today_page():
     return HTMLResponse(_render_today(plan))
 
 
+def _macro_chat_instance() -> MacroChat:
+    """Construct MacroChat with read-only sources (no live API calls per request)."""
+    # EarningsCalendar with polygon_client=None reads cache only.
+    return MacroChat(earnings_calendar=EarningsCalendar(polygon_client=None))
+
+
 @app.get("/chat", response_class=HTMLResponse)
 def macro_chat_page():
     """Macro-aware chat: full daily context, persistent history."""
-    mc = MacroChat()
+    mc = _macro_chat_instance()
     return HTMLResponse(_render_macro_chat(
         history=mc.history(),
         context_summary=mc.context_summary(),
@@ -1073,7 +1115,7 @@ def macro_chat_send(body: MacroChatRequest):
     msg = (body.message or "").strip()
     if not msg:
         raise HTTPException(status_code=400, detail="message required")
-    reply = MacroChat().ask(msg)
+    reply = _macro_chat_instance().ask(msg)
     return JSONResponse({"reply": reply})
 
 

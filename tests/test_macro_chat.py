@@ -130,6 +130,27 @@ def test_event_calendar_filters_to_48h(iso_logs):
     assert not any(e["event"] == "NFP" for e in evts)
 
 
+def test_earnings_calendar_surfaces_in_context(iso_logs):
+    class FakeEarn:
+        def get_upcoming(self, days=14):
+            return [
+                {"ticker": "AAPL", "earnings_date": "2026-05-20", "days_away": 2},
+                {"ticker": "MSFT", "earnings_date": "2026-05-22", "days_away": 4},
+            ]
+    ctx = MacroChat(earnings_calendar=FakeEarn()).build_context()
+    ern = ctx["earnings_next_7d"]
+    assert len(ern) == 2
+    assert ern[0]["ticker"] == "AAPL"
+
+    mc = MacroChat(earnings_calendar=FakeEarn())
+    summary = mc.context_summary()
+    assert "earnings 2/7d" in summary
+
+    block = mc._format_context_block(ctx)
+    assert "EARNINGS NEXT 7D" in block
+    assert "AAPL"             in block
+
+
 def test_context_block_includes_all_sections(iso_logs, tmp_path):
     _seed_plan(date.today().isoformat())
     _seed_macro(tmp_path,
