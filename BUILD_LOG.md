@@ -4,6 +4,70 @@
 
 ---
 
+## 2026-05-16 (post-upgrade #3) | Portfolio Greeks tracker + live Pushover test
+
+**Why:** Real chain data per leg means we can roll up portfolio-wide
+exposure. User also asked for a live Pushover test to see what the
+phone experience actually looks like.
+
+**Pushover live test:**
+
+Sent today's archived brief through the real Notifier pipeline:
+
+```
+trending_up_calm: BULL PUT CREDIT SPREAD — IVR elevated, sell the put side
+Strategy: credit_spread (R/R —)
+
+Bull put spread on SPY (DTE45) justified by strong trend (ADX 38.3,
++9.3% above 200MA) and IVR=50 enabling premium sale. VIX 18.43 with
+0.86 contango supports calm regime. Risk: extreme sector dispersion
+(6.0) with XLU down 9% and XLK up 10...
+
+Skip if:
+• Skip if VIX opens above 20 or VIX3M ratio inverts below 0.95
+• Skip if SPY gaps down more than 1% at open
+• Skip if XLK reverses sharply (down >2% intraday) as it's leading
+```
+
+Notification landed on user's phone. End-to-end notifier path
+validated (PushoverClient → real API → device).
+
+**What was built (2 feature commits + this docs entry):**
+
+`67533f2` — feat: learning/portfolio_greeks.py
+  - PortfolioGreeks aggregates Δ Θ V Γ across TradeRecorder open
+    trades. Buy legs add Greeks, sell legs subtract them. Multiplied
+    by contract size × 100.
+  - Legacy positions (no Greeks, no ticker) skip gracefully with a
+    "warning" field — totals reflect only positions we can price.
+  - 8 new tests covering empty, legacy-only, long/short single legs,
+    balanced iron condor (~0 delta), multi-position sum, partial
+    pricing, data-failure resilience.
+
+`dafddd9` — feat: surface in /macro + macro_chat
+  - /macro fourth card "Portfolio Greeks" with total Δ Θ V Γ and
+    per-position breakdown. Empty state when no open positions.
+  - macro_chat context bundle gets `portfolio_greeks` field; the
+    "what Claude sees" breadcrumb shows "Δ +120" when positions
+    exist. New PORTFOLIO GREEKS section in the system context so
+    Claude can answer "what's my net delta exposure right now?"
+
+**Live verified:** `/macro` renders the Portfolio Greeks card with
+"No open positions" empty state. Will populate once Monday's
+auto-paper trade fills.
+
+**Test result:** 409 passed, 4 deselected, ~158s (was 401). +8 new.
+
+**What's still genuinely open:**
+
+1. Expiry-based exit for AUTO-PAPER positions (~1.5 hr)
+2. VIX wiring in off-hours replay (~30 min, quick)
+3. Rerun-backtest CLI (~1 hr)
+4. Per-ticker earnings REACTION history (~2 hr)
+5. R/R Pushover display fix (~10 min, cosmetic)
+
+---
+
 ## 2026-05-16 (post-upgrade #2) | Real Polygon options chain in the morning brief
 
 **Why:** Upgrade unlocked real options chain data (Greeks + IV per
