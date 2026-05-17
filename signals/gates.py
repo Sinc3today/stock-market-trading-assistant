@@ -19,6 +19,8 @@ from loguru import logger
 from polygon import RESTClient
 import config
 
+from data.earnings_calendar import EarningsCalendar
+
 
 class AlertGates:
     """
@@ -26,11 +28,15 @@ class AlertGates:
     Any gate failure suppresses the alert entirely.
     """
 
-    def __init__(self):
+    def __init__(self, earnings_calendar=None):
         if config.POLYGON_API_KEY:
             self.polygon = RESTClient(api_key=config.POLYGON_API_KEY)
         else:
             self.polygon = None
+        # EarningsCalendar reads its cache (populated by the daily 08:50 ET
+        # macro_runner job). No fetcher = cache-only mode, which is what we
+        # want at alert-fire time (no per-alert network call).
+        self.earnings_cal = earnings_calendar or EarningsCalendar()
 
     def check(
         self,
@@ -143,40 +149,31 @@ class AlertGates:
         Check if earnings are within the block window.
         Returns (is_blocked, message, earnings_date_str).
 
-        Uses Polygon ticker details when available.
-        Falls back to 'unknown' gracefully if API fails.
+        Reads from EarningsCalendar's daily-refreshed cache (populated
+        by the 08:50 ET macro_runner job, source = yfinance). Earlier
+        code path used Polygon's `next_earnings_date` field but that
+        attribute does NOT exist on free-tier TickerDetails, so the
+        check was silently a no-op.
         """
-        if self.polygon is None:
-            return False, "Earnings check skipped (no API)", None
-
         try:
-            details = self.polygon.get_ticker_details(ticker)
-            # Polygon doesn't always have next earnings — handle gracefully
-            earnings_date = getattr(details, "next_earnings_date", None)
-
-            if earnings_date is None:
-                logger.debug(f"No earnings date found for {ticker}")
-                return False, "No earnings date available", None
-
-            # Parse and compare
-            if isinstance(earnings_date, str):
-                earnings_dt = datetime.strptime(earnings_date, "%Y-%m-%d")
-            else:
-                earnings_dt = earnings_date
-
-            today = datetime.now()
-            days_until = (earnings_dt - today).days
-
-            if abs(days_until) <= config.EARNINGS_BLOCK_DAYS:
-                msg = (
-                    f"Earnings within {config.EARNINGS_BLOCK_DAYS} days "
-                    f"({earnings_date}) — alert suppressed"
-                )
-                return True, msg, str(earnings_date)
-            else:
-                return False, f"Earnings clear ({earnings_date})", str(earnings_date)
-
+            entry = self.earnings_cal.get_for_ticker(
+                ticker, days=config.EARNINGS_BLOCK_DAYS + 1
+            )
         except Exception as e:
-            # Don't block the alert just because earnings lookup failed
             logger.warning(f"Earnings check failed for {ticker}: {e}")
             return False, "Earnings check unavailable", None
+
+        if entry is None:
+            # No earnings within the block window (or not in watchlist cache).
+            return False, "No earnings within block window", None
+
+        ed = entry.get("earnings_date")
+        days_until = entry.get("days_away", 99)
+
+        if abs(days_until) <= config.EARNINGS_BLOCK_DAYS:
+            msg = (
+                f"Earnings within {config.EARNINGS_BLOCK_DAYS} days "
+                f"({ed}) — alert suppressed"
+            )
+            return True, msg, str(ed)
+        return False, f"Earnings clear ({ed})", str(ed)
