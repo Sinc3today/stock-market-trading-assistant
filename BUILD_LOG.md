@@ -4,6 +4,66 @@
 
 ---
 
+## 2026-05-16 (latest+3) | /backtest dashboard — closes the original wishlist
+
+**Why:** The last item on the user's original "what to build" list:
+"a backtest area in the dashboard to see what strategies we are
+implementing." Built as a read-only aggregator over what the bot has
+already measured about itself — Saturday hypothesis loop output,
+prediction accuracy, KB observations, plus the production-tuned
+baseline numbers.
+
+**What was built (2 feature commits + this docs entry):**
+
+`fa68165` — feat: BacktestSummary read-only aggregator
+  - `data/backtest_summary.py`:
+    - `production_stats()` — tuned baseline (Sharpe 1.73, IC win rate
+      74.1%, etc.) from CLAUDE.md docs. Override by writing
+      `logs/backtest_summary.json` after re-running the backtest.
+    - `hypotheses_by_status()` — groups
+      `logs/learning/hypotheses/*.json` by verdict (pending /
+      accepted / rejected / inconclusive). Forward-compat: unknown
+      verdicts get their own bucket.
+    - `prediction_accuracy()` — thin wrapper around PredictionLog.
+    - `kb_observations_by_category()` — last 30d KB entries grouped
+      by category with count + latest claim preview.
+  - Strictly read-only, no Polygon calls, no subprocesses.
+  - 11 new tests.
+
+`c49fb89` — feat: /backtest web route
+  - 5 mobile-first cards on the new `/backtest` route: Production
+    Baseline, By Regime (color-coded TRADED/SKIPPED badges),
+    Prediction Accuracy (green ≥60%, red <40%), Hypotheses
+    (one sub-card per non-empty bucket), KB Observations.
+  - Nav link added at the end: now 8 routes.
+  - 2 new tests (baseline-only render + full data render).
+
+**Test result:** 367 passed, 4 deselected (integration), ~143s
+(was 354). +13 new tests this round.
+
+**What this closes from the user's original "what to build" list:**
+
+1. ✅ Calendar to watch for news affecting stocks
+2. ✅ Morning brief sent out daily with play recommendations
+3. ✅ What play we want + options trade if conditions met
+4. ✅ Backtest area in the dashboard ← THIS BUILD
+5. ✅ Chat bot to deep dive strategies / trades / events
+
+Every item on the user's wishlist is now shipped.
+
+**Open follow-ups (genuinely-incremental polish from here):**
+
+1. ✅ everything above
+2. Promotion workflow CLI (the last self-learning loop gap — accepted
+   hypotheses still need a human to apply them to source)
+3. Expiry-based exit for `[AUTO-PAPER]` positions
+4. VIX wiring in off-hours replay (~30 min quick win)
+5. Per-ticker earnings REACTION history (not just calendar)
+6. Add a "rerun production backtest" CLI that writes
+   `logs/backtest_summary.json` so /backtest can show fresh numbers
+
+---
+
 ## 2026-05-16 (latest+2) | Watchlist earnings calendar + universal wiring
 
 **Why:** Closing the user-stated "calendar for specific stocks" gap.
