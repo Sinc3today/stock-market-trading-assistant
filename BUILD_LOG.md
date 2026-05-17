@@ -4,6 +4,75 @@
 
 ---
 
+## 2026-05-16 (post-upgrade #2) | Real Polygon options chain in the morning brief
+
+**Why:** Upgrade unlocked real options chain data (Greeks + IV per
+contract). Before this commit, OptionsLayer was picking THEORETICAL
+strikes (spot + width arithmetic) — recommendations were "Buy ATM
+Call @ $700" placeholders. Now they're executable contract tickers
+the user can paste into Robinhood / IBKR.
+
+**What was built (2 feature commits + this docs entry):**
+
+`492b0bb` — feat: data/options_chain.py
+  - `OptionsChain.get_chain(ticker, type, exp_range, strike_range)`
+    fetches normalized Polygon snapshots: ticker, strike, exp, dte,
+    mid, bid, ask, iv, delta, gamma, theta, vega, OI, volume.
+  - 5-min in-process cache so multiple legs share a single API call.
+  - `find_iron_condor(spot, dte_target, short_delta=0.20)` picks four
+    real strikes at the target delta on each side.
+  - `find_vertical_spread(direction, kind, spot, dte_target, width)`
+    handles all 4 strategy variants (bull/bear × debit/credit).
+  - 10 new tests covering normalization, caching, target-delta
+    selection, all 4 vertical spread variants, error fallbacks.
+
+`62e5a69` — feat: OptionsLayer wires real chain
+  - `OptionsLayer(options_chain=...)` constructor accepts an injectable.
+  - `_try_real_chain()` attempts a real-chain lookup before the
+    existing theoretical legs build. On success, replaces legs +
+    risk_reward and tags `source="polygon_chain"`. On any failure
+    (sparse strikes / NOT_AUTHORIZED / mid prices None) falls
+    through to theoretical math.
+  - Leg shape keeps both `type` and `option_type` keys for backward
+    compatibility with the existing Discord formatter.
+  - SPYDailyStrategy now defaults to `options_chain=OptionsChain()`
+    so production picks up real data automatically.
+
+**Live verification (today's brief, post-upgrade):**
+
+```
+Before (theoretical):
+  Strategy: credit_spread
+  Legs:
+    buy   Buy ATM Put @ $739
+    sell  Sell OTM Put @ $729
+
+After (polygon_chain):
+  Strategy: credit_spread       source: polygon_chain
+  DTE: 45                       expiration: 2026-06-26
+  Legs:
+    buy   Buy  O:SPY260626P00734000 K=$734.0 Δ=-0.42
+    sell  Sell O:SPY260626P00739000 K=$739.0 Δ=-0.47
+```
+
+These are **executable contract tickers** with **real Greeks**. Mid
+prices show `—` on Saturday but populate during market hours.
+
+**Test result:** 401 passed, 4 deselected, ~165s (was 391). +10 new.
+
+**What this enables for the user:**
+
+- Morning brief on phone shows the ACTUAL contract: tap, see strikes
+  + Greeks + expiration + OI.
+- Pushover deep link → /today page renders the exact ticker to paste
+  into your broker.
+- Iron condor short legs auto-targeted to 0.20 delta = ~80% prob
+  OTM, the standard sweet spot.
+- Position sizing can now use real delta (next build: portfolio
+  delta tracking — not strictly needed but easy).
+
+---
+
 ## 2026-05-16 (post-upgrade) | Polygon Options Starter live — real IVR flowing
 
 **Why:** User upgraded Polygon to Stocks Starter + Options Starter
