@@ -3,16 +3,16 @@
 # Tunnel:      trading-alerts
 # UUID:        e8b94fb3-1227-4958-9d26-a57c6952adbd
 # Public URL:  https://alerts.nexus-lab.work
-# Backend:     http://127.0.0.1:8000  (alerts/web_app.py via main.py)
+# Backend:     http://127.0.0.1:8002  (alerts/web_app.py via main.py)
 #
 # Run with:
 #   cloudflared tunnel --config cloudflare/tunnel_config.yml run
 
 tunnel: trading-alerts
-credentials-file: C:\Users\alexr\.cloudflared\e8b94fb3-1227-4958-9d26-a57c6952adbd.json
+credentials-file: /home/nexus/.cloudflared/e8b94fb3-1227-4958-9d26-a57c6952adbd.json
 
 ingress:
   - hostname: alerts.nexus-lab.work
-    service: http://127.0.0.1:8000
+    service: http://127.0.0.1:8002
 
   - service: http_status:404
