@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-05-17 (PM-8) | Per-ticker /levels/{TICKER} + watchlist picker
+
+**Why:** The /levels page was SPY-only. The watchlist has names we
+actively scan (AAPL, MSFT, NVDA, TSLA, etc) — applying the same chart +
+S/R + option-wall machinery to each is a free win once the route is
+generalised.
+
+**What changed:**
+
+- **`alerts/web_app.py`:**
+  - Extracted the SPY fetch + render path into a shared
+    `_build_levels_view(ticker)` helper.
+  - Two routes now share that helper:
+    - `GET /levels`          → SPY default (also accepts `?ticker=` for
+                                the picker form's GET submission).
+    - `GET /levels/{ticker}` → per-ticker view.
+  - `_normalise_ticker()` validates the path/query: uppercase,
+    `^[A-Z][A-Z0-9.]{0,7}$`. Anything that doesn't match falls back
+    to SPY rather than reaching Polygon — keeps junk strings out of
+    request logs and out of any future external integrations.
+  - **Picker** at top of every /levels page: a small `<select>`
+    populated from `EarningsCalendar()._load_watchlist()` (union of
+    swing + intraday + options_enabled, with SPY pinned first). Form
+    GET submission rewrites the action to `/levels/<symbol>` via tiny
+    inline JS so we keep clean URLs.
+  - Chart title, candlestick legend name, page title, and H1 heading
+    all carry the active ticker.
+
+- **CSS:** `.lvl-picker` styles for the form bar — flex layout,
+  GitHub-blue button, dark-themed select.
+
+- **Tests:** +3 in `tests/test_web_app.py`:
+  - `/levels/AAPL` renders with AAPL in heading and actually calls
+    Polygon with `"AAPL"` not `"SPY"`.
+  - `/levels/.._not_a_ticker_!` falls back to SPY (validation works).
+  - Picker `<select>` contains SPY + every watchlist symbol with the
+    current ticker pre-selected.
+
+**Tests:** full suite (route surface change, picker reads watchlist
+config — touches enough surface area to warrant the full run).
+
+---
+
 ## 2026-05-17 (PM-7) | /levels page: SPY chart + S/R + option walls + mobile pass
 
 **Why:** Dashboard needed two things: (1) a "where is SPY trading vs key

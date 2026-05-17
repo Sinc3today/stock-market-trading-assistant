@@ -248,6 +248,14 @@ h1{font-size:1.4rem;margin-bottom:1rem;color:#58a6ff}
        background:#21262d;border:1px solid #30363d;margin-right:.25rem}
 .empty{text-align:center;color:#8b949e;padding:3rem 0}
 
+/* /levels ticker picker */
+.lvl-picker{display:flex;gap:.5rem;align-items:center;padding:.6rem .8rem}
+.lvl-picker select{flex:1;background:#0d1117;color:#c9d1d9;
+                   border:1px solid #30363d;border-radius:6px;padding:.4rem .5rem}
+.lvl-picker button{background:#1f6feb;color:#fff;border:none;border-radius:6px;
+                   padding:.45rem 1rem;cursor:pointer;font-weight:600}
+.lvl-picker button:hover{background:#388bfd}
+
 /* ── Mobile: collapse 2-col grids, tighten chrome, bigger tap targets */
 @media (max-width:600px){
   body{padding:.6rem}
@@ -1370,12 +1378,15 @@ function renderJournal(items) {{
 _PLOTLY_CDN = '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>'
 
 
-def _build_levels_figure(spy_df, mas: dict, swing: dict, walls: dict) -> dict:
+def _build_levels_figure(
+    spy_df, mas: dict, swing: dict, walls: dict,
+    ticker: str = "SPY",
+) -> dict:
     """
     Build the Plotly figure spec (data + layout) as a plain dict.
 
     Layered:
-      1. Candlestick of SPY for last 90 trading days
+      1. Candlestick for the last 90 trading days
       2. Three MA lines (20/50/200)
       3. Horizontal call walls (red dashed) + put walls (green dashed)
       4. Max pain marker (orange dotted)
@@ -1400,7 +1411,7 @@ def _build_levels_figure(spy_df, mas: dict, swing: dict, walls: dict) -> dict:
         "high":      [float(v) for v in df[cols["high"]]],
         "low":       [float(v) for v in df[cols["low"]]],
         "close":     [float(v) for v in df[cols["close"]]],
-        "name":      "SPY",
+        "name":      ticker,
         "increasing": {"line": {"color": "#3fb950"}},
         "decreasing": {"line": {"color": "#f85149"}},
     }]
@@ -1452,7 +1463,7 @@ def _build_levels_figure(spy_df, mas: dict, swing: dict, walls: dict) -> dict:
                f'{swing.get("lookback","?")}d low ${swing["low_N"]:g}')
 
     layout = {
-        "title":       "SPY — last 90 days, levels overlaid",
+        "title":       f"{ticker} — last 90 days, levels overlaid",
         "paper_bgcolor": "#0d1117",
         "plot_bgcolor":  "#0d1117",
         "font":          {"color": "#c9d1d9"},
@@ -1474,10 +1485,51 @@ def _build_levels_figure(spy_df, mas: dict, swing: dict, walls: dict) -> dict:
     return {"data": traces, "layout": layout}
 
 
-def _render_levels(spy_df, mas: dict, swing: dict, walls: dict) -> str:
-    """Render the /levels page body (chart + side tables)."""
+_TICKER_RE = __import__("re").compile(r"^[A-Z][A-Z0-9.]{0,7}$")
+
+
+def _normalise_ticker(raw: str | None, fallback: str = "SPY") -> str:
+    """Defensive: uppercase + strict alphanumeric/dot, max 8 chars. Falls
+    back to SPY for anything that doesn't match — better than letting a
+    malformed value reach Polygon."""
+    if not raw:
+        return fallback
+    candidate = raw.strip().upper()
+    return candidate if _TICKER_RE.match(candidate) else fallback
+
+
+def _watchlist_for_picker() -> list[str]:
+    """Sorted union of all watchlist sections. Cache-only — never hits
+    yfinance or Polygon. SPY is always first so the default page works
+    without a populated watchlist."""
+    try:
+        tickers = EarningsCalendar(polygon_client=None)._load_watchlist() or []
+    except Exception:
+        tickers = []
+    bag = {"SPY", *tickers}
+    out = ["SPY"] + sorted(t for t in bag if t != "SPY")
+    return out
+
+
+def _render_levels(
+    ticker: str, df, mas: dict, swing: dict, walls: dict
+) -> str:
+    """Render the /levels page body (picker + chart + side tables)."""
     import json as _json
-    figure = _build_levels_figure(spy_df, mas, swing, walls)
+    figure = _build_levels_figure(df, mas, swing, walls, ticker=ticker)
+
+    # ── Ticker picker (form GET /levels/<select-value>) ──────
+    options = "".join(
+        f'<option value="{_esc(t)}"{" selected" if t == ticker else ""}>{_esc(t)}</option>'
+        for t in _watchlist_for_picker()
+    )
+    picker_html = f'''
+<form class="alert-card lvl-picker" method="get" action="/levels"
+      onsubmit="this.action='/levels/'+this.ticker.value;return true">
+  <label style="font-size:.85rem;color:#8b949e">Ticker</label>
+  <select name="ticker" style="flex:1">{options}</select>
+  <button type="submit">Go</button>
+</form>'''
 
     chart_html = f'''
 <div class="alert-card" style="padding:.5rem">
@@ -1559,10 +1611,10 @@ def _render_levels(spy_df, mas: dict, swing: dict, walls: dict) -> str:
         'Once Polygon options access is wired this card fills in.</div>'
     )
 
-    body = chart_html + summary_html + walls_html
+    body = picker_html + chart_html + summary_html + walls_html
     return _render_page(
-        title       = "Trading Assistant - Levels",
-        heading     = "SPY Levels",
+        title       = f"Trading Assistant - {ticker} Levels",
+        heading     = f"{ticker} Levels",
         body        = body,
         css         = _INDEX_CSS,
         active_nav  = "levels",
@@ -1640,31 +1692,44 @@ def today_page():
     return HTMLResponse(_render_today(plan))
 
 
-@app.get("/levels", response_class=HTMLResponse)
-def levels_page():
-    """SPY price chart + S/R levels (MAs, recent swings, option walls, max pain)."""
+def _build_levels_view(ticker: str) -> str:
+    """Fetch the bars + levels + walls for `ticker` and return the rendered HTML."""
     from data.polygon_client    import PolygonClient
     from signals.price_levels   import recent_swing_levels, moving_average_levels
     from signals.options_walls  import load_walls
 
-    spy_df = None
+    df = None
     try:
-        spy_df = PolygonClient().get_bars("SPY", timeframe=config.SWING_PRIMARY_TIMEFRAME,
-                                           limit=250, days_back=365)
+        df = PolygonClient().get_bars(ticker, timeframe=config.SWING_PRIMARY_TIMEFRAME,
+                                       limit=250, days_back=365)
     except Exception as e:
-        logger.warning(f"/levels: SPY fetch failed: {e}")
+        logger.warning(f"/levels/{ticker}: bars fetch failed: {e}")
 
-    mas   = moving_average_levels(spy_df) if spy_df is not None else {}
-    swing = recent_swing_levels(spy_df, lookback=50) if spy_df is not None else {}
+    mas   = moving_average_levels(df) if df is not None else {}
+    swing = recent_swing_levels(df, lookback=50) if df is not None else {}
     walls = {}
     try:
         spot = (mas or {}).get("close")
         if spot:
-            walls = load_walls("SPY", spot=spot)
+            walls = load_walls(ticker, spot=spot)
     except Exception as e:
-        logger.warning(f"/levels: walls fetch failed: {e}")
+        logger.warning(f"/levels/{ticker}: walls fetch failed: {e}")
 
-    return HTMLResponse(_render_levels(spy_df, mas, swing, walls))
+    return _render_levels(ticker, df, mas, swing, walls)
+
+
+@app.get("/levels", response_class=HTMLResponse)
+def levels_page_default(ticker: str | None = None):
+    """SPY by default; ?ticker=AAPL also accepted for the picker form's GET."""
+    sym = _normalise_ticker(ticker, fallback="SPY")
+    return HTMLResponse(_build_levels_view(sym))
+
+
+@app.get("/levels/{ticker}", response_class=HTMLResponse)
+def levels_page_for_ticker(ticker: str):
+    """Per-ticker chart + S/R levels. Ticker is validated; invalid → SPY."""
+    sym = _normalise_ticker(ticker, fallback="SPY")
+    return HTMLResponse(_build_levels_view(sym))
 
 
 def _macro_chat_instance() -> MacroChat:

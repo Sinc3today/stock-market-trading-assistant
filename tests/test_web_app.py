@@ -394,6 +394,115 @@ def test_levels_page_renders_option_walls_when_chain_present(client, app_modules
     assert "expiry 2026-06-20"    in r.text
 
 
+def test_levels_per_ticker_route_renders_with_ticker_heading(
+    client, app_modules, monkeypatch
+):
+    """GET /levels/AAPL renders with AAPL in the heading + page title."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+
+    rows = []
+    for i in range(60):
+        d = datetime(2026, 3, 1) + timedelta(days=i)
+        rows.append({"timestamp": d, "open": 200, "high": 201, "low": 199,
+                     "close": 200, "volume": 1_000_000})
+    df = pd.DataFrame(rows).set_index("timestamp")
+
+    captured = {"ticker": None}
+    def fake_get_bars(self, ticker, **kw):
+        captured["ticker"] = ticker
+        return df
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", fake_get_bars)
+
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls",
+                        lambda *a, **kw: {"call_walls": [], "put_walls": [],
+                                          "max_pain": None, "spot": kw.get("spot"),
+                                          "expiration": None})
+
+    r = client.get("/levels/AAPL")
+    assert r.status_code == 200
+    assert "AAPL Levels"   in r.text
+    assert "AAPL"          in r.text
+    # The fetch actually used AAPL, not the default SPY
+    assert captured["ticker"] == "AAPL"
+
+
+def test_levels_per_ticker_invalid_falls_back_to_spy(
+    client, app_modules, monkeypatch
+):
+    """Garbage in the path → falls back to SPY rather than passing junk
+    to Polygon (which could be a server log/abuse vector)."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+
+    rows = []
+    for i in range(30):
+        rows.append({"timestamp": datetime(2026, 3, 1) + timedelta(days=i),
+                     "open": 500, "high": 501, "low": 499, "close": 500,
+                     "volume": 1_000_000})
+    df = pd.DataFrame(rows).set_index("timestamp")
+
+    captured = {"ticker": None}
+    def fake_get_bars(self, ticker, **kw):
+        captured["ticker"] = ticker
+        return df
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", fake_get_bars)
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls",
+                        lambda *a, **kw: {"call_walls": [], "put_walls": [],
+                                          "max_pain": None, "spot": kw.get("spot"),
+                                          "expiration": None})
+
+    r = client.get("/levels/.._not_a_ticker_!")
+    assert r.status_code == 200
+    assert "SPY Levels" in r.text   # fallback heading
+    assert captured["ticker"] == "SPY"
+
+
+def test_levels_picker_form_populated_with_watchlist(
+    client, app_modules, monkeypatch, tmp_path
+):
+    """The picker <select> should include SPY plus the union of watchlist
+    sections (swing/intraday/options_enabled)."""
+    import json
+    wl_path = tmp_path / "watchlist.json"
+    wl_path.write_text(json.dumps({
+        "swing":           ["AAPL", "MSFT"],
+        "intraday":        ["NVDA"],
+        "options_enabled": ["TSLA"],
+    }))
+    import config
+    monkeypatch.setattr(config, "WATCHLIST_PATH", str(wl_path))
+
+    # Stub Polygon + walls so the page renders fast.
+    import pandas as pd
+    from datetime import datetime, timedelta
+    import data.polygon_client as pc
+    df = pd.DataFrame([{
+        "timestamp": datetime(2026, 3, 1) + timedelta(days=i),
+        "open": 500, "high": 501, "low": 499, "close": 500, "volume": 1
+    } for i in range(30)]).set_index("timestamp")
+    monkeypatch.setattr(pc.PolygonClient, "__init__", lambda self: None)
+    monkeypatch.setattr(pc.PolygonClient, "get_bars", lambda *a, **kw: df)
+    import signals.options_walls as ow
+    monkeypatch.setattr(ow, "load_walls",
+                        lambda *a, **kw: {"call_walls": [], "put_walls": [],
+                                          "max_pain": None, "spot": kw.get("spot"),
+                                          "expiration": None})
+
+    r = client.get("/levels")
+    assert r.status_code == 200
+    for sym in ("SPY", "AAPL", "MSFT", "NVDA", "TSLA"):
+        assert f'<option value="{sym}"' in r.text
+    # SPY is selected by default
+    assert '<option value="SPY" selected' in r.text
+
+
 def test_mobile_css_media_query_present(client, app_modules):
     """Every page should ship the @media(max-width:600px) rules."""
     r = client.get("/today")
