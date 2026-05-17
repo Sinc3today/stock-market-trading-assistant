@@ -1,6 +1,6 @@
 # TRADING_ASSISTANT.md — Living State Document
 # Updated by: Claude.ai (strategy) and Claude Code (after build sessions)
-# Last updated: 2026-04-30
+# Last updated: 2026-05-16
 
 ---
 
@@ -39,6 +39,16 @@
 ## Active Decisions
 
 ### In Flight
+- **Self-learning loop (Phase 1 done 2026-05-16):**
+  Bot now generates one daily prediction, paper-trades any tradeable plan
+  via TradeRecorder (tagged `[AUTO-PAPER]`), scores predictions at EOD,
+  reflects via Claude at 19:01, and proposes one tunable change every
+  Saturday with auto-backtest verdict.
+  Status: scaffold + scheduler live. 234/4 tests passing.
+  Phase 2 (next): web app surface for KB + hypothesis approval workflow,
+  expiry-based exit for multi-day spreads, live "prediction resolved"
+  Pushover ping at 16:06, historical VIX in the off-hours replay.
+
 - Push notifications: moving from Discord to Pushover (or Telegram) for
   time-sensitive alerts. Discord stays as secondary log.
   Status: design decided, not yet built.

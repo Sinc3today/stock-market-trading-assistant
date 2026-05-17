@@ -23,6 +23,7 @@ from data.vix_client                 import VIXClient
 from data.ivr_client                 import IVRClient
 from data.event_calendar             import EventCalendar
 from scheduler.spy_daily_scheduler   import register_spy_jobs
+from learning.scheduler              import register_learning_jobs
 # ── Logging setup ────────────────────────────────────────────
 os.makedirs(config.LOG_DIR, exist_ok=True)
 
@@ -405,6 +406,17 @@ if __name__ == "__main__":
         logger.info("   19:00 ET -- Reflection prompt")
     except Exception as e:
         logger.error(f"SPY daily jobs failed to register: {e}")
+
+    # Self-learning loop: paper trades, EOD scoring, Claude reflection, weekly hypothesis
+    try:
+        register_learning_jobs(
+            scheduler      = scheduler,
+            polygon_client = PolygonClient(),
+            post_fn        = notifier.message,
+        )
+        logger.info("✅ Self-learning jobs registered")
+    except Exception as e:
+        logger.error(f"Self-learning jobs failed to register: {e}")
     # Start alert web app (subprocess so uvicorn owns its own event loop)
     logger.info(
         f"Starting alert web app on "

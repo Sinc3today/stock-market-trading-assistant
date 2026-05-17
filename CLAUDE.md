@@ -58,7 +58,36 @@ journal/
 backtests/
   spy_daily_backtest.py     5-year SPY replay engine
   spy_history.csv           Local yfinance data (5yr)
+
+learning/                   Self-learning loop (paper exec -> reflect -> hypothesize -> backtest)
+  knowledge_base.py         JSONL KB at logs/learning/knowledge.jsonl + KNOWLEDGE.md rollup
+  predictions.py            One directional prediction per day; rolling accuracy
+  paper_broker.py           09:16 ET — auto paper-trade from today's plan, tagged [AUTO-PAPER]
+  outcome_resolver.py       16:05 ET — score the prediction, snapshot open paper trades
+  reflector.py              19:01 ET — Claude self-reflection -> KB entries + reflection MD
+  hypothesis_engine.py      Sat 10:00 — Claude proposes ONE tunable change (whitelisted)
+  hypothesis_runner.py      Sat 11:00 — backtest the change, mark accept/reject/inconclusive
+  off_hours_learner.py      Sun 10:00 — replay 60d, find near-misses, append KB observations
+  scheduler.py              register_learning_jobs() — wires all six jobs onto APScheduler
 ```
+
+## Self-Learning Loop Rules
+
+11. `[AUTO-PAPER]` in `trade.notes_entry` = bot-generated paper position.
+    Never confuse with a real fill; the journal/web app should label these
+    distinctly. Size is always 1 contract.
+12. Hypothesis proposals are bounded to the whitelist in
+    `learning/hypothesis_engine.TUNABLE_PARAMS`. To make a new threshold
+    self-tunable, add (module, var, min, max, type) to that dict.
+13. An **accepted** hypothesis (`backtest.verdict == "accepted"`) sits in
+    `logs/learning/hypotheses/` until a human promotes it. The runner
+    never edits source. Promotion is a deliberate step.
+14. The Claude calls in `reflector` / `hypothesis_engine` / `off_hours_learner`
+    require strict JSON replies. If parsing fails the raw reply is still
+    saved to disk so nothing is lost — fix the prompt, don't blame the LLM.
+15. Predictions and reflections run *every weekday whether or not the
+    user is around*. That's the whole point — don't add gates that
+    require human acknowledgement.
 
 ## Tuned Thresholds (from backtest — do not change without re-running backtest)
 

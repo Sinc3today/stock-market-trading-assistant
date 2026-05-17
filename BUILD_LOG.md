@@ -4,6 +4,170 @@
 
 ---
 
+## 2026-05-16 | Self-learning loop scaffold (paper exec + reflection + hypothesis + backtest)
+
+**Why:** Goal is an assistant that keeps building skill on its own when the
+user can't trade or journal daily. The bot now generates its own predictions,
+scores them itself overnight, reflects via Claude, and proposes one
+backtestable improvement each week.
+
+**What was built — new `learning/` package:**
+
+- `learning/knowledge_base.py` — Append-only JSONL at
+  `logs/learning/knowledge.jsonl` with categories `regime_accuracy`,
+  `gate_quality`, `sizing`, `exit_timing`, `market_context`, `hypothesis`,
+  `backtest_result`, `edge_case`. Re-generates a `KNOWLEDGE.md` rollup
+  (last 50 entries, newest first) on every append. `KBEntry` dataclass
+  clamps confidence to [0,1] and warns on non-standard categories.
+
+- `learning/predictions.py` — `PredictionLog` writing one row per day to
+  `logs/learning/predictions.jsonl`. Each prediction has regime, direction
+  (bullish/bearish/neutral/skip), entry SPY, target, stop, plus a
+  resolution block (`outcome` = correct/wrong/partial/skip,
+  `actual_close`, `actual_move_pct`). Idempotent per date.
+  `accuracy(n=60)` aggregates rolling directional accuracy %.
+
+- `learning/paper_broker.py` — Runs at 09:16 ET. Reads today's plan from
+  `PlanLogger`, logs a `Prediction`, and (if tradeable) records a paper
+  position via `TradeRecorder` tagged `[AUTO-PAPER]` so it's distinct
+  from real fills. Always size = 1 contract. Marks plan executed.
+  Skip days still produce a prediction so skip-quality is learned too.
+
+- `learning/outcome_resolver.py` — Runs at 16:05 ET. Fetches SPY EOD via
+  injected `PolygonClient`, scores today's directional prediction
+  (bullish/bearish: sign of move; neutral: |move| < 0.25%). Appends an
+  `[MTM YYYY-MM-DD] SPY close $X` line to every open `[AUTO-PAPER]`
+  trade so multi-day spreads accumulate a price path for the reflector.
+  Idempotent — running twice doesn't double-resolve.
+
+- `learning/reflector.py` — Runs at 19:01 ET. Bundles today's prediction
+  + plan + open paper positions + last 14d KB + 30d accuracy into a
+  Claude (Sonnet 4.5) call. Asks for a strict JSON reply with
+  `summary`, `narrative`, and 1-3 `kb_entries`. Persists:
+    - `logs/learning/reflections/YYYY-MM-DD.md` (narrative + context)
+    - 1-3 new rows appended to KB
+  If JSON parse fails, raw reply is still saved to the markdown so
+  nothing is lost; KB simply isn't updated. Pushes summary via the
+  notifier (Pushover + Discord).
+
+- `learning/hypothesis_engine.py` — Runs Saturday 10:00 ET. Reads last
+  30 days of KB + plans + accuracy and asks Claude for ONE concrete
+  tunable change. Targets are constrained to a `TUNABLE_PARAMS`
+  whitelist:
+    - `signals.regime_detector.ADX_TREND_MIN`  (15.0 — 35.0)
+    - `signals.regime_detector.VIX_CALM_MAX`   (12.0 — 22.0)
+    - `config.SCORE_ALERT_MINIMUM`             (30 — 75)
+    - `config.SCORE_HIGH_CONVICTION`           (55 — 90)
+    - `config.MIN_RISK_REWARD_RATIO`           (1.0 — 3.0)
+    - `config.IC_RANGE_THRESHOLD_PCT`          (1.5 — 4.0)
+  Returns `status: "propose"` or `status: "none"` (with rationale).
+  Validates module/var against whitelist and value against range —
+  out-of-bounds or off-whitelist proposals are silently rejected.
+  Stores spec at `logs/learning/hypotheses/hyp_YYYY-MM-DD_xxxx.json`.
+
+- `learning/hypothesis_runner.py` — Runs Saturday 11:00 ET. Iterates
+  pending hypothesis specs, monkey-patches the targeted module var,
+  re-runs the 5-year SPY backtest (`backtests.spy_daily_backtest`,
+  `--source local`), compares baseline vs modified deltas, and writes
+  back to the spec:
+    `sharpe_delta >= +0.10 AND pnl_delta > 0`     -> accepted
+    `sharpe_delta <= -0.10 OR pnl_delta <= -250`  -> rejected
+    else                                          -> inconclusive
+  Original value restored in `finally` so a crash can't leak the
+  override. Each result also appended to KB as `backtest_result`.
+  **Accepted ≠ live** — promotion is a deliberate human step.
+
+- `learning/off_hours_learner.py` — Runs Sunday 10:00 ET. Replays
+  the last 60 days of SPY history through the *current* regime
+  detector, flags "near-miss" days (ADX or VIX within 10% of
+  threshold AND next-day move went against the directional call),
+  asks Claude to find shared patterns, appends 1-3 `edge_case` /
+  `market_context` KB entries. Always writes a JSON report at
+  `logs/learning/off_hours/YYYY-MM-DD.json` whether or not Claude
+  is reachable.
+
+- `learning/scheduler.py` — `register_learning_jobs(scheduler,
+  polygon_client, post_fn)` adds all six jobs onto the existing
+  APScheduler. Each job wrapped in try/except so one failure can't
+  crash the bot. Wired into `main.py` after the SPY daily jobs.
+
+**Tests (34 new, all passing):**
+
+- `tests/test_learning_kb.py` — 8 tests for KB + PredictionLog
+  (append, recent, by_category, stats, confidence clamping,
+  prediction idempotency, accuracy aggregation).
+- `tests/test_learning_paper_broker.py` — 5 tests for paper broker
+  (tradeable / skip / from-plan / no-plan / plan idempotency).
+- `tests/test_learning_outcome_resolver.py` — 9 tests covering all
+  direction × outcome combinations, skip days, idempotency, and
+  MTM snapshotting against open positions.
+- `tests/test_learning_reflector.py` — 3 tests with mocked
+  `_call_claude` for happy path, malformed JSON, and missing API key
+  (with `monkeypatch.delenv` to avoid hitting the live key in env).
+- `tests/test_learning_hypothesis.py` — 9 tests for engine
+  (valid / out-of-range / off-whitelist / status="none") and runner
+  (accept / reject / inconclusive / re-run-skip / non-whitelist-error).
+
+**File layout:**
+
+```
+learning/
+  __init__.py
+  knowledge_base.py
+  predictions.py
+  paper_broker.py
+  outcome_resolver.py
+  reflector.py
+  hypothesis_engine.py
+  hypothesis_runner.py
+  off_hours_learner.py
+  scheduler.py
+
+logs/learning/
+  knowledge.jsonl
+  KNOWLEDGE.md
+  predictions.jsonl
+  reflections/YYYY-MM-DD.md
+  hypotheses/hyp_*.json
+  off_hours/YYYY-MM-DD.json
+```
+
+**Schedule summary (added to existing scheduler):**
+
+```
+09:16 ET (Mon-Fri)  learning.paper_broker.execute_today()
+16:05 ET (Mon-Fri)  learning.outcome_resolver.resolve_today()
+19:01 ET (Mon-Fri)  learning.reflector.reflect_today()
+Sat 10:00 ET        learning.hypothesis_engine.propose_weekly()
+Sat 11:00 ET        learning.hypothesis_runner.run_pending()
+Sun 10:00 ET        learning.off_hours_learner.run()
+```
+
+**Known follow-ups for next session:**
+
+1. **Web app surface** — `alerts/web_app.py` needs new routes:
+   `/learning` (KB browser, prediction accuracy chart, recent
+   reflections), `/hypotheses` (approve/reject pending accepted
+   hypotheses to actually edit `config.py` / `regime_detector.py`).
+2. **Expiry-based exit** — `outcome_resolver` only snapshots MTM on
+   open `[AUTO-PAPER]` positions; nothing closes them at expiry yet.
+   Add an `expiry_resolver` that closes positions when DTE hits 0
+   using the realized SPY path and the spread's payoff function.
+3. **Promotion workflow** — Accepted hypotheses sit in
+   `logs/learning/hypotheses/` until a human acts. Need a CLI
+   (`python -m learning.promote <hyp_id>`) that writes the change
+   to source with a generated commit, plus a Pushover ping on
+   accept so the user knows there's something to review.
+4. **Live notification when a prediction is resolved** — currently
+   only the daily reflection at 19:01 surfaces it. A short
+   "prediction X today resolved Y" Pushover at 16:06 would close
+   the day-of feedback loop.
+5. **VIX in off-hours replay** — currently hardcoded to 16.0 because
+   we don't have historical VIX in the local CSV. Wire the CBOE CSV
+   loader (already in `data/vix_client.py`) into the replay.
+
+---
+
 ## 2026-04-30 | Per-alert web app (FastAPI + SQLite + Claude chat + journal)
 
 **What was built:**
