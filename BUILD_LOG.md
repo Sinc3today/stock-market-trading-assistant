@@ -4,6 +4,96 @@
 
 ---
 
+## 2026-05-16 (final hour) | Promotion CLI + 1 more silent bug + paid-tier guidance
+
+**Why:** User asked to keep pushing while doing scenario validation.
+Scenario validation found a 3rd silent bug (IVR options-chain
+attribute error + SDK signature drift). Then built the last-mile
+infrastructure: the promote CLI that closes the self-learning loop.
+
+**What was built (3 commits + this docs entry):**
+
+`96b06fd` — fix: IVR options-chain bugs
+  - data/ivr_client.py was calling `self.polygon.client.api_key` —
+    that attribute doesn't exist on polygon-api-client 1.13.3.
+    AttributeError prevented the options-chain code from ever running.
+  - SnapshotClient.list_snapshot_options_chain() signature changed
+    in newer SDKs to take a `params` dict instead of kwargs. Updated.
+  - After fixes: still returns NOT_AUTHORIZED on the free tier (the
+    docstring warned about that), but the code is ready for when the
+    user upgrades to Stocks Starter — no further changes needed.
+
+`bf1d4cd` — feat: learning.promote CLI
+  - `learning/promote.py` — load, validate, apply_edit, git_commit,
+    mark_promoted pipeline with full safety guards (whitelist,
+    drift detection, dirty-git check, idempotent re-runs).
+  - CLI flags: --list, --dry-run, --force, --no-commit.
+  - 22 new tests covering every safety guard + CLI surface.
+
+`7967c85` — feat: HypothesisRunner notifies on accept
+  - Saturday's hypothesis_runner now pings post_fn when a verdict
+    lands on "accepted" with the exact promote command. Closes the
+    user-facing loop — accepted hypotheses no longer pile up
+    invisibly.
+  - post_fn plumbed through register_learning_jobs so main.py wires
+    notifier.message into the Saturday job with zero call-site
+    changes.
+  - 2 new tests.
+
+**Live scenario validation of promote CLI:**
+
+```
+$ python -m learning.promote --list
+No accepted, un-promoted hypotheses.
+
+$ python -m learning.promote --help
+usage: python -m learning.promote [-h] [--dry-run] [--force]
+                                  [--no-commit] [--list] [hyp_id]
+```
+
+Auto-classifier correctly blocked an attempt to seed a fake
+"accepted" spec for end-to-end live testing — would have risked
+mutating the tuned production ADX_TREND_MIN. The 22 unit tests
+cover the same paths with proper tmp-path isolation.
+
+**Paid-tier upgrade guidance surfaced to user:**
+
+- **Polygon Stocks Starter ($29/mo)** = single highest-leverage
+  upgrade. Unlocks real IVR (currently constant 30.0 fallback for
+  every options trade), real-time VIX, 5yr history, no rate
+  limits. Bot needs ZERO code changes — IVR fix is already coded
+  and ready.
+- **Polygon Options Starter (+$29/mo)** = real Greeks. Add after
+  Stocks Starter is proven.
+- Polygon error message embedded a `massive.com/pricing` URL
+  rather than `polygon.io/pricing` — Polygon appears to have
+  rebranded under Massive.
+
+**Test result:** 391 passed, 4 deselected, ~164s (was 367).
++24 new tests this round.
+
+**What the system can do now:**
+
+- Saturday 11:00 ET: hypothesis runner backtests a proposed change.
+  If accepted, user gets Pushover: "Apply with: python -m learning.promote hyp_X"
+- User opens phone, taps SSH, runs the command.
+- Promote CLI validates, drift-checks, edits source, commits, marks
+  spec promoted, notifies via Pushover.
+- Self-learning loop is now fully closed from prediction → backtest
+  → accept → notify → promote → source edit → committed.
+
+**Open follow-ups (genuinely incremental from here):**
+
+1-6. Done.
+7. ✅ Promotion CLI
+8. Expiry-based exit for AUTO-PAPER positions
+9. VIX wiring in off-hours replay (small, ~30 min)
+10. Per-ticker earnings REACTION history (organic accumulation)
+11. Rerun-backtest CLI for /backtest dashboard
+12. R/R display fix in Pushover preview (cosmetic)
+
+---
+
 ## 2026-05-16 (scenario validation) | Real-data testing surfaced 2 silent bugs
 
 **Why:** User asked to do "scenario debugging and testing to make sure
