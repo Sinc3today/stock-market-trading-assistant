@@ -135,6 +135,17 @@ INTRADAY_SECONDARY_TIMEFRAME = "5min"
 # SCANNER SETTINGS
 # ─────────────────────────────────────────
 EARNINGS_BLOCK_DAYS        = 2
+
+# Reaction-history gate (uses data/earnings_history.py).
+#   When True, gates.py asks EarningsHistory for the ticker's typical
+#   post-earnings move BEFORE deciding whether the proximity block fires:
+#     - "volatile" (>3.5% avg) → always blocked inside EARNINGS_BLOCK_DAYS+1
+#     - "calm"      (<1.5% avg) → block window tightens to 0 days
+#       (alerts allowed up to and including the day before earnings)
+#     - "normal"    (1.5-3.5%) → unchanged proximity block
+#   Off by default until validated on real watchlist data.
+EARNINGS_REACTION_GATE_ENABLED = False
+EARNINGS_CALM_WINDOW_DAYS      = 0    # block window override for calm reactors
 MARKET_OPEN                = "09:30"
 MARKET_CLOSE               = "16:00"
 INTRADAY_SCAN_INTERVAL_MIN = 5

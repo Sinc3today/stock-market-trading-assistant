@@ -92,12 +92,14 @@ class MorningBriefer:
         spy_strategy,
         event_calendar    = None,
         earnings_calendar = None,
+        earnings_history  = None,
         plan_logger:      PlanLogger | None = None,
         api_key:          str | None = None,
     ):
         self.spy_strategy      = spy_strategy
         self.event_calendar    = event_calendar
         self.earnings_calendar = earnings_calendar
+        self.earnings_history  = earnings_history
         self.plans             = plan_logger or PlanLogger()
         self.api_key           = api_key or os.getenv("ANTHROPIC_API_KEY")
 
@@ -163,14 +165,26 @@ class MorningBriefer:
         }
 
     def _get_today_earnings(self) -> list[dict]:
-        """Watchlist tickers reporting today or tomorrow."""
+        """
+        Watchlist tickers reporting today or tomorrow, annotated with the
+        ticker's historical post-earnings reaction stats when available.
+        Each entry gets `mean_abs_move_pct`, `stdev_move_pct`, `gap_class`
+        merged in by EarningsHistory.annotate_upcoming().
+        """
         if not self.earnings_calendar:
             return []
         try:
-            return self.earnings_calendar.get_today_and_tomorrow() or []
+            upcoming = self.earnings_calendar.get_today_and_tomorrow() or []
         except Exception as e:
             logger.warning(f"MorningBriefer: earnings_calendar fetch failed: {e}")
             return []
+        if not upcoming or self.earnings_history is None:
+            return upcoming
+        try:
+            return self.earnings_history.annotate_upcoming(upcoming)
+        except Exception as e:
+            logger.warning(f"MorningBriefer: earnings_history annotate failed: {e}")
+            return upcoming
 
     def _get_today_events(self) -> list[dict]:
         if not self.event_calendar:
@@ -236,8 +250,7 @@ class MorningBriefer:
                for e in events] or ["  (none)"]),
             f"",
             f"WATCHLIST EARNINGS NEXT 48H:",
-            *([f"  - {e.get('ticker')} earnings on {e.get('earnings_date')} "
-               f"({e.get('days_away')}d away)"
+            *([self._format_earnings_line(e)
                for e in (macro.get('earnings') or [])] or ["  (none)"]),
             f"",
             f"Produce the JSON now.",
@@ -287,6 +300,20 @@ class MorningBriefer:
             return None, f"json error: {e}"
 
     @staticmethod
+    def _format_earnings_line(e: dict) -> str:
+        """One bullet for the WATCHLIST EARNINGS prompt block. Adds the
+        reaction history stats when they exist on the entry."""
+        base = (
+            f"  - {e.get('ticker')} earnings on {e.get('earnings_date')} "
+            f"({e.get('days_away')}d away)"
+        )
+        mean_abs = e.get("mean_abs_move_pct")
+        gap_class = e.get("gap_class")
+        if isinstance(mean_abs, (int, float)) and gap_class:
+            base += f" — typical reaction ±{mean_abs:.1f}% ({gap_class})"
+        return base
+
+    @staticmethod
     def _clean_list(items) -> list[str]:
         if not isinstance(items, list):
             return []
@@ -319,10 +346,17 @@ class MorningBriefer:
                 if e.get("days_away") == 0:
                     skip.append(f"Skip until after {e.get('event')} today")
         for e in (macro.get("earnings") or []):
+            mean_abs = e.get("mean_abs_move_pct")
+            gap_class = e.get("gap_class")
+            reaction = ""
+            if isinstance(mean_abs, (int, float)) and gap_class:
+                reaction = f" — typically moves ±{mean_abs:.1f}% ({gap_class})"
             if e.get("days_away") == 0:
-                skip.append(f"Avoid {e.get('ticker')} -- earnings today")
+                skip.append(f"Avoid {e.get('ticker')} -- earnings today{reaction}")
             elif e.get("days_away") == 1:
-                watch.append(f"{e.get('ticker')} earnings tomorrow ({e.get('earnings_date')})")
+                watch.append(
+                    f"{e.get('ticker')} earnings tomorrow ({e.get('earnings_date')}){reaction}"
+                )
 
         return narrative, skip, watch
 

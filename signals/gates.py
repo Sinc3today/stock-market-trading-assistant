@@ -20,6 +20,7 @@ from polygon import RESTClient
 import config
 
 from data.earnings_calendar import EarningsCalendar
+from data.earnings_history  import EarningsHistory
 
 
 class AlertGates:
@@ -28,7 +29,7 @@ class AlertGates:
     Any gate failure suppresses the alert entirely.
     """
 
-    def __init__(self, earnings_calendar=None):
+    def __init__(self, earnings_calendar=None, earnings_history=None):
         if config.POLYGON_API_KEY:
             self.polygon = RESTClient(api_key=config.POLYGON_API_KEY)
         else:
@@ -37,6 +38,9 @@ class AlertGates:
         # macro_runner job). No fetcher = cache-only mode, which is what we
         # want at alert-fire time (no per-alert network call).
         self.earnings_cal = earnings_calendar or EarningsCalendar()
+        # EarningsHistory is only used when EARNINGS_REACTION_GATE_ENABLED.
+        # Cache-only mode: serves whatever the 30-day cache already has.
+        self.earnings_hist = earnings_history or EarningsHistory()
 
     def check(
         self,
@@ -170,10 +174,41 @@ class AlertGates:
         ed = entry.get("earnings_date")
         days_until = entry.get("days_away", 99)
 
-        if abs(days_until) <= config.EARNINGS_BLOCK_DAYS:
+        # Effective block window: tightens for "calm" reactors when the
+        # reaction-history gate is enabled. Volatile/normal/unknown reactors
+        # use the standard EARNINGS_BLOCK_DAYS.
+        block_days = config.EARNINGS_BLOCK_DAYS
+        reaction_class = None
+        if getattr(config, "EARNINGS_REACTION_GATE_ENABLED", False):
+            reaction_class, block_days = self._reaction_adjusted_block(ticker, block_days)
+
+        if abs(days_until) <= block_days:
+            extra = f" [{reaction_class}]" if reaction_class else ""
             msg = (
-                f"Earnings within {config.EARNINGS_BLOCK_DAYS} days "
-                f"({ed}) — alert suppressed"
+                f"Earnings within {block_days} days "
+                f"({ed}) — alert suppressed{extra}"
             )
             return True, msg, str(ed)
         return False, f"Earnings clear ({ed})", str(ed)
+
+    def _reaction_adjusted_block(
+        self, ticker: str, default_block: int
+    ) -> tuple[str | None, int]:
+        """
+        Look up the ticker's reaction class and return the effective
+        block-window override. Failures are safe: fall back to the default
+        block window so we never miss a real earnings risk.
+        """
+        try:
+            stats = self.earnings_hist.get_reactions(ticker)
+        except Exception as e:
+            logger.warning(f"Reaction lookup failed for {ticker}: {e}")
+            return None, default_block
+        if not stats:
+            return None, default_block
+        cls = stats.get("gap_class")
+        if cls == "calm":
+            return cls, config.EARNINGS_CALM_WINDOW_DAYS
+        # volatile + normal both use the standard window — the label is
+        # surfaced in the suppression message for transparency.
+        return cls, default_block

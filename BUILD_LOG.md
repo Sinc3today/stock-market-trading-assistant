@@ -4,6 +4,56 @@
 
 ---
 
+## 2026-05-17 (PM-4) | Wire EarningsHistory into MorningBriefer + AlertGates
+
+**Why:** PM-3 built the reaction-stats data layer. Two consumers needed
+to actually use it: (1) the morning brief, so the user sees "typical
+reaction ±X%" instead of just an earnings date; (2) the alert gates,
+so we can be smarter than a blunt 2-day block — calm reactors don't
+need the same wide window as volatile ones.
+
+**What changed:**
+
+- **`signals/morning_briefer.py`:**
+  - New optional `earnings_history` constructor arg.
+  - `_get_today_earnings()` now calls `EarningsHistory.annotate_upcoming()`
+    on the earnings list when wired; the stats land in `macro_context.earnings`.
+  - Claude prompt's `WATCHLIST EARNINGS NEXT 48H` block now appends
+    "— typical reaction ±X% (class)" per ticker so the LLM can mention
+    it in plain-English skip/watch conditions.
+  - Fallback synthesis (no Claude) also embeds the reaction line.
+  - `_get_today_earnings` swallows `annotate_upcoming` exceptions and
+    returns the un-annotated list so a flaky history fetch never breaks
+    the brief.
+
+- **`scheduler/spy_daily_scheduler.py`:** constructs `EarningsHistory`
+  and passes it to `MorningBriefer` alongside the existing
+  `EarningsCalendar`.
+
+- **`signals/gates.py`:** new optional `earnings_history` dep + new
+  config flag `EARNINGS_REACTION_GATE_ENABLED` (default `False`).
+  When on:
+  - `calm` reactors (<1.5% avg) get `EARNINGS_CALM_WINDOW_DAYS` (default
+    `0`) as their block window — alerts allowed up to and including
+    the day before earnings.
+  - `normal` / `volatile` keep the standard `EARNINGS_BLOCK_DAYS`; the
+    class label is surfaced in the suppression message for transparency.
+  - Any `EarningsHistory` exception → fall back to the default block,
+    so a failed lookup never weakens the gate.
+
+- **`config.py`:** `EARNINGS_REACTION_GATE_ENABLED`,
+  `EARNINGS_CALM_WINDOW_DAYS` added (both gated behind the new flag).
+
+- **Tests:** +3 in `tests/test_morning_briefer.py` (annotate wiring,
+  failure passthrough), +7 in new
+  `tests/test_gates_earnings_reaction.py` covering flag off/on,
+  per-class behavior, and history-failure safety. 19/19 briefer +
+  7/7 reaction gate + 13/13 history pass.
+
+**Tests:** full suite (cross-module: briefer + gates + scheduler).
+
+---
+
 ## 2026-05-17 (PM-3) | Per-ticker post-earnings reaction history
 
 **Why:** The morning brief and gates currently know *when* a ticker

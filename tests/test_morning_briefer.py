@@ -162,6 +162,88 @@ def test_fallback_earnings_tomorrow_adds_watch(iso_logs):
     ]
 
 
+class _StubEarningsHistory:
+    """Mirrors EarningsHistory.annotate_upcoming contract."""
+    def __init__(self, stats_by_ticker: dict):
+        self._stats = stats_by_ticker
+    def annotate_upcoming(self, upcoming: list[dict]) -> list[dict]:
+        out = []
+        for e in upcoming:
+            row = dict(e)
+            s = self._stats.get(e.get("ticker"))
+            if s:
+                row.update(s)
+            out.append(row)
+        return out
+
+
+def test_fallback_earnings_skip_mentions_reaction_class(iso_logs):
+    """When EarningsHistory is wired, the skip line names the typical
+    move size and gap class so the user knows what they're avoiding."""
+    earnings = _StubEarnings([
+        {"ticker": "TSLA", "earnings_date": "2026-05-18", "days_away": 0},
+    ])
+    history = _StubEarningsHistory({
+        "TSLA": {"mean_abs_move_pct": 6.2, "stdev_move_pct": 3.0,
+                 "gap_class": "volatile"},
+    })
+    briefer = MorningBriefer(
+        spy_strategy      = _StubStrategy(_base_card()),
+        earnings_calendar = earnings,
+        earnings_history  = history,
+        api_key           = None,
+    )
+    brief = briefer.build_today()
+    line = next(s for s in brief["skip_conditions"] if "TSLA" in s)
+    assert "6.2%" in line
+    assert "volatile" in line
+
+
+def test_macro_context_earnings_carries_reaction_stats(iso_logs):
+    """The annotated earnings stats land in macro_context.earnings so the
+    Claude prompt and downstream consumers (web /macro, chat) can see them."""
+    earnings = _StubEarnings([
+        {"ticker": "NVDA", "earnings_date": "2026-05-19", "days_away": 1},
+    ])
+    history = _StubEarningsHistory({
+        "NVDA": {"mean_abs_move_pct": 4.8, "stdev_move_pct": 2.1,
+                 "gap_class": "volatile"},
+    })
+    briefer = MorningBriefer(
+        spy_strategy      = _StubStrategy(_base_card()),
+        earnings_calendar = earnings,
+        earnings_history  = history,
+        api_key           = None,
+    )
+    brief = briefer.build_today()
+    nvda = brief["macro_context"]["earnings"][0]
+    assert nvda["ticker"]            == "NVDA"
+    assert nvda["mean_abs_move_pct"] == 4.8
+    assert nvda["gap_class"]         == "volatile"
+
+
+def test_earnings_history_failure_does_not_break_brief(iso_logs):
+    """If annotate_upcoming raises, the briefer falls back to the
+    un-annotated list rather than crashing."""
+    earnings = _StubEarnings([
+        {"ticker": "AAPL", "earnings_date": "2026-05-18", "days_away": 0},
+    ])
+    class Broken:
+        def annotate_upcoming(self, *_a, **_kw):
+            raise RuntimeError("yfinance dead")
+    briefer = MorningBriefer(
+        spy_strategy      = _StubStrategy(_base_card()),
+        earnings_calendar = earnings,
+        earnings_history  = Broken(),
+        api_key           = None,
+    )
+    brief = briefer.build_today()
+    # Still produced a brief, earnings still in macro_context
+    assert brief["macro_context"]["earnings"][0]["ticker"] == "AAPL"
+    # Fallback skip line still fires (no reaction info)
+    assert any("AAPL" in s for s in brief["skip_conditions"])
+
+
 def test_event_filter_drops_far_future(iso_logs):
     cal = _StubEventCalendar([
         {"event": "FOMC", "days_away": 0},
