@@ -40,6 +40,44 @@ from journal.trade_recorder  import TradeRecorder
 NEUTRAL_TOLERANCE_PCT = 0.25   # |%| inside this = condor still "correct"
 
 
+# ── NOTIFICATION FORMATTER ────────────────────────────
+
+_OUTCOME_EMOJI = {
+    "correct": "✅",
+    "wrong":   "❌",
+    "partial": "◐",
+    "skip":    "—",
+}
+
+
+def format_resolved_message(prediction: dict) -> str:
+    """
+    One-line+ summary of a resolved prediction, suitable for Pushover/Discord.
+
+    Skip days produce a quiet "no trade today" line so the daily heartbeat
+    is consistent — the reflector still gets the richer 19:01 write-up.
+    """
+    date_str  = prediction.get("date", "?")
+    direction = prediction.get("direction", "?")
+    outcome   = prediction.get("outcome") or "unresolved"
+    emoji     = _OUTCOME_EMOJI.get(outcome, "·")
+
+    if outcome == "skip" or not prediction.get("tradeable"):
+        return f"**Prediction {date_str}** — {emoji} skip day (no directional call)"
+
+    entry = prediction.get("entry_spy")
+    close = prediction.get("actual_close")
+    move  = prediction.get("actual_move_pct")
+    move_str = f"{move:+.2f}%" if isinstance(move, (int, float)) else "?"
+    entry_str = f"${entry:.2f}" if isinstance(entry, (int, float)) else "?"
+    close_str = f"${close:.2f}" if isinstance(close, (int, float)) else "?"
+
+    return (
+        f"**Prediction {date_str}** — {emoji} {outcome.upper()} ({direction})\n"
+        f"SPY {entry_str} → {close_str} ({move_str})"
+    )
+
+
 class OutcomeResolver:
     """Closes the day's learning loop. Idempotent."""
 

@@ -25,7 +25,8 @@ import pytz
 from loguru import logger
 
 from learning.paper_broker      import PaperBroker
-from learning.outcome_resolver  import OutcomeResolver
+from learning.outcome_resolver  import OutcomeResolver, format_resolved_message
+from learning.predictions       import PredictionLog
 from learning.reflector         import Reflector
 from learning.hypothesis_engine import HypothesisEngine
 from learning.hypothesis_runner import HypothesisRunner
@@ -42,10 +43,17 @@ def job_paper_broker():
         logger.exception(f"learning.paper_broker failed: {e}")
 
 
-def job_outcome_resolver(polygon_client):
+def job_outcome_resolver(polygon_client, post_fn=None):
     try:
         result = OutcomeResolver(polygon_client=polygon_client).resolve_today()
         logger.info(f"learning.outcome_resolver -> {result}")
+        if result.get("resolved") and post_fn:
+            prediction = PredictionLog().get(result["date"])
+            if prediction:
+                try:
+                    post_fn(format_resolved_message(prediction))
+                except Exception as e:
+                    logger.warning(f"learning.outcome_resolver notify failed: {e}")
     except Exception as e:
         logger.exception(f"learning.outcome_resolver failed: {e}")
 
@@ -107,7 +115,7 @@ def register_learning_jobs(
     scheduler.add_job(
         job_outcome_resolver,
         CronTrigger(day_of_week="mon-fri", hour=16, minute=5, timezone=eastern),
-        kwargs={"polygon_client": polygon_client},
+        kwargs={"polygon_client": polygon_client, "post_fn": post_fn},
         id="learning_outcome_resolver",
         name="Learning: outcome resolver",
         replace_existing=True,

@@ -13,10 +13,11 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from learning.outcome_resolver import OutcomeResolver
+from learning.outcome_resolver import OutcomeResolver, format_resolved_message
 from learning.predictions      import PredictionLog, Prediction
 from learning.paper_broker     import PaperBroker
 from journal.trade_recorder    import TradeRecorder
+from learning.scheduler        import job_outcome_resolver
 
 
 class FakePolygon:
@@ -99,6 +100,53 @@ def test_idempotent_resolve(iso_dirs):
     assert r2["reason"] == "already resolved"
     # close value stays at the first resolution
     assert PredictionLog().get(date.today().isoformat())["actual_close"] == 725.0
+
+
+def test_format_resolved_message_correct(iso_dirs):
+    _seed_prediction("bullish", entry=720.0)
+    OutcomeResolver(polygon_client=FakePolygon(close=725.0)).resolve_today()
+    msg = format_resolved_message(PredictionLog().get(date.today().isoformat()))
+    assert "CORRECT" in msg
+    assert "bullish" in msg
+    assert "$720.00" in msg
+    assert "$725.00" in msg
+    assert "+0.69%" in msg
+
+
+def test_format_resolved_message_wrong(iso_dirs):
+    _seed_prediction("bullish", entry=720.0)
+    OutcomeResolver(polygon_client=FakePolygon(close=710.0)).resolve_today()
+    msg = format_resolved_message(PredictionLog().get(date.today().isoformat()))
+    assert "WRONG" in msg
+    assert "-1.39%" in msg
+
+
+def test_format_resolved_message_skip(iso_dirs):
+    _seed_prediction("neutral", entry=720.0, tradeable=False)
+    OutcomeResolver(polygon_client=FakePolygon(close=720.0)).resolve_today()
+    msg = format_resolved_message(PredictionLog().get(date.today().isoformat()))
+    assert "skip day" in msg
+
+
+def test_scheduler_job_pings_post_fn(iso_dirs):
+    _seed_prediction("bullish", entry=720.0)
+    captured = []
+    job_outcome_resolver(
+        polygon_client=FakePolygon(close=725.0),
+        post_fn=lambda body: captured.append(body),
+    )
+    assert len(captured) == 1
+    assert "CORRECT" in captured[0]
+
+
+def test_scheduler_job_skips_post_fn_when_unresolved(iso_dirs):
+    # No prediction seeded -> resolve fails -> post_fn should not fire
+    captured = []
+    job_outcome_resolver(
+        polygon_client=FakePolygon(close=725.0),
+        post_fn=lambda body: captured.append(body),
+    )
+    assert captured == []
 
 
 def test_snapshots_open_paper_trade(iso_dirs):
