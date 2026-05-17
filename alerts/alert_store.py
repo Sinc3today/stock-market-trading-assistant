@@ -289,6 +289,30 @@ def get_journal_entries(alert_id: str) -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
 
 
+def get_all_journal_entries(limit: int = 50) -> list[dict]:
+    """
+    Cross-alert journal feed for the /journal page.
+
+    Returns the most recent `limit` entries joined with their alert's
+    ticker, regime, and direction so the UI can render context without
+    a second query per row.
+    """
+    with _lock, _connect() as conn:
+        cur = conn.execute(
+            """
+            SELECT j.id, j.alert_id, j.took_trade, j.direction_agree,
+                   j.notes, j.outcome, j.pnl, j.created_at,
+                   a.ticker, a.regime, a.direction
+              FROM journal_entries j
+              LEFT JOIN alerts a ON a.alert_id = j.alert_id
+             ORDER BY j.created_at DESC
+             LIMIT ?
+            """,
+            (int(limit),),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
 # ─────────────────────────────────────────
 # CHAT
 # ─────────────────────────────────────────
@@ -323,3 +347,31 @@ def get_chat_history(alert_id: str) -> list[dict]:
             (alert_id,),
         )
         return [{"role": r["role"], "content": r["content"]} for r in cur.fetchall()]
+
+
+def get_alerts_with_chat(limit: int = 50) -> list[dict]:
+    """
+    Cross-alert chat feed for the /chats page.
+
+    One row per alert that has at least one chat message, ordered by
+    the most-recent message. Includes message count and last message
+    preview so the UI can render the list without N+1 queries.
+    """
+    with _lock, _connect() as conn:
+        cur = conn.execute(
+            """
+            SELECT a.alert_id, a.ticker, a.regime, a.direction, a.created_at,
+                   COUNT(c.id) AS msg_count,
+                   MAX(c.created_at) AS last_msg_at,
+                   (SELECT content FROM chat_messages
+                     WHERE alert_id = a.alert_id
+                     ORDER BY id DESC LIMIT 1) AS last_msg
+              FROM alerts a
+              JOIN chat_messages c ON c.alert_id = a.alert_id
+             GROUP BY a.alert_id
+             ORDER BY last_msg_at DESC
+             LIMIT ?
+            """,
+            (int(limit),),
+        )
+        return [dict(r) for r in cur.fetchall()]

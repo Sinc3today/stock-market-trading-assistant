@@ -21,10 +21,14 @@ import pytest
 def app_modules(monkeypatch, tmp_path):
     """
     Reload alert_store + web_app against a fresh tmp DB so every test
-    starts with empty tables.
+    starts with empty tables. Also redirect LOG_DIR so TradeRecorder
+    writes its trades.json to a per-test tmp file.
     """
     db_path = tmp_path / "alert_store.db"
     monkeypatch.setenv("ALERT_STORE_DB", str(db_path))
+
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
 
     # Drop cached imports so the new ALERT_STORE_DB env var takes effect.
     for mod in ("alerts.web_app", "alerts.alert_store"):
@@ -143,3 +147,81 @@ def test_recent_alerts_list(client, app_modules, sample_alert):
     assert r.status_code == 200
     assert "Recent Alerts" in r.text
     assert "SPY"           in r.text
+
+
+# ─────────────────────────────────────────
+# Cross-alert aggregated views
+# ─────────────────────────────────────────
+
+def test_nav_appears_on_index(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    # Nav links to all four aggregated views
+    for href in ('href="/"', 'href="/trades"', 'href="/journal"', 'href="/chats"'):
+        assert href in r.text
+
+
+def test_trades_page_empty(client):
+    r = client.get("/trades")
+    assert r.status_code == 200
+    assert "Trade History"        in r.text
+    assert "No trades recorded"   in r.text
+
+
+def test_trades_page_renders_trade(client, app_modules):
+    from journal.trade_recorder import TradeRecorder
+    tr = TradeRecorder()
+    tid = tr.log_entry(ticker="AAPL", entry_price=170.0, size=10)
+    tr.log_exit(tid, exit_price=182.0)
+
+    r = client.get("/trades")
+    assert r.status_code == 200
+    assert "AAPL"      in r.text
+    assert "WIN"       in r.text
+    # P&L formatted with sign
+    assert "+$" in r.text or "+120" in r.text
+
+
+def test_journal_page_empty(client):
+    r = client.get("/journal")
+    assert r.status_code == 200
+    assert "No journal entries yet" in r.text
+
+
+def test_journal_page_renders_entry(client, app_modules, sample_alert):
+    alert_store, _ = app_modules
+    alert_id = alert_store.save_alert(sample_alert)
+    alert_store.save_journal_entry(alert_id, {
+        "took_trade": True, "direction_agree": True,
+        "notes": "scaled in on the open",
+        "outcome": "win", "pnl": 250.0,
+    })
+
+    r = client.get("/journal")
+    assert r.status_code == 200
+    assert "SPY"                   in r.text
+    assert "scaled in on the open" in r.text
+    assert "WIN"                   in r.text
+    # The card links back to the alert detail
+    assert f'/alerts/{alert_id}' in r.text
+
+
+def test_chats_page_empty(client):
+    r = client.get("/chats")
+    assert r.status_code == 200
+    assert "No chats yet" in r.text
+
+
+def test_chats_page_renders_thread(client, app_modules, sample_alert):
+    alert_store, _ = app_modules
+    alert_id = alert_store.save_alert(sample_alert)
+    alert_store.save_chat_message(alert_id, "user",      "what's the R/R look like?")
+    alert_store.save_chat_message(alert_id, "assistant", "1.5 — workable for an iron condor.")
+
+    r = client.get("/chats")
+    assert r.status_code == 200
+    assert "SPY"                                       in r.text
+    assert "2 messages"                                in r.text
+    # Last message preview (assistant's)
+    assert "workable for an iron condor"               in r.text
+    assert f'/alerts/{alert_id}'                       in r.text

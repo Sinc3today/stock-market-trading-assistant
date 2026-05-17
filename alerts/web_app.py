@@ -37,6 +37,7 @@ from pydantic import BaseModel
 
 import config
 from alerts import alert_store
+from journal.trade_recorder import TradeRecorder
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
@@ -203,6 +204,24 @@ def _ask_claude(alert: dict, user_message: str, history: list[dict]) -> str:
 # HTML  (single-string, no templates)
 # ─────────────────────────────────────────
 
+_NAV_CSS = """
+.nav{position:sticky;top:0;z-index:10;background:#0d1117;
+     border-bottom:1px solid #30363d;margin:-1rem -1rem 1rem;padding:.6rem 1rem;
+     display:flex;gap:.4rem;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.nav a{flex:0 0 auto;color:#8b949e;text-decoration:none;padding:.35rem .75rem;
+       border-radius:6px;font-size:.85rem;font-weight:500;white-space:nowrap}
+.nav a:hover{color:#c9d1d9;background:#161b22}
+.nav a.active{color:#fff;background:#1f6feb}
+.pnl-pos{color:#3fb950}
+.pnl-neg{color:#f85149}
+.pnl-zero{color:#8b949e}
+.status-open{background:#1f3a5f;color:#58a6ff;border:1px solid #1f6feb}
+.status-win{background:#0f3a1f;color:#3fb950;border:1px solid #238636}
+.status-loss{background:#3a1212;color:#f85149;border:1px solid #b62324}
+.status-be{background:#3a2f0f;color:#d29922;border:1px solid #9e6a03}
+.status-auto{background:#2d1b3d;color:#bc8cff;border:1px solid #6e40c9}
+"""
+
 _INDEX_CSS = """
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
@@ -216,7 +235,7 @@ h1{font-size:1.4rem;margin-bottom:1rem;color:#58a6ff}
 .badge{display:inline-block;padding:.1rem .5rem;border-radius:4px;font-size:.75rem;
        background:#21262d;border:1px solid #30363d;margin-right:.25rem}
 .empty{text-align:center;color:#8b949e;padding:3rem 0}
-"""
+""" + _NAV_CSS
 
 _DETAIL_CSS = _INDEX_CSS + """
 .section{background:#161b22;border:1px solid #30363d;border-radius:8px;
@@ -257,10 +276,41 @@ def _esc(v: Any) -> str:
     return html.escape(str(v if v is not None else "—"))
 
 
+_NAV_LINKS = [
+    ("alerts",  "/",        "Alerts"),
+    ("trades",  "/trades",  "Trades"),
+    ("journal", "/journal", "Journal"),
+    ("chats",   "/chats",   "Chats"),
+]
+
+
+def _render_nav(active: str) -> str:
+    items = []
+    for key, href, label in _NAV_LINKS:
+        cls = "active" if key == active else ""
+        items.append(f'<a href="{href}" class="{cls}">{label}</a>')
+    return f'<nav class="nav">{"".join(items)}</nav>'
+
+
+def _render_page(title: str, heading: str, body: str, css: str, active_nav: str) -> str:
+    """Shared HTML wrapper: head + nav bar + page body."""
+    return f"""<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{html.escape(title)}</title>
+<style>{css}</style>
+</head><body>
+{_render_nav(active_nav)}
+<h1>{html.escape(heading)}</h1>
+{body}
+</body></html>"""
+
+
 def _render_index(alerts: list[dict]) -> str:
     """Recent-alerts list view."""
     if not alerts:
-        cards = '<div class="empty">No alerts yet. They appear here when scanners fire.</div>'
+        body = '<div class="empty">No alerts yet. They appear here when scanners fire.</div>'
     else:
         rows = []
         for a in alerts:
@@ -277,18 +327,141 @@ def _render_index(alerts: list[dict]) -> str:
     <span class="muted">{created} UTC</span>
   </div>
 </a>''')
-        cards = "\n".join(rows)
+        body = "\n".join(rows)
 
-    return f"""<!doctype html>
-<html><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Trading Assistant - Alerts</title>
-<style>{_INDEX_CSS}</style>
-</head><body>
-<h1>Recent Alerts</h1>
-{cards}
-</body></html>"""
+    return _render_page(
+        title       = "Trading Assistant - Alerts",
+        heading     = "Recent Alerts",
+        body        = body,
+        css         = _INDEX_CSS,
+        active_nav  = "alerts",
+    )
+
+
+def _trade_status(trade: dict) -> tuple[str, str]:
+    """(label, css class) for a trade outcome."""
+    outcome = (trade.get("outcome") or "open").lower()
+    if outcome == "win":       return ("WIN",      "status-win")
+    if outcome == "loss":      return ("LOSS",     "status-loss")
+    if outcome == "breakeven": return ("BE",       "status-be")
+    return ("OPEN", "status-open")
+
+
+def _render_trades(trades: list[dict]) -> str:
+    """Cross-trade list view."""
+    if not trades:
+        body = '<div class="empty">No trades recorded yet.</div>'
+    else:
+        rows = []
+        # Newest first — trades.json is naturally append order.
+        for t in reversed(trades):
+            ticker    = _esc(t.get("ticker") or "?")
+            direction = _esc(t.get("direction") or "")
+            strategy  = _esc((t.get("strategy") or t.get("trade_type") or "").replace("_", " "))
+            entry_ts  = _esc((t.get("entry_timestamp") or t.get("entry_date") or "")[:19].replace("T", " "))
+            pnl       = t.get("pnl_dollars")
+            pnl_cls   = "pnl-pos" if (pnl or 0) > 0 else "pnl-neg" if (pnl or 0) < 0 else "pnl-zero"
+            pnl_str   = f"${pnl:+,.2f}" if isinstance(pnl, (int, float)) else "—"
+            label, status_cls = _trade_status(t)
+            # AUTO-PAPER badge for bot-generated paper trades
+            notes_entry = t.get("notes_entry") or ""
+            auto_badge = (
+                '<span class="badge status-auto">AUTO-PAPER</span>'
+                if "[AUTO-PAPER]" in notes_entry else ""
+            )
+            rows.append(f'''
+<div class="alert-card">
+  <div><b>{ticker}</b> &middot; {direction} &middot; {strategy}</div>
+  <div class="alert-row">
+    <span>
+      <span class="badge {status_cls}">{label}</span>
+      {auto_badge}
+    </span>
+    <span class="{pnl_cls}"><b>{pnl_str}</b></span>
+  </div>
+  <div class="muted" style="margin-top:.25rem">{entry_ts}</div>
+</div>''')
+        body = "\n".join(rows)
+
+    return _render_page(
+        title       = "Trading Assistant - Trades",
+        heading     = "Trade History",
+        body        = body,
+        css         = _INDEX_CSS,
+        active_nav  = "trades",
+    )
+
+
+def _render_journal(entries: list[dict]) -> str:
+    """Cross-alert journal feed."""
+    if not entries:
+        body = '<div class="empty">No journal entries yet. Add one from any alert page.</div>'
+    else:
+        rows = []
+        for j in entries:
+            ticker  = _esc(j.get("ticker") or "—")
+            regime  = _esc(j.get("regime") or "")
+            took    = "Took" if j.get("took_trade") else "Skipped"
+            outcome = (j.get("outcome") or "open").lower()
+            _, status_cls = _trade_status({"outcome": outcome})
+            pnl     = j.get("pnl")
+            pnl_cls = "pnl-pos" if (pnl or 0) > 0 else "pnl-neg" if (pnl or 0) < 0 else "pnl-zero"
+            pnl_str = f"${pnl:+,.2f}" if isinstance(pnl, (int, float)) else ""
+            notes   = _esc((j.get("notes") or "")[:200])
+            created = _esc((j.get("created_at") or "")[:19].replace("T", " "))
+            aid     = html.escape(j.get("alert_id") or "")
+            rows.append(f'''
+<a class="alert-card" href="/alerts/{aid}">
+  <div><b>{ticker}</b> &middot; {took} &middot; <span class="badge {status_cls}">{html.escape(outcome.upper())}</span>
+       {f'<span class="{pnl_cls}"><b>{pnl_str}</b></span>' if pnl_str else ''}</div>
+  <div class="muted" style="margin-top:.25rem">{notes}</div>
+  <div class="alert-row">
+    <span class="badge">{regime}</span>
+    <span class="muted">{created} UTC</span>
+  </div>
+</a>''')
+        body = "\n".join(rows)
+
+    return _render_page(
+        title       = "Trading Assistant - Journal",
+        heading     = "Journal",
+        body        = body,
+        css         = _INDEX_CSS,
+        active_nav  = "journal",
+    )
+
+
+def _render_chats(threads: list[dict]) -> str:
+    """Cross-alert chat threads list."""
+    if not threads:
+        body = '<div class="empty">No chats yet. Start one from any alert page.</div>'
+    else:
+        rows = []
+        for c in threads:
+            ticker  = _esc(c.get("ticker") or "—")
+            regime  = _esc(c.get("regime") or "")
+            count   = int(c.get("msg_count") or 0)
+            last    = _esc((c.get("last_msg") or "")[:140])
+            last_at = _esc((c.get("last_msg_at") or "")[:19].replace("T", " "))
+            aid     = html.escape(c.get("alert_id") or "")
+            rows.append(f'''
+<a class="alert-card" href="/alerts/{aid}">
+  <div><b>{ticker}</b> &middot; {count} message{'s' if count != 1 else ''}</div>
+  <div class="muted" style="margin-top:.25rem">{last}</div>
+  <div class="alert-row">
+    <span class="badge">{regime}</span>
+    <span class="muted">{last_at} UTC</span>
+  </div>
+</a>''')
+        body = "\n".join(rows)
+
+    return _render_page(
+        title       = "Trading Assistant - Chats",
+        heading     = "Chat Threads",
+        body        = body,
+        css         = _INDEX_CSS,
+        active_nav  = "chats",
+    )
 
 
 def _render_detail(alert: dict, journal: list[dict], chat: list[dict]) -> str:
@@ -354,7 +527,7 @@ def _render_detail(alert: dict, journal: list[dict], chat: list[dict]) -> str:
 <title>Alert {html.escape(aid)} - Trading Assistant</title>
 <style>{_DETAIL_CSS}</style>
 </head><body>
-
+{_render_nav("alerts")}
 <h1>Alert {html.escape(aid)}</h1>
 <div class="muted" style="margin-bottom:1rem">{created} UTC</div>
 
@@ -523,6 +696,27 @@ def index():
     """Recent alerts list."""
     alerts = alert_store.get_recent_alerts(limit=20)
     return HTMLResponse(_render_index(alerts))
+
+
+@app.get("/trades", response_class=HTMLResponse)
+def trades_page():
+    """Cross-trade history from TradeRecorder."""
+    trades = TradeRecorder().get_all_trades()
+    return HTMLResponse(_render_trades(trades))
+
+
+@app.get("/journal", response_class=HTMLResponse)
+def journal_page():
+    """Cross-alert journal feed."""
+    entries = alert_store.get_all_journal_entries(limit=50)
+    return HTMLResponse(_render_journal(entries))
+
+
+@app.get("/chats", response_class=HTMLResponse)
+def chats_page():
+    """List of alerts that have any chat history, newest activity first."""
+    threads = alert_store.get_alerts_with_chat(limit=50)
+    return HTMLResponse(_render_chats(threads))
 
 
 @app.get("/alerts/{alert_id}", response_class=HTMLResponse)
