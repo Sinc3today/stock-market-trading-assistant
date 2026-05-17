@@ -43,6 +43,7 @@ from loguru import logger
 from journal.plan_logger      import PlanLogger
 from journal.trade_recorder   import TradeRecorder
 from learning.knowledge_base  import KnowledgeBase
+from learning.portfolio_greeks import PortfolioGreeks
 from learning.predictions     import PredictionLog
 from signals                  import macro_runner
 
@@ -173,6 +174,8 @@ class MacroChat:
         recent_t   = list(reversed(trades))[:TRADES_RECENT_N]
         pred_acc   = self._safe(lambda: self.predictions.accuracy(PREDICTIONS_WINDOW)) or {}
 
+        greeks = self._safe(lambda: PortfolioGreeks(trade_recorder=self.trades).compute()) or {}
+
         return {
             "today":              today_iso,
             "morning_brief":      plan,
@@ -180,6 +183,7 @@ class MacroChat:
             "sector_breadth":     sector,
             "events_next_48h":    events,
             "earnings_next_7d":   earnings,
+            "portfolio_greeks":   greeks,
             "kb_recent":          kb_recent,
             "recent_trades":      recent_t,
             "prediction_accuracy": pred_acc,
@@ -208,6 +212,9 @@ class MacroChat:
         ern_n = len(ctx.get("earnings_next_7d") or [])
         if ern_n:
             bits.append(f"earnings {ern_n}/7d")
+        gk = ctx.get("portfolio_greeks") or {}
+        if gk.get("open_trade_count"):
+            bits.append(f"Δ {(gk.get('total') or {}).get('delta', 0):+.0f}")
         bits.append(f"KB {kb_n}/30d")
         bits.append(f"trades {tr_n}")
         if pa.get("sample"):
@@ -324,6 +331,17 @@ class MacroChat:
                 f"- [{e.get('date')} | {e.get('category')} | conf {e.get('confidence', 0):.2f}] "
                 f"{(e.get('claim') or '')[:240]}"
             )
+
+        greeks = ctx.get("portfolio_greeks") or {}
+        total  = greeks.get("total") or {}
+        parts += [
+            "",
+            "## PORTFOLIO GREEKS (open positions)",
+            f"  open_trades: {greeks.get('open_trade_count', 0)}",
+            f"  total_delta: {total.get('delta', 0)}  (share-equivalents)",
+            f"  total_theta: {total.get('theta', 0)}  (dollars/day)",
+            f"  total_vega:  {total.get('vega', 0)}",
+        ]
 
         parts += [
             "",

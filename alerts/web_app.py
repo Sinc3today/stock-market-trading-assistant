@@ -43,6 +43,7 @@ from journal.plan_logger import PlanLogger
 from signals import macro_runner
 from data.earnings_calendar import EarningsCalendar
 from data import backtest_summary
+from learning.portfolio_greeks import PortfolioGreeks
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
@@ -841,7 +842,8 @@ def _render_today(plan: dict | None) -> str:
 
 
 def _render_macro(vix: dict | None, sector: dict | None,
-                  earnings: list[dict] | None = None) -> str:
+                  earnings: list[dict] | None = None,
+                  greeks: dict | None = None) -> str:
     """Today's macro snapshot — VIX term structure + sector breadth."""
 
     # ── VIX section ────────────────────────────
@@ -936,7 +938,57 @@ def _render_macro(vix: dict | None, sector: dict | None,
             '</div>'
         )
 
-    body = vix_html + sector_html + earnings_html
+    # ── Portfolio Greeks panel ───────────────────
+    if greeks and greeks.get("open_trade_count"):
+        t = greeks.get("total") or {}
+        d  = t.get("delta", 0); g  = t.get("gamma", 0)
+        th = t.get("theta", 0); v  = t.get("vega", 0)
+        delta_cls = "pnl-pos" if d > 0 else "pnl-neg" if d < 0 else "pnl-zero"
+        theta_cls = "pnl-pos" if th > 0 else "pnl-neg" if th < 0 else "pnl-zero"
+        def _pos_row(p):
+            warn = p.get("warning")
+            warn_html = f' · ⚠ {_esc(warn)}' if warn else ''
+            return (
+                f'<div style="padding:.4rem 0;border-bottom:1px solid #21262d">'
+                f'<div style="display:flex;justify-content:space-between">'
+                f'<b>{_esc(p.get("ticker"))} · {_esc(p.get("strategy") or "")}</b>'
+                f'<span class="muted">{p.get("contracts")}c</span></div>'
+                f'<div class="muted" style="font-size:.8rem;margin-top:.15rem">'
+                f'Δ {p.get("delta", 0):+.1f} · Θ {p.get("theta", 0):+.1f} · '
+                f'V {p.get("vega", 0):+.1f}{warn_html}'
+                f'</div></div>'
+            )
+        rows = "".join(_pos_row(p) for p in (greeks.get("positions") or []))
+        skipped_note = (
+            f'<div class="muted" style="font-size:.75rem;margin-top:.4rem">'
+            f'{greeks.get("skipped_legs")} leg(s) un-priced (legacy positions)</div>'
+            if greeks.get("skipped_legs") else ""
+        )
+        greeks_html = f'''
+<div class="alert-card">
+  <div><b>Portfolio Greeks</b>
+       <span class="muted" style="float:right">{greeks.get("open_trade_count")} open</span></div>
+  <div class="grid" style="margin-top:.5rem">
+    <div><span>Total Δ (delta)</span><b class="{delta_cls}">{d:+.1f}</b></div>
+    <div><span>Total Θ (theta/day)</span><b class="{theta_cls}">{th:+.1f}</b></div>
+    <div><span>Total V (vega)</span><b>{v:+.1f}</b></div>
+    <div><span>Total Γ (gamma)</span><b>{g:+.2f}</b></div>
+  </div>
+  <div style="margin-top:.6rem">{rows or '<div class="muted">No priceable positions yet.</div>'}</div>
+  {skipped_note}
+</div>'''
+    elif greeks is not None:
+        greeks_html = (
+            '<div class="alert-card">'
+            '<div><b>Portfolio Greeks</b></div>'
+            '<div class="muted" style="margin-top:.5rem">'
+            'No open positions yet. Greeks aggregate once paper trades fill.</div>'
+            '</div>'
+        )
+    else:
+        greeks_html = ""
+
+    body = vix_html + sector_html + earnings_html + greeks_html
     return _render_page(
         title       = "Trading Assistant - Macro",
         heading     = "Macro Snapshot",
@@ -1236,17 +1288,20 @@ def chats_page():
 
 @app.get("/macro", response_class=HTMLResponse)
 def macro_page():
-    """VIX term structure + sector breadth + watchlist earnings snapshot."""
+    """VIX term structure + sector breadth + earnings + portfolio Greeks."""
     vix      = macro_runner.get_latest_vix()
     sector   = macro_runner.get_latest_sector()
-    # Earnings: read from cache only (don't trigger a per-page Polygon refresh).
-    # The daily 08:50 ET job populates the cache; in tests this returns [].
     earnings = None
     try:
         earnings = EarningsCalendar(polygon_client=None).get_upcoming(days=14)
     except Exception:
         earnings = None
-    return HTMLResponse(_render_macro(vix, sector, earnings))
+    greeks = None
+    try:
+        greeks = PortfolioGreeks().compute()
+    except Exception:
+        greeks = None
+    return HTMLResponse(_render_macro(vix, sector, earnings, greeks))
 
 
 @app.get("/today", response_class=HTMLResponse)
