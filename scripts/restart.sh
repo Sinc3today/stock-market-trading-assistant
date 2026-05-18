@@ -23,10 +23,16 @@ LOG_FILE="/tmp/smta_main.log"
 HEALTH_URL="http://127.0.0.1:8002/health"
 WAIT_SECONDS=5
 
+# Scope the kill pattern to THIS repo's venv. The naive
+# `python.*main\.py` also matched ComfyUI's main.py on the same host
+# and SIGTERM'd it on 2026-05-18 — never widen this without checking
+# every other `main.py` running on the box.
+MATCH_PATTERN="$REPO_ROOT/\\.venv/bin/python.*(main\\.py|alerts\\.web_app)"
+
 cd "$REPO_ROOT"
 
-echo "▶ Looking for running main.py / uvicorn …"
-PIDS=$(pgrep -f "python.*main\.py|uvicorn alerts\.web_app" || true)
+echo "▶ Looking for running main.py / uvicorn (scoped to $REPO_ROOT) …"
+PIDS=$(pgrep -f "$MATCH_PATTERN" || true)
 if [[ -n "$PIDS" ]]; then
   echo "  Found: $PIDS"
   echo "  Sending SIGTERM …"
@@ -36,11 +42,11 @@ if [[ -n "$PIDS" ]]; then
   # Wait up to WAIT_SECONDS for graceful exit
   for i in $(seq 1 $WAIT_SECONDS); do
     sleep 1
-    STILL=$(pgrep -f "python.*main\.py|uvicorn alerts\.web_app" || true)
+    STILL=$(pgrep -f "$MATCH_PATTERN" || true)
     [[ -z "$STILL" ]] && break
   done
 
-  STILL=$(pgrep -f "python.*main\.py|uvicorn alerts\.web_app" || true)
+  STILL=$(pgrep -f "$MATCH_PATTERN" || true)
   if [[ -n "$STILL" ]]; then
     echo "  Forcing SIGKILL on stragglers: $STILL"
     # shellcheck disable=SC2086
@@ -52,7 +58,7 @@ else
 fi
 
 echo "▶ Launching main.py …"
-nohup .venv/bin/python main.py > "$LOG_FILE" 2>&1 &
+nohup "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/main.py" > "$LOG_FILE" 2>&1 &
 NEW_PID=$!
 echo "  Started: PID $NEW_PID  (log: $LOG_FILE)"
 
