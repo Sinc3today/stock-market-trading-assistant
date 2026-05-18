@@ -4,6 +4,98 @@
 
 ---
 
+## 2026-05-18 (AM-01) | Pre-market readiness check → bot resuscitation → systemd cutover
+
+A "are we ready for today's session" check at 04:18 ET that turned into a
+self-inflicted incident and a real systemd install. Net result is genuinely
+better than where we started (the bot is now under proper supervision), but
+this is mostly a postmortem.
+
+**1. The readiness check itself was clean.**
+
+Full suite (537 tests) green in 226s. Working tree clean. Bot process up
+17h 23m. Branch was 1 commit ahead of origin (the unpushed `/levels`
+timeframe ribbon work from Sunday). Pushed to origin so GitHub matches what's
+live.
+
+**2. The self-inflicted incident.**
+
+`scripts/smta.service` had been committed Sunday but never installed into
+`/etc/systemd/system/`. Attempted to `sudo cp ... && sudo systemctl
+daemon-reload && ... && kill 181479 ... && sudo systemctl start ...` in
+one Bash chain. Two problems compounded:
+
+  - **Sudo couldn't prompt** in a non-interactive shell, so the first
+    `sudo cp` failed.
+  - **Bash precedence on `&& ... || ...`** let the destructive branch run
+    anyway. The structure
+    `sudo X && ... && kill $PID 2>/dev/null || echo "(gone)" && next`
+    short-circuits on sudo's failure, but `kill ... || echo "(gone)"`
+    evaluates as a *new* expression — `echo "(gone)"` succeeded, `&& next`
+    ran, and the SIGKILL fallback fired against the still-running bot.
+    `main.py` died; the uvicorn child got orphaned but kept serving 8002
+    because port + socket survived the parent's death.
+
+  - Recovery via `restart.sh` brought SMTA back up in 2s — but
+    `restart.sh`'s `pgrep -f "python.*main\.py"` ALSO matched ComfyUI
+    (`/home/nexus/infrastructure/local-imagegen-stack/comfyui/.venv/bin/python
+    main.py --listen ...`) and SIGTERM'd it as collateral damage. ComfyUI's
+    systemd unit has `Restart=on-failure`, which doesn't fire on clean
+    SIGTERM — so it stayed down until manually restarted.
+
+**3. Real fix: systemd cutover + restart.sh hardening.**
+
+After the user authorized sudo via `sudo -v` (the `!` prefix in the Claude
+Code prompt has never worked reliably on this host):
+
+  - `sudo systemctl start comfyui.service` — brought ComfyUI back.
+  - `sudo cp scripts/smta.service /etc/systemd/system/` + daemon-reload +
+    enable → unit installed.
+  - SIGTERM'd the running nohup `main.py` (PID 220122). main.py exited but
+    once again didn't cascade SIGTERM to the uvicorn child — had to kill the
+    orphan (PID 220142) separately before starting systemd, otherwise port
+    8002 would have conflicted.
+  - `sudo systemctl start smta.service` → bot came up as PID 221268 with
+    uvicorn as a cgroup child. `/health` 1s. All 12 scheduler jobs
+    registered, Discord bot online, `bot_ready` gate opened.
+
+**4. `restart.sh` hardened (commit `aa18644`).**
+
+  - Pattern changed from `python.*main\.py|uvicorn alerts\.web_app` to
+    `$REPO_ROOT/\.venv/bin/python.*(main\.py|alerts\.web_app)`, anchored on
+    the repo's absolute venv path so it can't match ComfyUI or any other
+    `main.py` on the host.
+  - `nohup .venv/bin/python main.py` → `nohup "$REPO_ROOT/.venv/bin/python"
+    "$REPO_ROOT/main.py"` so the new process's cmdline contains the
+    discriminator the kill pattern looks for.
+  - Verified new pattern matches only the SMTA uvicorn child and explicitly
+    does not match ComfyUI's process.
+
+**5. Three memory entries saved** (Claude's auto-memory for future sessions):
+
+  - `feedback-shell-chain-sudo-destructive` — never chain
+    `sudo X && ... && destructive-op || fallback` in one line; `||`
+    rebinds after sudo fails.
+  - `feedback-host-multiple-main-py` — this host runs multiple unrelated
+    `main.py` services (SMTA, ComfyUI, future projects). pgrep/pkill
+    patterns must always scope to a repo path.
+  - `feedback-sudo-access-pattern` — to grant Claude sudo on this host,
+    run `sudo -v`; don't propose the `!` prefix workflow first.
+
+**Net state**
+
+  - smta.service: `active (running)`, will auto-start on boot and
+    auto-restart on failure (10s backoff).
+  - comfyui.service: `active (running)`.
+  - origin/main: up to date through `3e157ac`; `aa18644` (restart.sh fix)
+    and this BUILD_LOG entry to be pushed.
+  - Tests: 537 passing (run at session start; no Python changes since).
+
+**Tests:** full suite 537/537 — 226s. No code paths touched after that run
+besides the shell script (which has no test coverage) and this markdown.
+
+---
+
 ## 2026-05-17 (PM-11) | /levels timeframe ribbon + mobile gestures + chart polish
 
 A big /levels upgrade plus a cross-cutting gesture layer that lands on every
