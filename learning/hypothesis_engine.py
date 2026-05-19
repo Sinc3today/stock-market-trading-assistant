@@ -48,12 +48,13 @@ CLAUDE_MODEL   = "claude-sonnet-4-5-20250929"
 # Whitelist of (module_path, var_name) pairs the engine may target.
 # Add to this list as you make more thresholds first-class tunables.
 TUNABLE_PARAMS = {
-    ("signals.regime_detector", "ADX_TREND_MIN"):  {"type": "float", "min": 15.0, "max": 35.0},
-    ("signals.regime_detector", "VIX_CALM_MAX"):   {"type": "float", "min": 12.0, "max": 22.0},
-    ("config",                  "SCORE_ALERT_MINIMUM"):    {"type": "int", "min": 30, "max": 75},
-    ("config",                  "SCORE_HIGH_CONVICTION"):  {"type": "int", "min": 55, "max": 90},
-    ("config",                  "MIN_RISK_REWARD_RATIO"):  {"type": "float", "min": 1.0, "max": 3.0},
-    ("config",                  "IC_RANGE_THRESHOLD_PCT"): {"type": "float", "min": 1.5, "max": 4.0},
+    ("signals.regime_detector", "ADX_TREND_MIN"):          {"type": "float", "min": 15.0, "max": 35.0},
+    ("signals.regime_detector", "VIX_CALM_MAX"):           {"type": "float", "min": 12.0, "max": 22.0},
+    ("signals.regime_detector", "EXTENDED_TREND_MAX_PCT"): {"type": "float", "min": 5.0,  "max": 15.0},
+    ("config",                  "SCORE_ALERT_MINIMUM"):    {"type": "int",   "min": 30,   "max": 75},
+    ("config",                  "SCORE_HIGH_CONVICTION"):  {"type": "int",   "min": 55,   "max": 90},
+    ("config",                  "MIN_RISK_REWARD_RATIO"):  {"type": "float", "min": 1.0,  "max": 3.0},
+    ("config",                  "IC_RANGE_THRESHOLD_PCT"): {"type": "float", "min": 1.5,  "max": 4.0},
 }
 
 ENGINE_SYSTEM = """You are the trading assistant's hypothesis-generation module.

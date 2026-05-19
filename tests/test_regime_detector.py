@@ -152,6 +152,62 @@ def test_trending_high_vol_reduces_size(detector, up_df):
 
 
 # ─────────────────────────────────────────
+# ENTRY-TIMING GATE — extended-trend guard for bull puts
+# (added 2026-05-19; derived from 2026-05-18 KB entry: entered bull put
+#  at +9.3% above 200MA, SPY closed -0.19%, short strike $1.20 ITM same day.)
+# ─────────────────────────────────────────
+
+def _make_extended_uptrend_df(bars: int = 250, drift: float = 0.9) -> pd.DataFrame:
+    """Steeper uptrend than the default `up` fixture — sits well above 200MA
+    with ADX comfortably above the 25 trending threshold."""
+    rng    = np.random.default_rng(42)
+    closes = 400 + np.cumsum(rng.normal(drift, 1.2, bars))
+    return pd.DataFrame({
+        "open":   closes - 0.5,
+        "high":   closes + 1.0,
+        "low":    closes - 1.0,
+        "close":  closes,
+        "volume": rng.integers(50_000_000, 100_000_000, bars),
+    })
+
+
+def test_extended_uptrend_blocks_bull_put(detector):
+    """SPY >8% above 200MA + high IVR → skip bull put (entry-timing risk)."""
+    df     = _make_extended_uptrend_df()
+    result = detector.classify(df, vix_current=14.0, ivr_current=62)
+    assert result.metrics["ma200_dist_%"] > 8.0, (
+        f"Fixture should produce extended uptrend, "
+        f"got {result.metrics['ma200_dist_%']}% above 200MA"
+    )
+    assert result.regime    == Regime.TRENDING_UP_CALM
+    assert result.tradeable is False
+    assert "extended" in result.play.lower() or "pullback" in result.play.lower()
+    print(f"\n✅ Extended uptrend bull put blocked → {result.play}")
+
+
+def test_extended_uptrend_allows_bull_call_debit(detector):
+    """Same extended uptrend but LOW IVR (debit) → still tradeable.
+    The gate only fires on credit spreads where the short strike is exposed."""
+    df     = _make_extended_uptrend_df()
+    result = detector.classify(df, vix_current=14.0, ivr_current=22)
+    assert result.metrics["ma200_dist_%"] > 8.0
+    assert result.regime    == Regime.TRENDING_UP_CALM
+    assert result.tradeable is True
+    assert "DEBIT" in result.play.upper()
+    print(f"\n✅ Extended uptrend debit still allowed → {result.play}")
+
+
+def test_moderate_uptrend_still_allows_bull_put(detector, up_df):
+    """SPY ≤8% above 200MA + high IVR → bull put still tradeable."""
+    result = detector.classify(up_df, vix_current=14.0, ivr_current=62)
+    assert result.metrics["ma200_dist_%"] <= 8.0
+    assert result.regime    == Regime.TRENDING_UP_CALM
+    assert result.tradeable is True
+    assert "CREDIT" in result.play.upper()
+    print(f"\n✅ Moderate uptrend bull put OK → {result.play}")
+
+
+# ─────────────────────────────────────────
 # CHOPPY REGIMES
 # ─────────────────────────────────────────
 

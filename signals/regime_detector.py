@@ -85,6 +85,13 @@ ADX_TREND_MIN    = 25.0   # Above this = trending market
 TREND_MA_PERIOD  = 200
 ADX_PERIOD       = 14
 
+# Entry-timing guard for bull put credit spreads: when SPY is more than this
+# many percent above the 200MA, selling puts on the same day risks an
+# immediate mean-reversion that puts the short strike ITM before theta can
+# work. Derived from 2026-05-18 KB entry (entry at +9.3% extension closed
+# -0.19% same day; short strike $1.20 ITM by EOD).
+EXTENDED_TREND_MAX_PCT = 8.0
+
 
 # ─────────────────────────────────────────
 # DETECTOR
@@ -236,6 +243,20 @@ class RegimeDetector:
                 f"IVR {ivr_current:.0f} {'≥' if ivr_current >= 50 else '<'} 50 "
                 f"→ {'sell premium' if ivr_current >= 50 else 'buy directional'}"
             )
+            # Entry-timing guard: extended rally + bull put = short strike
+            # likely ITM by EOD even on a normal -0.2% mean-reversion day.
+            # See learning/knowledge.jsonl 2026-05-18 entry_timing entry.
+            if ivr_current >= 50 and ma_dist_pct > EXTENDED_TREND_MAX_PCT:
+                reasons.append(
+                    f"SPY {ma_dist_pct:+.1f}% above 200MA exceeds "
+                    f"{EXTENDED_TREND_MAX_PCT:.1f}% extension cap — same-day "
+                    f"reversion risk on bull put too high; wait for pullback"
+                )
+                return RegimeResult(
+                    Regime.TRENDING_UP_CALM, False,
+                    "SKIP — trend too extended for bull put (wait for pullback)",
+                    0.6, reasons, metrics,
+                )
             if ma_dist_pct < 1.5:
                 reasons.append(f"SPY only {ma_dist_pct:.1f}% above 200MA -- too close, no edge")
                 return RegimeResult(
