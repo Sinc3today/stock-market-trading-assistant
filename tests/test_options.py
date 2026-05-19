@@ -135,6 +135,54 @@ def test_iron_condor_has_max_profit(options, neutral_score):
 
 
 # ─────────────────────────────────────────
+# PREMIUM-QUALITY GATE (MIN_CREDIT_SPREAD_RR)
+# Derived from 2026-05-18 KB sizing entry — block credit spreads /
+# iron condors whose credit is too thin relative to max loss.
+# ─────────────────────────────────────────
+
+def test_credit_spread_blocked_when_rr_below_threshold(options, bullish_standard, monkeypatch):
+    """When credit/width ratio is too low → no_trade. We monkeypatch the
+    threshold high so the theoretical-math r/r (≈0.54) falls below it."""
+    from signals import options_layer as ol
+    monkeypatch.setattr(ol, "MIN_CREDIT_SPREAD_RR", 0.75)
+    result = options.analyze("AAPL", bullish_standard, 170, 182, 166, iv_rank=55)
+    assert result["tradeable"] is False
+    assert "credit not worth" in result["reason"].lower()
+    print(f"\n✅ Credit spread blocked on low r/r: {result['reason']}")
+
+
+def test_credit_spread_passes_when_rr_above_threshold(options, bullish_standard):
+    """Default MIN_CREDIT_SPREAD_RR is 0.33, theoretical math gives ≈0.54."""
+    result = options.analyze("AAPL", bullish_standard, 170, 182, 166, iv_rank=55)
+    assert result["tradeable"] is True
+    assert result["strategy"] == "credit_spread"
+    print(f"\n✅ Credit spread passes default gate: {result['strategy']}")
+
+
+def test_debit_spread_unaffected_by_credit_gate(options, bullish_standard, monkeypatch):
+    """Setting the credit-spread r/r threshold absurdly high must NOT
+    block a debit spread — the gate only applies to credit-side trades."""
+    from signals import options_layer as ol
+    monkeypatch.setattr(ol, "MIN_CREDIT_SPREAD_RR", 0.99)
+    result = options.analyze("AAPL", bullish_standard, 170, 182, 166, iv_rank=20)
+    assert result["tradeable"] is True
+    assert result["strategy"] == "debit_spread"
+    print(f"\n✅ Debit spread unaffected: {result['strategy']}")
+
+
+def test_extract_rr_float_handles_real_and_theoretical_shapes():
+    """Helper must accept both float (real chain) and 'X:1 (estimated)'
+    string (theoretical math), and return None for non-numeric labels."""
+    from signals.options_layer import OptionsLayer as OL
+    assert OL._extract_rr_float(0.45)               == 0.45
+    assert OL._extract_rr_float("0.25:1 (estimated)") == 0.25
+    assert OL._extract_rr_float("0.7:1")            == 0.7
+    assert OL._extract_rr_float("Defined by exit")  is None
+    assert OL._extract_rr_float("N/A")              is None
+    assert OL._extract_rr_float(None)               is None
+
+
+# ─────────────────────────────────────────
 # DTE + EXIT RULE TESTS
 # ─────────────────────────────────────────
 

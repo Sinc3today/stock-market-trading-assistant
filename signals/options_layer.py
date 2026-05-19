@@ -34,6 +34,14 @@ DTE_SWING_MIN     = 21
 DTE_INTRADAY_MIN  = 7
 DTE_INTRADAY_MAX  = 14
 
+# ── Risk/reward gate for premium-selling structures ──────────
+# For credit spreads and iron condors, max_profit / max_loss must be
+# at least this much for the trade to be worth taking. r/r = 0.33
+# corresponds to "credit ≥ 25% of width" (a 5-wide bull put needs at
+# least $1.25 credit). Derived from 2026-05-18 KB sizing entry: 5-wide
+# spread with $1 credit gave 20% credit/width — too poor for the risk.
+MIN_CREDIT_SPREAD_RR = 0.33
+
 
 class OptionsLayer:
     """
@@ -111,6 +119,16 @@ class OptionsLayer:
         risk_reward = real_rr or self._calculate_risk_reward(strategy, legs)
         if real_legs:
             legs = real_legs
+
+        # ── Premium-quality gate (credit spreads + iron condors) ─
+        # See MIN_CREDIT_SPREAD_RR comment near module top.
+        if strategy in ("credit_spread", "iron_condor"):
+            rr_num = self._extract_rr_float(risk_reward.get("rr_ratio"))
+            if rr_num is not None and rr_num < MIN_CREDIT_SPREAD_RR:
+                return self._no_trade(
+                    f"{strategy.replace('_', ' ').title()} r/r {rr_num:.2f} "
+                    f"below {MIN_CREDIT_SPREAD_RR:.2f} — credit not worth the risk"
+                )
 
         # ── Recommendation strength ──────────────────────────────
         rec, rec_emoji = self._build_recommendation(
@@ -309,6 +327,27 @@ class OptionsLayer:
             return round(p / l, 2) if l > 0 else 0.0
         except (TypeError, ValueError):
             return 0.0
+
+    @staticmethod
+    def _extract_rr_float(rr_value) -> float | None:
+        """
+        Pull a numeric r/r out of either the real-chain shape (float) or
+        the theoretical-math shape ("0.25:1 (estimated)" string). Returns
+        None when the value is non-numeric (e.g. "N/A", "Defined by exit")
+        so the gate skips quietly instead of crashing on single-leg or
+        unparsed payloads.
+        """
+        if rr_value is None:
+            return None
+        if isinstance(rr_value, (int, float)):
+            return float(rr_value)
+        if isinstance(rr_value, str):
+            head = rr_value.split(":", 1)[0].strip()
+            try:
+                return float(head)
+            except ValueError:
+                return None
+        return None
 
     def _build_legs(
         self,
