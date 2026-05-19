@@ -4,6 +4,114 @@
 
 ---
 
+## 2026-05-19 | Notification de-dup + first KB-driven gate + /learning page
+
+User opened the session saying yesterday's evening notifications were
+redundant — two Pushover buzzes 60 seconds apart, one asking *them* to
+journal a reflection (19:00 ET), one from Claude's self-reflection
+(19:01 ET). Bigger framing: "transition this to mainly just self
+learning for you and less about my moves since I don't have time...
+once you become a very skilled trader I will follow your footsteps."
+
+Three pieces of work, all committed and pushed.
+
+**1. Killed the 19:00 ET user-prompt reflection** (commit `cda1e2a`).
+
+  - `scheduler/spy_daily_scheduler.py` no longer defines
+    `job_spy_reflection` or `_reflection_message`, and no longer
+    registers the 19:00 cron. The 19:01 `learning_reflector` job is
+    untouched — it does the actual KB-writing self-reflection.
+  - Net result: one evening Pushover instead of two, and the bot is
+    no longer asking the user to do homework it can do itself.
+
+**2. EXTENDED_TREND_MAX_PCT — first KB-driven gate** (commit `37f25ce`).
+
+  Yesterday's 2026-05-18 reflection flagged a real pattern:
+  > *"trending_up_calm regime correctly identified macro uptrend but
+  > did not predict intraday/single-day mean reversion — regime is
+  > multi-day, not intraday"* (conf 0.80)
+
+  The bot's 2026-05-18 paper trade (739/734 bull put at SPY 739.17,
+  ADX 38.3, +9.3% above 200MA) closed -0.19% same day with the short
+  strike $1.20 ITM before any theta decay. Regime was right; entry
+  timing was wrong.
+
+  Added a new tunable in `signals/regime_detector.py`:
+  `EXTENDED_TREND_MAX_PCT = 8.0`. When SPY's distance above its 200MA
+  exceeds this AND IVR ≥ 50 (the bull-put scenario) the classifier
+  now returns `tradeable=False` with play "SKIP — trend too extended
+  for bull put (wait for pullback)". Regime label stays
+  `trending_up_calm` so downstream consumers still get the macro
+  context.
+
+  Gate is conditional on IVR ≥ 50 so a debit-spread day in the same
+  extended uptrend (no short strike at risk) remains tradeable.
+
+  Registered in `learning/hypothesis_engine.TUNABLE_PARAMS` (range
+  5.0–15.0) so Saturday's hypothesis engine can propose tweaks to
+  the 8.0 default as more outcome data accumulates. This is the key
+  point of the whole self-learning loop — the loop only learns
+  *what the engine can act on*, and yesterday's insight didn't have a
+  knob attached to it yet. Now it does.
+
+  Tests: 3 new in `tests/test_regime_detector.py`
+  (extended_uptrend_blocks_bull_put,
+  extended_uptrend_allows_bull_call_debit,
+  moderate_uptrend_still_allows_bull_put). Full regime suite 19/19.
+
+**3. `/learning` dashboard page** (commit `93b24b3`).
+
+  Distinct from `/backtest` (which is historical 5-yr replay). The new
+  page shows what the bot has actually done in production:
+
+  - Header strip: 60-day prediction accuracy, paper P&L, paper win
+    rate, open vs. closed paper position counts.
+  - Recent predictions table (last 14) — date, regime, direction,
+    confidence, actual move %, outcome badge (✓/✗/pending/skip).
+  - Open paper positions (whatever the bot has working right now).
+  - Closed paper trades (last 15) with per-trade P&L *and* a
+    cumulative-P&L column, so the "is it getting better?" answer is
+    visible at a glance.
+  - Recent KB entries (last 10).
+
+  Two new pure-read helpers in `data/backtest_summary.py`:
+  `recent_predictions(n)` normalises PredictionLog rows for the
+  template, and `paper_trade_stats()` filters TradeRecorder by the
+  `[AUTO-PAPER]` tag from `learning.paper_broker.AUTO_TAG` (so manual
+  trades don't pollute the bot's track record). Both wrap their
+  external deps in try/except — the dashboard never raises.
+
+  Nav: added "Learning" entry to the Tools group, next to Backtest.
+
+  Tests: 4 new in `test_backtest_summary.py`
+  (recent_predictions_empty, recent_predictions_normalises_rows,
+  paper_trade_stats_empty, paper_trade_stats_only_counts_auto_tagged,
+  paper_trade_stats_aggregates_closed). Full suite 545 passing.
+
+**Pre-market readiness check (end of session)**
+
+  - Full suite: 545/545 passing (was 537 → +8 new tests across the
+    three features), 222s runtime.
+  - Restarted `smta.service` to pick up the new code (the gate was
+    important to get live before the next 09:15 ET morning brief).
+    Confirmed via `journalctl` and `/health` that systemd loaded the
+    new build cleanly.
+  - Scheduler job list verified — `spy_reflection` is gone;
+    `learning_reflector` remains; all other jobs (premarket, close,
+    paper_broker, outcome_resolver, expiry_resolver, hypothesis_*,
+    off_hours) still registered.
+  - `/learning` reachable on port 8002 with yesterday's bull put
+    open paper position rendering correctly and prediction
+    accuracy 0/1 reflecting yesterday's wrong call.
+  - ComfyUI still up (paranoia check, given last session's incident).
+
+**Tests:** full suite 545/545 — 222s. Three commits, all pushed.
+**Next session:** watch what today's 09:15 brief decides — SPY's
+position vs. 200MA at open will tell us whether the new gate fires
+or holds.
+
+---
+
 ## 2026-05-18 (AM-01) | Pre-market readiness check → bot resuscitation → systemd cutover
 
 A "are we ready for today's session" check at 04:18 ET that turned into a
