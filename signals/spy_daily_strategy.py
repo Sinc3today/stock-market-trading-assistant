@@ -222,9 +222,9 @@ class SPYDailyStrategy:
 
     def _skip_card(self, today: date, rr: RegimeResult) -> PlayCard:
         msg = (
-            f"🚫 **SPY DAILY — NO TRADE** ({today.isoformat()})\n"
+            f"🛑 **STANDING DOWN TODAY — SPY** ({today.isoformat()})\n"
             f"Regime: `{rr.regime.value}`\n"
-            f"Reason: {rr.play}\n"
+            f"Why I'm not trading: {rr.play}\n"
             + "\n".join(f"  • {r}" for r in rr.reasons)
         )
         return PlayCard(
@@ -256,7 +256,7 @@ class SPYDailyStrategy:
     ) -> str:
         m = rr.metrics
         header = (
-            f"📈 **SPY DAILY PLAY** — {today.isoformat()}\n"
+            f"🤖 **TODAY'S PLAY — SPY** ({today.isoformat()})\n"
             f"Regime:     `{rr.regime.value}` (conf {rr.confidence:.0%})\n"
             f"Play:       **{rr.play}**\n"
             f"VIX={m.get('vix')}  "
@@ -264,7 +264,7 @@ class SPYDailyStrategy:
             f"ADX={m.get('adx')}  "
             f"SPY={m.get('spy_close')} "
             f"({m.get('ma200_dist_%'):+}% vs 200MA)\n"
-            f"\n_Why this play:_\n"
+            f"\n_My reasoning:_\n"
         )
         reasons = "\n".join(f"  • {r}" for r in rr.reasons)
         return header + reasons + opts.get("discord_addon", "")

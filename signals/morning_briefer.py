@@ -47,8 +47,12 @@ CLAUDE_MODEL   = "claude-sonnet-4-5-20250929"
 
 BRIEFER_SYSTEM = """You are the trading assistant's morning brief synthesizer.
 
+You speak IN THE FIRST PERSON as the trading bot. The reader is the bot's
+owner who is watching — not executing — the bot's plays. The bot is the
+one taking the trade; the brief is the bot explaining its own intent.
+
 You receive:
-- Today's regime classification + recommended SPY options play
+- Today's regime classification + the bot's recommended SPY options play
 - VIX term structure (flag, contango ratio)
 - Sector breadth (signal, leaders, laggards from yesterday)
 - Today's high-impact events (FOMC, CPI, NFP)
@@ -56,23 +60,28 @@ You receive:
 You must return ONLY a JSON object with these four fields:
 
 {
-  "plain_summary":    "<= 180 chars. Tells the trader IN PLAIN ENGLISH what today's setup is and why this play makes sense. No jargon.",
-  "narrative":        "<= 240 chars. Slightly more technical thesis for the Discord card. May reference indicator names.",
-  "skip_conditions":  ["plain-English skip rule 1", "...up to 3 items"],
-  "watch_conditions": ["plain-English contingency 1", "...up to 3 items"]
+  "plain_summary":    "<= 180 chars. The bot's plan in plain English: what it's doing and why. Speak as 'I'. No jargon.",
+  "narrative":        "<= 240 chars. Slightly more technical first-person thesis for the Discord card. May reference indicator names.",
+  "skip_conditions":  ["first-person skip rule 1 — 'I'll skip if ...'", "...up to 3 items"],
+  "watch_conditions": ["first-person contingency 1 — 'I'll take profit if ...'", "...up to 3 items"]
 }
 
-LANGUAGE RULES — this is the most important thing:
-- WRITE FOR A SMART NON-EXPERT. The trader knows markets but isn't reading academic finance papers.
+VOICE — this is the most important thing:
+- FIRST PERSON, BOT VOICE. "I'm selling a bull put...", "I'll skip if...", "I'll close if...". Never "you" / "the trader" / "consider".
+- The owner is watching the bot trade. Don't direct them; describe what the bot will do.
+
+LANGUAGE RULES:
+- WRITE FOR A SMART NON-EXPERT. The owner knows markets but isn't reading academic finance papers.
 - PLAIN ENGLISH ONLY in `plain_summary`, `skip_conditions`, `watch_conditions`. NO jargon: no "ADX", "IVR", "contango", "backwardation", "dispersion", "VIX3M", "delta", "theta", "regime", "trending_up_calm".
 - Reference ACTUAL PRICES not indicator levels. Say "if SPY opens below $735" not "if SPY gaps down >0.5%".
 - Say "the market" not "SPY", "stock prices" not "the index", "volatility" not "VIX", "sector rotation" not "dispersion".
-- Action-first phrasing: start skip conditions with "Skip if", "Don't take this trade if", "Avoid if". Start watch conditions with verbs: "Take profit when", "Tighten the spread if", "Roll up strikes if".
+- Skip conditions start with "I'll skip if" / "I'll stand down if" / "I won't take this if".
+- Watch conditions start with "I'll close at" / "I'll roll if" / "I'll take profit when".
 - If you must reference an indicator (rare), explain what it means in the same sentence.
 
 OTHER RULES:
-- If the macro context CONTRADICTS the recommended play, flag that in skip_conditions in plain terms ("Skip — volatility says people are scared, not calm").
-- If there's a high-impact event today (FOMC, CPI), skip_conditions should mention skipping until after the release.
+- If the macro context CONTRADICTS the recommended play, flag that in skip_conditions in plain first-person terms ("I'll skip — volatility says people are scared, not calm").
+- If there's a high-impact event today (FOMC, CPI), skip_conditions should mention waiting until after the release.
 - Do NOT recommend a different play -- the regime detector has already chosen. Your job is to add context, not override.
 - Do NOT include disclaimers, intros, or markdown. Pure JSON only.
 """
@@ -410,29 +419,29 @@ class MorningBriefer:
         tradeable = base.get("tradeable", False)
         if not tradeable:
             return (
-                f"🛑 No trade today\n"
+                f"🛑 Standing down today\n"
                 f"{plain_summary or base.get('play', '?')}"
             )[:1024]
 
-        # Plain-English action verb derived from the strategy.
+        # First-person action verb derived from the strategy.
         strategy = (opts.get("strategy") or "").lower()
         verb, emoji = {
-            "iron_condor":   ("SELL IRON CONDOR",  "🦅"),
-            "credit_spread": ("SELL CREDIT SPREAD","💰"),
-            "debit_spread":  ("BUY DEBIT SPREAD",  "📈"),
-            "single_leg":    ("BUY SINGLE OPTION", "🎯"),
-        }.get(strategy, ("ENTER TRADE", "📊"))
+            "iron_condor":   ("Selling iron condor",  "🦅"),
+            "credit_spread": ("Selling credit spread","💰"),
+            "debit_spread":  ("Buying debit spread",  "📈"),
+            "single_leg":    ("Buying option",        "🎯"),
+        }.get(strategy, ("Taking trade", "📊"))
 
-        # Direction tag — "PUTS" / "CALLS" / "" — pulled from legs when possible.
+        # Direction tag — pulled from legs when possible.
         legs = opts.get("legs") or []
         types = {(l.get("type") or l.get("option_type") or "").lower() for l in legs if l}
         if types == {"put"}:
-            verb = verb.replace("CREDIT SPREAD", "PUT CREDIT SPREAD").replace(
-                "DEBIT SPREAD",  "PUT DEBIT SPREAD"
+            verb = verb.replace("credit spread", "put credit spread").replace(
+                "debit spread",  "put debit spread"
             )
         elif types == {"call"}:
-            verb = verb.replace("CREDIT SPREAD", "CALL CREDIT SPREAD").replace(
-                "DEBIT SPREAD",  "CALL DEBIT SPREAD"
+            verb = verb.replace("credit spread", "call credit spread").replace(
+                "debit spread",  "call debit spread"
             )
 
         lines = [f"{emoji} {verb} on SPY"]
@@ -468,7 +477,7 @@ class MorningBriefer:
 
         if skip:
             lines.append("")
-            lines.append("🚫 Skip if:")
+            lines.append("🚫 I'll skip if:")
             for s in skip[:3]:
                 lines.append(f"• {s}")
 
@@ -531,7 +540,7 @@ class MorningBriefer:
             out += "\n\n**Macro:** " + " | ".join(macro_bits)
 
         if skip:
-            out += "\n\n**Skip conditions:**\n" + "\n".join(f"• {s}" for s in skip)
+            out += "\n\n**I'll skip if:**\n" + "\n".join(f"• {s}" for s in skip)
         if watch:
-            out += "\n\n**Watch conditions:**\n" + "\n".join(f"• {w}" for w in watch)
+            out += "\n\n**I'll watch for:**\n" + "\n".join(f"• {w}" for w in watch)
         return out

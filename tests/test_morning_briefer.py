@@ -52,7 +52,7 @@ def _base_card(tradeable=True, regime="choppy_low_vol", play="Iron Condor"):
                               "rr_ratio": "0.33",
                               "recommended_dte": 14,
                               "exit_rule": "Close at 50% profit"},
-        "discord_message":  "📈 **SPY DAILY PLAY** — 2026-05-18\nRegime: choppy_low_vol",
+        "discord_message":  "🤖 **TODAY'S PLAY — SPY** (2026-05-18)\nRegime: choppy_low_vol",
         "plan_payload":     {"date": "2026-05-18", "ticker": "SPY",
                               "regime": regime, "play": play},
     }
@@ -370,7 +370,7 @@ def test_pushover_skip_card_says_no_trade(iso_logs):
         api_key=None,
     )
     msg = briefer.build_today()["pushover_message"]
-    assert "No trade today" in msg
+    assert "Standing down" in msg
     assert msg[0] == "🛑"
 
 
@@ -405,6 +405,6 @@ def test_discord_message_appended_with_thesis_and_macro(iso_logs, tmp_path):
     briefer = MorningBriefer(spy_strategy=_StubStrategy(_base_card()), api_key=None)
     brief = briefer.build_today()
     msg = brief["discord_message"]
-    assert "SPY DAILY PLAY"  in msg       # base content preserved
+    assert "TODAY'S PLAY"     in msg       # base content preserved
     assert "Thesis:"          in msg
     assert "VIX TS"           in msg
