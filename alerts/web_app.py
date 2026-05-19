@@ -910,6 +910,19 @@ def _render_learning(
     open_count    = paper.get("open") or 0
     closed_count  = paper.get("closed") or 0
 
+    # Cumulative paper-P&L sparkline (mirrors the SPY sparkline on /today).
+    # Only render when we have enough points; the helper itself bails on <2.
+    cum_series = paper.get("cumulative_pnl_series") or []
+    spark_html = ""
+    if len(cum_series) >= 2:
+        spark_svg  = _render_sparkline_svg(cum_series)
+        spark_html = (
+            '<div class="muted" style="font-size:.75rem;margin:.4rem 0 .1rem">'
+            f'Cumulative paper P&amp;L over {len(cum_series) - 1} closed trades'
+            '</div>'
+            f'{spark_svg}'
+        )
+
     summary_html = f'''
 <div class="alert-card">
   <div><b>Live Track Record</b>
@@ -922,6 +935,7 @@ def _render_learning(
     <div><span>Open paper positions</span><b>{open_count}</b></div>
     <div><span>Closed paper positions</span><b>{closed_count}</b></div>
   </div>
+  {spark_html}
 </div>'''
 
     # ── Recent predictions table ───────────────────────

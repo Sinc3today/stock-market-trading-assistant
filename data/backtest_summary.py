@@ -260,15 +260,25 @@ def paper_trade_stats() -> dict:
     wins = [t for t in closed_t if t.get("outcome") == "win"]
     pnls = [t.get("pnl_dollars") or 0.0 for t in closed_t]
 
+    # Cumulative P&L series for the sparkline on /learning. Starts at 0
+    # (the y=0 baseline before any trade closed) and appends the running
+    # total after each closed trade in chronological order.
+    cum = 0.0
+    cum_series: list[float] = [0.0]
+    for p in pnls:
+        cum += float(p or 0.0)
+        cum_series.append(round(cum, 2))
+
     return {
-        "open":          len(open_t),
-        "closed":        len(closed_t),
-        "wins":          len(wins),
-        "losses":        len(closed_t) - len(wins),
-        "win_rate_pct":  round(len(wins) / len(closed_t) * 100, 1) if closed_t else 0.0,
-        "total_pnl":     round(sum(pnls), 2),
-        "closed_trades": closed_t,
-        "open_trades":   open_t,
+        "open":               len(open_t),
+        "closed":              len(closed_t),
+        "wins":                len(wins),
+        "losses":              len(closed_t) - len(wins),
+        "win_rate_pct":        round(len(wins) / len(closed_t) * 100, 1) if closed_t else 0.0,
+        "total_pnl":           round(sum(pnls), 2),
+        "closed_trades":       closed_t,
+        "open_trades":         open_t,
+        "cumulative_pnl_series": cum_series,
     }
 
 

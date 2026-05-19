@@ -251,3 +251,30 @@ def test_paper_trade_stats_aggregates_closed(iso_logs):
     assert out["wins"] + out["losses"] == 2
     assert isinstance(out["total_pnl"], (int, float))
     assert len(out["closed_trades"]) == 2
+    # Sparkline series: starts at 0 + one point per closed trade.
+    assert out["cumulative_pnl_series"][0] == 0.0
+    assert len(out["cumulative_pnl_series"]) == 3
+    # Last point of the series matches the reported total P&L.
+    assert out["cumulative_pnl_series"][-1] == out["total_pnl"]
+
+
+def test_paper_trade_stats_cumulative_series_is_monotonic_when_all_wins(iso_logs):
+    """If every closed trade is a win, the cumulative series should be
+    strictly non-decreasing."""
+    from journal.trade_recorder import TradeRecorder
+    from learning.paper_broker  import AUTO_TAG
+    tr = TradeRecorder()
+    for i in range(3):
+        tid = tr.log_entry(
+            ticker="SPY", entry_price=1.0, size=1,
+            trade_type="credit_spread", strategy="credit_spread",
+            direction="bullish", max_loss=4.0,
+            notes=f"{AUTO_TAG} winner-{i}",
+        )
+        tr.log_exit(tid, exit_price=0.2)  # buy back cheap → profit
+
+    series = bs.paper_trade_stats()["cumulative_pnl_series"]
+    assert series[0] == 0.0
+    assert len(series) == 4
+    for a, b in zip(series, series[1:]):
+        assert b >= a, f"series not non-decreasing: {series}"
