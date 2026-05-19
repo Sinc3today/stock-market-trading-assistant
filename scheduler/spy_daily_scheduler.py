@@ -7,7 +7,6 @@ Do NOT run this as a standalone process — it integrates into main.py.
 Jobs:
     09:15 ET  Pre-market  → Build daily play, log plan, post to Discord
     16:30 ET  Close snap  → Attach SPY close price to today's plan
-    19:00 ET  Reflection  → Post your evening review prompt to Discord
 
 Integration in main.py (see bottom of this file for exact lines):
     from scheduler.spy_daily_scheduler import register_spy_jobs
@@ -127,19 +126,6 @@ def job_spy_close_snapshot(polygon_client, post_fn=None):
         logger.exception(f"SPY close snapshot failed: {e}")
 
 
-def job_spy_reflection(post_fn):
-    """
-    19:00 ET — Post evening reflection prompt to Discord.
-    5 fixed questions. Answer them in your journal, not in Discord.
-    """
-    logger.info("▶ SPY reflection ping")
-    try:
-        if post_fn:
-            post_fn(_reflection_message())
-    except Exception as e:
-        logger.exception(f"SPY reflection job failed: {e}")
-
-
 # ─────────────────────────────────────────
 # REGISTRATION — called from main.py
 # ─────────────────────────────────────────
@@ -221,40 +207,6 @@ def register_spy_jobs(
         replace_existing = True,
     )
 
-    # 19:00 ET — reflection prompt
-    scheduler.add_job(
-        func    = job_spy_reflection,
-        trigger = CronTrigger(
-            day_of_week = "mon-fri",
-            hour        = 19,
-            minute      = 0,
-            timezone    = eastern,
-        ),
-        kwargs  = {"post_fn": post_fn},
-        id      = "spy_reflection",
-        name    = "SPY Evening Reflection",
-        replace_existing = True,
-    )
-
     logger.info("✅ SPY daily jobs registered:")
     logger.info("   09:15 ET — Pre-market play")
     logger.info("   16:30 ET — Close snapshot")
-    logger.info("   19:00 ET — Reflection prompt")
-
-
-# ─────────────────────────────────────────
-# REFLECTION MESSAGE
-# ─────────────────────────────────────────
-
-def _reflection_message() -> str:
-    today = date.today().isoformat()
-    return (
-        f"🪞 **SPY Daily Reflection — {today}**\n"
-        f"_5 minutes. No skipping._\n\n"
-        f"**1.** What was today's regime call? Did price confirm it by close?\n"
-        f"**2.** Did you execute the plan or improvise? Why?\n"
-        f"**3.** If you traded: was P&L from edge, luck, or a vol move?\n"
-        f"**4.** If you skipped: was the skip justified? Any FOMO?\n"
-        f"**5.** What's your bias going into tomorrow's open?\n\n"
-        f"_Log your answers in your journal. Patterns emerge over 30+ days._"
-    )

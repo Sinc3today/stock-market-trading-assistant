@@ -404,7 +404,6 @@ if __name__ == "__main__":
         logger.info("✅ SPY daily strategy jobs registered")
         logger.info("   09:15 ET -- Pre-market play")
         logger.info("   16:30 ET -- Close snapshot")
-        logger.info("   19:00 ET -- Reflection prompt")
     except Exception as e:
         logger.error(f"SPY daily jobs failed to register: {e}")
 
