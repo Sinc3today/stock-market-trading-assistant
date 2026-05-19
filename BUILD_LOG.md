@@ -4,6 +4,135 @@
 
 ---
 
+## 2026-05-19 (PM) | Latent-bug cleanup + 2nd KB-driven gate + voice + sparkline
+
+Continuation of the morning's session — the user asked "what else
+on the agenda" and I flagged four items in priority order:
+silently-dead code I'd noticed during the AM gate work, the sizing
+KB that still had no knob attached, a tonal shift on the morning
+brief, and a cumulative P&L sparkline on /learning. We worked
+through all four.
+
+**1. Cleaned up the trending-up branch in `regime_detector.py`**
+(commit `6f2c3f5`).
+
+  The block had latent rot from prior edits — a misaligned closing
+  paren that the parser tolerated, and a "require SPY ≥2% above
+  200MA for debit spreads" rule sitting AFTER an unconditional
+  return (unreachable). Yesterday I added the
+  `EXTENDED_TREND_MAX_PCT` gate ON TOP of this fragile block, which
+  worked by accident. The fact that the self-learning loop's
+  hypothesis engine had no evidence to act on the 2.0% rule wasn't
+  a data problem; the rule didn't run.
+
+  Restructured: all skip-checks fire BEFORE play selection — VIX
+  elevated → reduced size; ma_dist < `MIN_TREND_SEPARATION_PCT` →
+  no edge; bull-put extension cap → skip; otherwise pick play by
+  IVR and return tradeable. Promoted the 1.5% near-MA threshold to
+  a named constant `MIN_TREND_SEPARATION_PCT` and registered it in
+  `TUNABLE_PARAMS` (range 0.5–3.0) so it's now actually tunable.
+
+  Added a test (`test_uptrend_too_close_to_ma200_skips`) that
+  monkeypatches the constant to force the path, since
+  trending+tight-separation conditions oppose each other in real
+  fixtures.
+
+**2. `MIN_CREDIT_SPREAD_RR` — second KB-driven gate** (commit
+`aaf76ae`).
+
+  Yesterday's 2026-05-18 reflection wrote at conf 0.75:
+  > *"5-wide bull put with $1 credit gives only 20% return for 80%
+  > risk — too poor for single-day adverse moves."*
+
+  That insight had no knob attached. Now it does.
+
+  Added `MIN_CREDIT_SPREAD_RR = 0.33` to `signals/options_layer.py`.
+  When the strategy is credit-side (credit_spread or iron_condor)
+  and the r/r (max_profit / max_loss) is below this floor,
+  `OptionsLayer.analyze()` returns `_no_trade()` with reason
+  "credit not worth the risk". 0.33 r/r ≈ credit must be at least
+  25% of width — catches yesterday's $1-on-5-wide (r/r 0.25).
+
+  Helper `_extract_rr_float()` normalises both r/r shapes the layer
+  can produce (real-chain float, theoretical "X:1 (estimated)"
+  string), returning None for non-numeric labels so the gate skips
+  quietly on single-leg payloads.
+
+  Registered in `TUNABLE_PARAMS` (range 0.20–0.75) so the hypothesis
+  engine can tune the floor.
+
+  4 new tests in `test_options.py`: gate fires below threshold,
+  default passes, debit spreads unaffected, rr-extract helper
+  handles both shapes.
+
+**3. First-person bot voice in the 09:15 morning brief** (commit
+`89ac5c8`).
+
+  Pure messaging change, no logic touched. Headers:
+  - `📈 **SPY DAILY PLAY**` → `🤖 **TODAY'S PLAY — SPY**`
+  - `🚫 **SPY DAILY — NO TRADE**` → `🛑 **STANDING DOWN TODAY — SPY**`
+  - `_Why this play:_` → `_My reasoning:_`
+
+  Discord section labels:
+  - `**Skip conditions:**`  → `**I'll skip if:**`
+  - `**Watch conditions:**` → `**I'll watch for:**`
+
+  Pushover action verbs:
+  - `SELL CREDIT SPREAD` → `Selling credit spread`
+  - `BUY DEBIT SPREAD`   → `Buying debit spread`
+  - Skip-card opener: `🛑 No trade today` → `🛑 Standing down today`
+
+  `BRIEFER_SYSTEM` prompt updated to instruct Claude to speak in
+  first person from the bot — "I'll skip if X" not "Skip if X". The
+  owner is watching the bot trade, not executing the bot's plays.
+
+**4. Cumulative paper-P&L sparkline on `/learning`** (commit
+`919c99b`).
+
+  `paper_trade_stats()` now also returns `cumulative_pnl_series` —
+  a list starting at 0.0 with the running total appended after each
+  closed AUTO-PAPER trade in chronological order. The last point
+  matches `total_pnl` by construction (asserted in test).
+
+  `/learning` feeds the series into the existing
+  `_render_sparkline_svg` helper (same one `/today` uses for the
+  SPY thumbnail) and embeds the SVG inside the Live Track Record
+  card. The helper bails on <2 points, so the sparkline correctly
+  stays hidden until at least one paper trade has actually closed
+  — no awkward flat line. Right now there's still only one open
+  position (yesterday's bull put) and no closes, so the strip is
+  invisible; it'll show up the first time a paper trade resolves.
+
+  Test asserts the series is non-decreasing when all closed trades
+  are wins (a sanity check on the cumulative math).
+
+**Pre-market readiness check (end of session)**
+
+  - Full suite: 551/551 (was 545 → +6 new tests across the four
+    items), 250s runtime.
+  - 4 commits pushed to origin/main: `6f2c3f5`, `aaf76ae`,
+    `89ac5c8`, `919c99b`.
+  - Restarted `smta.service` so the new gates + voice + page go
+    live before today's 09:15 ET morning brief.
+  - Verified `/learning` returns 200, scheduler job list correct
+    (`spy_reflection` still gone, `learning_reflector` still
+    registered).
+  - ComfyUI still active.
+
+**Tests:** full suite 551/551 — 250s. Five commits this round
+(including BUILD_LOG), all pushed.
+
+**Next session:** First live test of the new gates. If SPY opens
+today still >8% above its 200MA with IVR ≥ 50, the bull put gate
+should fire and the bot should stand down (matching skip-card now
+reads "STANDING DOWN TODAY — SPY"). If a tradeable plan emerges
+but its credit/width is below 25%, the MIN_CREDIT_SPREAD_RR gate
+should also block. Watch the 09:16 paper broker log to confirm
+no AUTO-PAPER entry is opened against yesterday's still-open
+position.
+
+---
+
 ## 2026-05-19 | Notification de-dup + first KB-driven gate + /learning page
 
 User opened the session saying yesterday's evening notifications were
