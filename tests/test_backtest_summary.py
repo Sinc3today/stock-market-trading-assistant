@@ -157,3 +157,97 @@ def test_kb_observations_grouped_and_sorted(iso_logs):
     assert out[0]["count"]    == 2
     # latest_claim is a string snippet
     assert "Sector" in out[0]["latest_claim"] or "VIX" in out[0]["latest_claim"]
+
+
+# ─────────────────────────────────────────
+# Recent predictions (for /learning page)
+# ─────────────────────────────────────────
+
+def test_recent_predictions_empty(iso_logs):
+    assert bs.recent_predictions() == []
+
+
+def test_recent_predictions_normalises_rows(iso_logs):
+    pl = PredictionLog()
+    pl.save(Prediction(
+        date="2026-05-15", regime="trending_up_calm",
+        direction="bullish", tradeable=True, entry_spy=700.0,
+    ))
+    pl.mark_resolved("2026-05-15", actual_close=705.0,
+                     outcome="correct", resolution_date="2026-05-15")
+    pl.save(Prediction(
+        date="2026-05-16", regime="choppy_low_vol",
+        direction="neutral", tradeable=True, entry_spy=702.0,
+    ))   # unresolved
+
+    out = bs.recent_predictions(n=10)
+    assert len(out) == 2
+    by_date = {r["date"]: r for r in out}
+    assert by_date["2026-05-15"]["outcome"]  == "correct"
+    assert by_date["2026-05-15"]["resolved"] is True
+    assert by_date["2026-05-16"]["outcome"]  is None
+    assert by_date["2026-05-16"]["resolved"] is False
+
+
+# ─────────────────────────────────────────
+# Paper trade stats (for /learning page)
+# ─────────────────────────────────────────
+
+def test_paper_trade_stats_empty(iso_logs):
+    out = bs.paper_trade_stats()
+    assert out["open"]   == 0
+    assert out["closed"] == 0
+    assert out["total_pnl"] == 0.0
+    assert out["closed_trades"] == []
+
+
+def test_paper_trade_stats_only_counts_auto_tagged(iso_logs):
+    """Manual trades must NOT contaminate the paper-broker stats."""
+    from journal.trade_recorder import TradeRecorder
+    from learning.paper_broker  import AUTO_TAG
+    tr = TradeRecorder()
+    # One AUTO-PAPER trade, still open
+    tr.log_entry(
+        ticker="SPY", entry_price=1.0, size=1,
+        trade_type="credit_spread", strategy="credit_spread",
+        direction="bullish", notes=f"{AUTO_TAG} regime=trending_up_calm",
+    )
+    # One MANUAL trade (no AUTO-PAPER tag) — should be ignored
+    tr.log_entry(
+        ticker="QQQ", entry_price=2.5, size=1,
+        trade_type="single_leg", direction="bullish",
+        notes="Manual entry — testing",
+    )
+    out = bs.paper_trade_stats()
+    assert out["open"]   == 1
+    assert out["closed"] == 0
+    # Manual QQQ trade is excluded
+    assert all(t["ticker"] == "SPY" for t in out["open_trades"])
+
+
+def test_paper_trade_stats_aggregates_closed(iso_logs):
+    """Closed AUTO-PAPER trades roll into win-rate and total P&L."""
+    from journal.trade_recorder import TradeRecorder
+    from learning.paper_broker  import AUTO_TAG
+    tr = TradeRecorder()
+    tid_win = tr.log_entry(
+        ticker="SPY", entry_price=1.0, size=1,
+        trade_type="credit_spread", strategy="credit_spread",
+        direction="bullish", max_loss=4.0,
+        notes=f"{AUTO_TAG} winner",
+    )
+    tid_loss = tr.log_entry(
+        ticker="SPY", entry_price=1.0, size=1,
+        trade_type="credit_spread", strategy="credit_spread",
+        direction="bullish", max_loss=4.0,
+        notes=f"{AUTO_TAG} loser",
+    )
+    tr.log_exit(tid_win,  exit_price=0.2)  # bought back cheap → profit
+    tr.log_exit(tid_loss, exit_price=3.5)  # bought back expensive → loss
+
+    out = bs.paper_trade_stats()
+    assert out["open"]   == 0
+    assert out["closed"] == 2
+    assert out["wins"] + out["losses"] == 2
+    assert isinstance(out["total_pnl"], (int, float))
+    assert len(out["closed_trades"]) == 2

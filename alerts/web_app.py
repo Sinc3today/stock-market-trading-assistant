@@ -423,6 +423,7 @@ _NAV_GROUPS = [
     ("Tools", [
         ("chat",     "/chat",     "Chat"),
         ("backtest", "/backtest", "Backtest"),
+        ("learning", "/learning", "Learning"),
     ]),
 ]
 
@@ -876,6 +877,198 @@ def _render_backtest(
         body        = body,
         css         = _INDEX_CSS,
         active_nav  = "backtest",
+    )
+
+
+def _render_learning(
+    accuracy:     dict,
+    paper:        dict,
+    predictions:  list[dict],
+    kb_recent:    list[dict],
+) -> str:
+    """
+    Live track record for the self-learning loop.
+
+    Unlike /backtest (historical 5yr replay), this is what the bot has
+    actually done in production: predictions made, outcomes scored,
+    paper trades opened/closed, KB entries written.
+    """
+    # ── Header strip ───────────────────────────────────
+    acc_n  = accuracy.get("sample") or 0
+    acc_p  = accuracy.get("accuracy")
+    acc_p_str = f"{acc_p:.1f}%" if isinstance(acc_p, (int, float)) and acc_n else "—"
+    acc_cls = (
+        "pnl-pos" if (isinstance(acc_p, (int, float)) and acc_n >= 5 and acc_p >= 60)
+        else "pnl-neg" if (isinstance(acc_p, (int, float)) and acc_n >= 5 and acc_p < 40)
+        else "pnl-zero"
+    )
+    pnl     = paper.get("total_pnl") or 0.0
+    pnl_str = f"${pnl:+,.2f}" if paper.get("closed") else "—"
+    pnl_cls = "pnl-pos" if pnl > 0 else "pnl-neg" if pnl < 0 else "pnl-zero"
+    wr_paper      = paper.get("win_rate_pct") or 0.0
+    wr_paper_str  = f"{wr_paper:.1f}%" if paper.get("closed") else "—"
+    open_count    = paper.get("open") or 0
+    closed_count  = paper.get("closed") or 0
+
+    summary_html = f'''
+<div class="alert-card">
+  <div><b>Live Track Record</b>
+       <span class="muted" style="float:right;font-size:.75rem">predictions + paper</span></div>
+  <div class="grid" style="margin-top:.5rem">
+    <div><span>Prediction accuracy (60d)</span><b class="{acc_cls}">{acc_p_str}</b></div>
+    <div><span>Resolved sample</span><b>{acc_n}</b></div>
+    <div><span>Paper P&amp;L (closed)</span><b class="{pnl_cls}">{pnl_str}</b></div>
+    <div><span>Paper win rate</span><b>{wr_paper_str}</b></div>
+    <div><span>Open paper positions</span><b>{open_count}</b></div>
+    <div><span>Closed paper positions</span><b>{closed_count}</b></div>
+  </div>
+</div>'''
+
+    # ── Recent predictions table ───────────────────────
+    if predictions:
+        pred_rows = []
+        for p in predictions:
+            move = p.get("actual_move_pct")
+            move_str = f"{move:+.2f}%" if isinstance(move, (int, float)) else "—"
+            outcome = p.get("outcome")
+            if outcome == "correct":
+                badge = '<span class="badge status-win">✓</span>'
+                move_cls = "pnl-pos"
+            elif outcome == "wrong":
+                badge = '<span class="badge status-loss">✗</span>'
+                move_cls = "pnl-neg"
+            else:
+                badge = '<span class="badge status-open">pending</span>'
+                move_cls = "pnl-zero"
+            tradeable = p.get("tradeable")
+            if tradeable is False:
+                badge = '<span class="badge status-open">skip</span>'
+            conf = p.get("confidence")
+            conf_str = f"{conf:.0%}" if isinstance(conf, (int, float)) else "—"
+            pred_rows.append(
+                f'<div style="padding:.45rem 0;border-bottom:1px solid #21262d">'
+                f'<div style="display:flex;justify-content:space-between;align-items:baseline">'
+                f'<span><b>{_esc(p.get("date"))}</b> · '
+                f'{_esc(p.get("regime"))} · '
+                f'{_esc(p.get("direction"))} '
+                f'<span class="muted" style="font-size:.75rem">({conf_str})</span></span>'
+                f'<span class="{move_cls}">{move_str} {badge}</span>'
+                f'</div>'
+                f'</div>'
+            )
+        pred_html = (
+            f'<div class="alert-card">'
+            f'<div><b>Recent Predictions</b> '
+            f'<span class="muted" style="font-size:.75rem">— last {len(predictions)}</span></div>'
+            f'<div style="margin-top:.4rem">{"".join(pred_rows)}</div>'
+            f'</div>'
+        )
+    else:
+        pred_html = (
+            '<div class="alert-card">'
+            '<div><b>Recent Predictions</b></div>'
+            '<div class="muted" style="margin-top:.5rem">'
+            'No predictions logged yet. The 09:15 ET morning brief writes one each weekday.</div>'
+            '</div>'
+        )
+
+    # ── Open paper positions ───────────────────────────
+    open_trades = paper.get("open_trades") or []
+    if open_trades:
+        open_rows = []
+        for t in open_trades:
+            open_rows.append(
+                f'<div style="padding:.4rem 0;border-bottom:1px solid #21262d">'
+                f'<div style="display:flex;justify-content:space-between">'
+                f'<span><b>{_esc(t.get("ticker"))}</b> · '
+                f'{_esc(t.get("strategy") or t.get("option_type"))}</span>'
+                f'<span class="muted">opened {_esc(t.get("entry_date"))}</span>'
+                f'</div>'
+                f'<div class="muted" style="margin-top:.15rem;font-size:.8rem">'
+                f'{_esc((t.get("notes_entry") or "")[:140])}</div>'
+                f'</div>'
+            )
+        open_html = (
+            f'<div class="alert-card">'
+            f'<div><b>Open Paper Positions</b> '
+            f'<span class="badge">{len(open_trades)}</span></div>'
+            f'<div style="margin-top:.4rem">{"".join(open_rows)}</div>'
+            f'</div>'
+        )
+    else:
+        open_html = ""  # don't render empty section — keep page tight
+
+    # ── Closed paper trades + cumulative P&L ───────────
+    closed_trades = paper.get("closed_trades") or []
+    if closed_trades:
+        cum = 0.0
+        closed_rows = []
+        for t in closed_trades[-15:]:   # most recent 15
+            pnl_t   = t.get("pnl_dollars") or 0.0
+            cum    += pnl_t
+            pnl_t_cls = "pnl-pos" if pnl_t > 0 else "pnl-neg" if pnl_t < 0 else "pnl-zero"
+            outcome   = t.get("outcome", "—")
+            badge_cls = "status-win" if outcome == "win" else "status-loss" if outcome == "loss" else "status-open"
+            closed_rows.append(
+                f'<div style="padding:.45rem 0;border-bottom:1px solid #21262d">'
+                f'<div style="display:flex;justify-content:space-between">'
+                f'<span><b>{_esc(t.get("ticker"))}</b> · '
+                f'{_esc(t.get("strategy") or t.get("option_type"))} '
+                f'<span class="badge {badge_cls}" style="margin-left:.4rem">{outcome.upper()}</span></span>'
+                f'<span class="{pnl_t_cls}"><b>${pnl_t:+,.2f}</b></span>'
+                f'</div>'
+                f'<div class="muted" style="margin-top:.15rem;font-size:.75rem">'
+                f'closed {_esc(t.get("exit_date"))} · cumulative ${cum:+,.2f}</div>'
+                f'</div>'
+            )
+        closed_html = (
+            f'<div class="alert-card">'
+            f'<div><b>Closed Paper Trades</b> '
+            f'<span class="muted" style="font-size:.75rem">— last {min(15, len(closed_trades))}</span></div>'
+            f'<div style="margin-top:.4rem">{"".join(closed_rows)}</div>'
+            f'</div>'
+        )
+    else:
+        closed_html = (
+            '<div class="alert-card">'
+            '<div><b>Closed Paper Trades</b></div>'
+            '<div class="muted" style="margin-top:.5rem">'
+            'No closed paper positions yet. Paper trades open at 09:16 ET on tradeable days '
+            'and close at expiry or stop.</div>'
+            '</div>'
+        )
+
+    # ── Recent KB entries (chronological, latest first) ─
+    if kb_recent:
+        kb_rows = []
+        for e in kb_recent[:10]:
+            conf = e.get("confidence")
+            conf_str = f"{conf:.2f}" if isinstance(conf, (int, float)) else "—"
+            kb_rows.append(
+                f'<div style="padding:.45rem 0;border-bottom:1px solid #21262d">'
+                f'<div style="display:flex;justify-content:space-between">'
+                f'<b>{_esc(e.get("category"))}</b>'
+                f'<span class="muted" style="font-size:.75rem">{_esc(e.get("date"))} · conf {conf_str}</span></div>'
+                f'<div class="muted" style="margin-top:.15rem">{_esc((e.get("claim") or "")[:240])}</div>'
+                f'</div>'
+            )
+        kb_html = (
+            f'<div class="alert-card">'
+            f'<div><b>Recent KB Entries</b> '
+            f'<span class="muted" style="font-size:.75rem">— last {min(10, len(kb_recent))}</span></div>'
+            f'<div style="margin-top:.4rem">{"".join(kb_rows)}</div>'
+            f'</div>'
+        )
+    else:
+        kb_html = ""
+
+    body = summary_html + pred_html + open_html + closed_html + kb_html
+    return _render_page(
+        title       = "Trading Assistant - Learning",
+        heading     = "Self-Learning Track Record",
+        body        = body,
+        css         = _INDEX_CSS,
+        active_nav  = "learning",
     )
 
 
@@ -2300,6 +2493,18 @@ def backtest_page():
         hypotheses = backtest_summary.hypotheses_by_status(),
         accuracy   = backtest_summary.prediction_accuracy(),
         kb_groups  = backtest_summary.kb_observations_by_category(),
+    ))
+
+
+@app.get("/learning", response_class=HTMLResponse)
+def learning_page():
+    """Live track record: predictions, paper P&L, KB growth — the bot's report card."""
+    from learning.knowledge_base import KnowledgeBase
+    return HTMLResponse(_render_learning(
+        accuracy    = backtest_summary.prediction_accuracy(),
+        paper       = backtest_summary.paper_trade_stats(),
+        predictions = backtest_summary.recent_predictions(n=14),
+        kb_recent   = KnowledgeBase().recent(days=30),
     ))
 
 

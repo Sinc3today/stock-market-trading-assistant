@@ -46,6 +46,8 @@ from loguru import logger
 
 from learning.knowledge_base import KnowledgeBase
 from learning.predictions    import PredictionLog
+from learning.paper_broker   import AUTO_TAG
+from journal.trade_recorder  import TradeRecorder
 
 
 SUMMARY_FILE = "backtest_summary.json"
@@ -189,6 +191,85 @@ def prediction_accuracy(window_days: int = 60) -> dict:
     except Exception as e:
         logger.warning(f"backtest_summary: prediction accuracy failed: {e}")
         return {"sample": 0, "accuracy": 0.0}
+
+
+def recent_predictions(n: int = 14) -> list[dict]:
+    """
+    Return up to `n` most-recent predictions (resolved + unresolved) for
+    the /learning live track-record page. Each row is normalised to the
+    keys the template expects so the renderer stays dumb.
+    """
+    try:
+        rows = PredictionLog().recent(n=n)
+    except Exception as e:
+        logger.warning(f"backtest_summary: recent_predictions failed: {e}")
+        return []
+
+    out: list[dict] = []
+    for r in rows:
+        move = r.get("actual_move_pct")
+        out.append({
+            "date":          r.get("date"),
+            "regime":        r.get("regime"),
+            "direction":     r.get("direction"),
+            "confidence":    r.get("confidence"),
+            "tradeable":     r.get("tradeable"),
+            "entry_spy":     r.get("entry_spy"),
+            "actual_close":  r.get("actual_close"),
+            "actual_move_pct": move if isinstance(move, (int, float)) else None,
+            "outcome":       r.get("outcome"),   # "correct" | "wrong" | None (unresolved)
+            "resolved":      bool(r.get("resolved")),
+        })
+    return out
+
+
+def paper_trade_stats() -> dict:
+    """
+    Aggregate Claude's auto-paper-traded positions (tagged [AUTO-PAPER] in
+    notes_entry). Returns open / closed counts, total realized P&L, win
+    rate on closed positions, and a chronological closed-trade list for
+    cumulative-P&L display.
+
+    Never raises — every external dependency is wrapped.
+    """
+    empty = {
+        "open":         0,
+        "closed":       0,
+        "wins":         0,
+        "losses":       0,
+        "win_rate_pct": 0.0,
+        "total_pnl":    0.0,
+        "closed_trades": [],
+        "open_trades":   [],
+    }
+    try:
+        trades = TradeRecorder().get_all_trades()
+    except Exception as e:
+        logger.warning(f"backtest_summary: TradeRecorder load failed: {e}")
+        return empty
+
+    auto = [t for t in trades if AUTO_TAG in (t.get("notes_entry") or "")]
+    if not auto:
+        return empty
+
+    open_t   = [t for t in auto if t.get("outcome") == "open"]
+    closed_t = sorted(
+        [t for t in auto if t.get("outcome") != "open"],
+        key=lambda t: t.get("exit_date") or t.get("entry_date") or "",
+    )
+    wins = [t for t in closed_t if t.get("outcome") == "win"]
+    pnls = [t.get("pnl_dollars") or 0.0 for t in closed_t]
+
+    return {
+        "open":          len(open_t),
+        "closed":        len(closed_t),
+        "wins":          len(wins),
+        "losses":        len(closed_t) - len(wins),
+        "win_rate_pct":  round(len(wins) / len(closed_t) * 100, 1) if closed_t else 0.0,
+        "total_pnl":     round(sum(pnls), 2),
+        "closed_trades": closed_t,
+        "open_trades":   open_t,
+    }
 
 
 def kb_observations_by_category(days: int = 30) -> list[dict]:
