@@ -85,6 +85,11 @@ ADX_TREND_MIN    = 25.0   # Above this = trending market
 TREND_MA_PERIOD  = 200
 ADX_PERIOD       = 14
 
+# Minimum distance from 200MA before a trending-up regime is tradeable at
+# all: below this, the trend hasn't separated enough from the MA for either
+# a debit or credit spread to have a directional edge.
+MIN_TREND_SEPARATION_PCT = 1.5
+
 # Entry-timing guard for bull put credit spreads: when SPY is more than this
 # many percent above the 200MA, selling puts on the same day risks an
 # immediate mean-reversion that puts the short strike ITM before theta can
@@ -227,6 +232,8 @@ class RegimeDetector:
                 f"ADX {adx:.1f} ≥ {ADX_TREND_MIN} (trending)",
                 f"SPY {ma_dist_pct:+.1f}% above 200MA (uptrend confirmed)",
             ]
+
+            # Elevated VIX in a trending tape → reduced-size directional only.
             if is_elevated:
                 reasons.append(f"VIX {vix_current:.1f} elevated — 50% size, widen stops")
                 return RegimeResult(
@@ -234,18 +241,24 @@ class RegimeDetector:
                     "BULL CALL DEBIT SPREAD — reduced size (50%), elevated vol",
                     0.6, reasons, metrics,
                 )
-            play = (
-                "BULL PUT CREDIT SPREAD — IVR elevated, sell the put side"
-                if ivr_current >= 50 else
-                "BULL CALL DEBIT SPREAD — low IVR, cheap calls, buy the move"
-            )
-            reasons.append(
-                f"IVR {ivr_current:.0f} {'≥' if ivr_current >= 50 else '<'} 50 "
-                f"→ {'sell premium' if ivr_current >= 50 else 'buy directional'}"
-            )
-            # Entry-timing guard: extended rally + bull put = short strike
-            # likely ITM by EOD even on a normal -0.2% mean-reversion day.
-            # See learning/knowledge.jsonl 2026-05-18 entry_timing entry.
+
+            # Skip-check 1: trend hasn't separated from MA200 — no directional
+            # edge for either spread type.
+            if ma_dist_pct < MIN_TREND_SEPARATION_PCT:
+                reasons.append(
+                    f"SPY only {ma_dist_pct:+.1f}% above 200MA — below "
+                    f"{MIN_TREND_SEPARATION_PCT}% separation, no edge"
+                )
+                return RegimeResult(
+                    Regime.UNKNOWN, False,
+                    "SKIP — SPY too close to 200MA, direction unclear",
+                    0.4, reasons, metrics,
+                )
+
+            # Skip-check 2: bull-put-only entry-timing guard. Selling puts
+            # into an already-extended rally puts the short strike at risk
+            # on a normal same-day mean-reversion. See KB 2026-05-18
+            # entry_timing entry.
             if ivr_current >= 50 and ma_dist_pct > EXTENDED_TREND_MAX_PCT:
                 reasons.append(
                     f"SPY {ma_dist_pct:+.1f}% above 200MA exceeds "
@@ -257,24 +270,21 @@ class RegimeDetector:
                     "SKIP — trend too extended for bull put (wait for pullback)",
                     0.6, reasons, metrics,
                 )
-            if ma_dist_pct < 1.5:
-                reasons.append(f"SPY only {ma_dist_pct:.1f}% above 200MA -- too close, no edge")
-                return RegimeResult(
-                    Regime.UNKNOWN  , False,
-                    "SKIP -- SPY too close to 200MA, direction unclear",
-                    0.4, reasons, metrics,
-        )
+
+            # Pick play by IVR.
+            play = (
+                "BULL PUT CREDIT SPREAD — IVR elevated, sell the put side"
+                if ivr_current >= 50 else
+                "BULL CALL DEBIT SPREAD — low IVR, cheap calls, buy the move"
+            )
+            reasons.append(
+                f"IVR {ivr_current:.0f} {'≥' if ivr_current >= 50 else '<'} 50 "
+                f"→ {'sell premium' if ivr_current >= 50 else 'buy directional'}"
+            )
             return RegimeResult(
                 Regime.TRENDING_UP_CALM, True, play, 0.85, reasons, metrics,
             )
-            # Require SPY to be at least 2% above 200MA for debit spreads
-            if ma_dist_pct < 2.0 and ivr_current < 50:
-                reasons.append(f"SPY only {ma_dist_pct:.1f}% above 200MA -- insufficient trend separation")
-                return RegimeResult(
-                    Regime.UNKNOWN, False,
-                    "SKIP -- trend too weak for debit spread",
-                    0.4, reasons, metrics,
-                )
+
         # TRENDING DOWN
         if is_trending and not above_ma:
             reasons += [

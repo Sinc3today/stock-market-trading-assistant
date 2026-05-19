@@ -197,6 +197,26 @@ def test_extended_uptrend_allows_bull_call_debit(detector):
     print(f"\n✅ Extended uptrend debit still allowed → {result.play}")
 
 
+def test_uptrend_too_close_to_ma200_skips(detector, up_df, monkeypatch):
+    """Trending up but ma_dist_% < MIN_TREND_SEPARATION_PCT → SKIP (no edge).
+
+    Real-world fixtures don't easily combine high ADX with tight separation
+    (those conditions tend to oppose each other), so we monkeypatch the
+    threshold above the fixture's measured distance to force the path.
+    """
+    from signals import regime_detector as rd
+    # Find the fixture's measured separation, then raise the threshold above
+    # it so the skip path is guaranteed to fire.
+    baseline = detector.classify(up_df, vix_current=14.0, ivr_current=40)
+    monkeypatch.setattr(rd, "MIN_TREND_SEPARATION_PCT",
+                        baseline.metrics["ma200_dist_%"] + 1.0)
+    result = detector.classify(up_df, vix_current=14.0, ivr_current=40)
+    assert result.regime    == Regime.UNKNOWN
+    assert result.tradeable is False
+    assert "200MA" in result.play
+    print(f"\n✅ Too-close-to-MA200 skip fired: {result.play}")
+
+
 def test_moderate_uptrend_still_allows_bull_put(detector, up_df):
     """SPY ≤8% above 200MA + high IVR → bull put still tradeable."""
     result = detector.classify(up_df, vix_current=14.0, ivr_current=62)
