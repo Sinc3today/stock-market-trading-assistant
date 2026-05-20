@@ -882,6 +882,7 @@ def _render_backtest(
 
 def _render_learning(
     accuracy:     dict,
+    skip_quality: dict,
     paper:        dict,
     predictions:  list[dict],
     kb_recent:    list[dict],
@@ -910,6 +911,21 @@ def _render_learning(
     open_count    = paper.get("open") or 0
     closed_count  = paper.get("closed") or 0
 
+    # Skip quality — was standing down the right call? Kept separate from
+    # prediction accuracy so skips don't inflate the directional number.
+    sk_scored = (skip_quality.get("right") or 0) + (skip_quality.get("missed") or 0)
+    sk_right  = skip_quality.get("right_pct")
+    sk_str = f"{sk_right:.0f}%" if isinstance(sk_right, (int, float)) and sk_scored else "—"
+    sk_cls = (
+        "pnl-pos" if (isinstance(sk_right, (int, float)) and sk_scored and sk_right >= 60)
+        else "pnl-neg" if (isinstance(sk_right, (int, float)) and sk_scored and sk_right < 40)
+        else "pnl-zero"
+    )
+    sk_detail = (
+        f"{skip_quality.get('right', 0)} right / {skip_quality.get('missed', 0)} missed"
+        if sk_scored else "no scored skips yet"
+    )
+
     # Cumulative paper-P&L sparkline (mirrors the SPY sparkline on /today).
     # Only render when we have enough points; the helper itself bails on <2.
     cum_series = paper.get("cumulative_pnl_series") or []
@@ -930,6 +946,8 @@ def _render_learning(
   <div class="grid" style="margin-top:.5rem">
     <div><span>Prediction accuracy (60d)</span><b class="{acc_cls}">{acc_p_str}</b></div>
     <div><span>Resolved sample</span><b>{acc_n}</b></div>
+    <div><span>Skip quality (60d)</span><b class="{sk_cls}">{sk_str}</b>
+         <span class="muted" style="font-size:.7rem;display:block">{sk_detail}</span></div>
     <div><span>Paper P&amp;L (closed)</span><b class="{pnl_cls}">{pnl_str}</b></div>
     <div><span>Paper win rate</span><b>{wr_paper_str}</b></div>
     <div><span>Open paper positions</span><b>{open_count}</b></div>
@@ -956,7 +974,20 @@ def _render_learning(
                 move_cls = "pnl-zero"
             tradeable = p.get("tradeable")
             if tradeable is False:
-                badge = '<span class="badge status-open">skip</span>'
+                # Skip rows show whether standing down was the right call.
+                verdict = p.get("skip_verdict")
+                if verdict == "right":
+                    badge = '<span class="badge status-win">skip ✓</span>'
+                    move_cls = "pnl-pos"
+                elif verdict == "missed":
+                    badge = '<span class="badge status-loss">skip ✗</span>'
+                    move_cls = "pnl-neg"
+                elif verdict == "neutral":
+                    badge = '<span class="badge status-open">skip ~</span>'
+                    move_cls = "pnl-zero"
+                else:
+                    badge = '<span class="badge status-open">skip</span>'
+                    move_cls = "pnl-zero"
             conf = p.get("confidence")
             conf_str = f"{conf:.0%}" if isinstance(conf, (int, float)) else "—"
             pred_rows.append(
@@ -2515,10 +2546,11 @@ def learning_page():
     """Live track record: predictions, paper P&L, KB growth — the bot's report card."""
     from learning.knowledge_base import KnowledgeBase
     return HTMLResponse(_render_learning(
-        accuracy    = backtest_summary.prediction_accuracy(),
-        paper       = backtest_summary.paper_trade_stats(),
-        predictions = backtest_summary.recent_predictions(n=14),
-        kb_recent   = KnowledgeBase().recent(days=30),
+        accuracy     = backtest_summary.prediction_accuracy(),
+        skip_quality = backtest_summary.skip_quality(),
+        paper        = backtest_summary.paper_trade_stats(),
+        predictions  = backtest_summary.recent_predictions(n=14),
+        kb_recent    = KnowledgeBase().recent(days=30),
     ))
 
 

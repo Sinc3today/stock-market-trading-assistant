@@ -21,6 +21,33 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import config
 from loguru import logger
 
+# Flat band (in %) around zero where a skip neither clearly avoided a loss
+# nor clearly missed a gain — treated as "neutral" and excluded from the
+# right/missed ratio.
+SKIP_FLAT_BAND_PCT = 0.10
+# For a skipped iron-condor (neutral) setup, a move bigger than this would
+# have breached the condor, so skipping it was the right call.
+SKIP_CONDOR_BREAKOUT_PCT = 0.50
+
+
+def score_skip(direction: str, move_pct: float) -> str:
+    """
+    Was standing down the right call, given how SPY actually moved?
+    Returns "right" | "missed" | "neutral". See PredictionLog.skip_quality
+    for the rationale per direction.
+    """
+    if direction == "bullish":
+        if move_pct < -SKIP_FLAT_BAND_PCT:  return "right"   # avoided a long-side loss
+        if move_pct >  SKIP_FLAT_BAND_PCT:  return "missed"  # left a gain on the table
+        return "neutral"
+    if direction == "bearish":
+        if move_pct >  SKIP_FLAT_BAND_PCT:  return "right"   # avoided a short-side loss
+        if move_pct < -SKIP_FLAT_BAND_PCT:  return "missed"
+        return "neutral"
+    # neutral / iron-condor setup: condor profits in-range, loses on breakout
+    if abs(move_pct) > SKIP_CONDOR_BREAKOUT_PCT: return "right"
+    return "missed"
+
 
 @dataclass
 class Prediction:
@@ -137,6 +164,45 @@ class PredictionLog:
             "correct":  correct,
             "wrong":    len(rows) - correct,
             "accuracy": round(correct / len(rows) * 100, 1),
+        }
+
+    def skip_quality(self, n: int = 60) -> dict:
+        """
+        Score the bot's STAND-DOWN decisions, kept separate from `accuracy`
+        (which scores trades taken) so skips can't inflate the headline
+        directional number.
+
+        A skip is the right call when the trade it avoided would have lost:
+          - bullish setup skipped → right if SPY fell (a long-biased trade
+            would have lost), missed if SPY rose
+          - bearish setup skipped → right if SPY rose, missed if it fell
+          - neutral (condor) skipped → right if SPY made a big move (the
+            condor would have been breached), missed if it stayed in range
+
+        Returns counts + right_pct over resolved skips with a known move.
+        """
+        rows = [
+            r for r in self.recent(n)
+            if r.get("outcome") == "skip"
+            and isinstance(r.get("actual_move_pct"), (int, float))
+        ]
+        if not rows:
+            return {"sample": 0, "right": 0, "missed": 0, "neutral": 0, "right_pct": 0.0}
+
+        right = missed = neutral = 0
+        for r in rows:
+            verdict = score_skip(r.get("direction", "neutral"), r["actual_move_pct"])
+            if   verdict == "right":  right   += 1
+            elif verdict == "missed": missed  += 1
+            else:                     neutral += 1
+
+        scored = right + missed
+        return {
+            "sample":    len(rows),
+            "right":     right,
+            "missed":    missed,
+            "neutral":   neutral,
+            "right_pct": round(right / scored * 100, 1) if scored else 0.0,
         }
 
     # ── HELPERS ───────────────────────────────────────

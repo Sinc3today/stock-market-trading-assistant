@@ -72,7 +72,10 @@ class PaperBroker:
                 "regime":     plan.get("regime", "unknown"),
                 "confidence": 0.0,
                 "reasons":    [plan.get("reason", "skip")],
-                "metrics":    {},
+                # Carry the decision-time metrics so the prediction keeps a
+                # baseline price (entry_spy) for skip-scoring downstream.
+                "metrics":    plan.get("regime_metrics", {}) or {},
+                "intended_direction": plan.get("intended_direction"),
                 "options":    {},
             }
         return {

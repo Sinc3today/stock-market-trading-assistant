@@ -45,7 +45,7 @@ import config
 from loguru import logger
 
 from learning.knowledge_base import KnowledgeBase
-from learning.predictions    import PredictionLog
+from learning.predictions    import PredictionLog, score_skip
 from learning.paper_broker   import AUTO_TAG
 from journal.trade_recorder  import TradeRecorder
 
@@ -193,6 +193,15 @@ def prediction_accuracy(window_days: int = 60) -> dict:
         return {"sample": 0, "accuracy": 0.0}
 
 
+def skip_quality(window_days: int = 60) -> dict:
+    """Wrapper around PredictionLog.skip_quality — the bot's stand-down hit rate."""
+    try:
+        return PredictionLog().skip_quality(n=window_days)
+    except Exception as e:
+        logger.warning(f"backtest_summary: skip quality failed: {e}")
+        return {"sample": 0, "right": 0, "missed": 0, "neutral": 0, "right_pct": 0.0}
+
+
 def recent_predictions(n: int = 14) -> list[dict]:
     """
     Return up to `n` most-recent predictions (resolved + unresolved) for
@@ -208,6 +217,11 @@ def recent_predictions(n: int = 14) -> list[dict]:
     out: list[dict] = []
     for r in rows:
         move = r.get("actual_move_pct")
+        move_num = move if isinstance(move, (int, float)) else None
+        # For skips, derive whether standing down was the right call.
+        skip_verdict = None
+        if r.get("outcome") == "skip" and move_num is not None:
+            skip_verdict = score_skip(r.get("direction", "neutral"), move_num)
         out.append({
             "date":          r.get("date"),
             "regime":        r.get("regime"),
@@ -216,8 +230,9 @@ def recent_predictions(n: int = 14) -> list[dict]:
             "tradeable":     r.get("tradeable"),
             "entry_spy":     r.get("entry_spy"),
             "actual_close":  r.get("actual_close"),
-            "actual_move_pct": move if isinstance(move, (int, float)) else None,
-            "outcome":       r.get("outcome"),   # "correct" | "wrong" | None (unresolved)
+            "actual_move_pct": move_num,
+            "outcome":       r.get("outcome"),   # "correct" | "wrong" | "skip" | None
+            "skip_verdict":  skip_verdict,       # "right" | "missed" | "neutral" | None
             "resolved":      bool(r.get("resolved")),
         })
     return out

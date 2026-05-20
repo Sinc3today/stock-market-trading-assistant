@@ -243,6 +243,13 @@ class SPYDailyStrategy:
                 "action": "SKIP",
                 "regime": rr.regime.value,
                 "reason": rr.play,
+                # Persist the price + direction bias at decision time so the
+                # outcome resolver can score the skip ("was standing down the
+                # right call?") against where SPY actually closed.
+                "regime_metrics": rr.metrics,
+                "intended_direction": self._direction_and_levels(
+                    rr.regime, rr.metrics.get("spy_close", 0.0)
+                )[0],
             },
         )
 

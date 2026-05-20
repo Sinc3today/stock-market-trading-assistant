@@ -189,6 +189,26 @@ def test_recent_predictions_normalises_rows(iso_logs):
     assert by_date["2026-05-16"]["resolved"] is False
 
 
+def test_recent_predictions_attaches_skip_verdict(iso_logs):
+    pl = PredictionLog()
+    pl.save(Prediction(date="2026-05-19", regime="trending_up_calm",
+                       direction="bullish", tradeable=False, entry_spy=737.80))
+    pl.mark_resolved("2026-05-19", 733.73, "skip", "2026-05-19")
+    row = bs.recent_predictions(n=5)[0]
+    assert row["outcome"]      == "skip"
+    assert row["skip_verdict"] == "right"   # bullish skip, SPY fell
+
+
+def test_skip_quality_wrapper(iso_logs):
+    pl = PredictionLog()
+    pl.save(Prediction(date="2026-05-19", regime="trending_up_calm",
+                       direction="bullish", tradeable=False, entry_spy=737.80))
+    pl.mark_resolved("2026-05-19", 733.73, "skip", "2026-05-19")
+    out = bs.skip_quality()
+    assert out["right"] == 1
+    assert out["right_pct"] == 100.0
+
+
 # ─────────────────────────────────────────
 # Paper trade stats (for /learning page)
 # ─────────────────────────────────────────
