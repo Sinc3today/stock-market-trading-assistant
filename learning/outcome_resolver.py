@@ -106,12 +106,21 @@ class OutcomeResolver:
             logger.info(f"OutcomeResolver: {today_str} already resolved")
             return {"date": today_str, "resolved": True, "reason": "already resolved"}
 
+        # Fetch the close up front: open [AUTO-PAPER] positions need a daily
+        # MTM mark regardless of whether *today's* prediction was a trade or
+        # a skip. Previously this only ran on tradeable days, so the open
+        # position's MTM logged "no SPY data" on every skip day.
+        spy_close = self._fetch_spy_close()
+
         if not prediction.get("tradeable"):
-            self.predictions.mark_resolved(today_str, 0.0, "skip", today_str)
-            self._snapshot_open_paper_trades(today_str, spy_close=None)
+            # Store the real close (not 0.0) so the skip can be scored:
+            # mark_resolved computes actual_move_pct vs the baseline
+            # entry_spy, and skip_quality() reads that to decide whether
+            # standing down was the right call.
+            self.predictions.mark_resolved(today_str, spy_close or 0.0, "skip", today_str)
+            self._snapshot_open_paper_trades(today_str, spy_close)
             return {"date": today_str, "resolved": True, "outcome": "skip"}
 
-        spy_close = self._fetch_spy_close()
         if spy_close is None:
             logger.warning(f"OutcomeResolver: could not fetch SPY close for {today_str}")
             return {"date": today_str, "resolved": False, "reason": "no SPY data"}

@@ -167,3 +167,45 @@ def test_snapshots_open_paper_trade(iso_dirs):
     notes = TradeRecorder().get_all_trades()[0]["notes_entry"]
     assert "[MTM" in notes
     assert "725" in notes
+
+
+def test_open_position_marked_with_real_close_on_skip_day(iso_dirs):
+    """Regression: a skip day must still mark open [AUTO-PAPER] positions
+    with the real SPY close, not 'no SPY data'. Previously resolve_today()
+    short-circuited on skip days and passed spy_close=None."""
+    # Open a paper position from a prior tradeable play.
+    play = {
+        "date":      "2026-05-18",
+        "tradeable": True,
+        "regime":    "trending_up_calm",
+        "confidence": 0.85,
+        "reasons":    ["x"],
+        "metrics":    {"spy_close": 739.0},
+        "options":    {"strategy": "credit_spread", "net_credit": 1.0,
+                       "max_profit": 100, "max_loss": 400, "legs": []},
+    }
+    PaperBroker().execute(play)
+
+    # Today's prediction is a SKIP, but SPY data is available.
+    _seed_prediction("bullish", entry=739.0, tradeable=False)
+    result = OutcomeResolver(polygon_client=FakePolygon(close=733.73)).resolve_today()
+    assert result["outcome"] == "skip"
+
+    notes = TradeRecorder().get_all_trades()[0]["notes_entry"]
+    assert "no SPY data" not in notes
+    assert "733.73" in notes
+
+
+def test_skip_day_stores_real_move_for_scoring(iso_dirs):
+    """A skip day must record the real close + move so skip_quality can
+    score it. Previously actual_close was hardcoded to 0.0."""
+    # Baseline price persisted on the skip prediction (entry_spy).
+    _seed_prediction("bullish", entry=737.80, tradeable=False)
+    OutcomeResolver(polygon_client=FakePolygon(close=733.73)).resolve_today()
+    rec = PredictionLog().get(date.today().isoformat())
+    assert rec["outcome"]      == "skip"
+    assert rec["actual_close"] == 733.73
+    assert rec["actual_move_pct"] < 0          # SPY fell vs baseline
+    # And the skip is scored as a right call (declined a bullish trade,
+    # SPY fell, so standing down avoided a loss).
+    assert PredictionLog().skip_quality()["right"] == 1
