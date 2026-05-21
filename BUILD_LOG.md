@@ -4,6 +4,56 @@
 
 ---
 
+## 2026-05-20 (cont. 2) | Walk-forward validation + live 5DTE track + paid-data unlock
+
+Continued. Validated the tuning, wired a second live track, and
+discovered the paid Polygon tier changes the 0DTE plan entirely.
+
+**Walk-forward harness** (commit `5307d14`). Expanding-window OOS test:
+pick thresholds on past-only data, apply to the next unseen year.
+Result: OOS retains 103% of in-sample Sharpe (OOS agg 65.2% / +$18k /
+3.64 vs in-sample 3.54), and the chosen config was STABLE (ADX 32 / 9%
+in 3 of 4 folds). The tuning is NOT overfit — it generalises. 2023
+still loses OOS (known choppy-year weakness).
+
+**ADX 30→32** (commit `6f5df86`). Walk-forward independently preferred
+32, so bumped the conservative 30. In-sample 65.2% / +$19,440 / 3.58.
+
+**Live 5DTE track** (commit `e93b87a`). The bot now fires a separate
+09:16 alert for each enabled daily track besides 45DTE — currently
+5DTE, labeled "[5DTE]". OptionsLayer gained dte_target;
+SPYDailyStrategy.build_today(track=...) tags the play + threads the
+DTE. Scoped ALERT-ONLY (no plan/paper) to avoid colliding with the
+45DTE plan in the date-keyed journal — per-track journaling is a
+deferred data-model change.
+
+**Paid Polygon tier = 0DTE unlock** (commit `32ade44`). User confirmed
+paid Stocks + Options Starter. Verified live: ~2yr intraday stock
+history AND real historical option aggregates (daily + intraday 5-min
+INCLUDING the 0DTE expiry session). This overturns the earlier
+"forward-paper only" plan — 0DTE/1DTE can be backtested with REAL
+option prices. Built data/options_history.py (option_ticker +
+get_aggs + leg_close). BS validation: a real 30-DTE SPY call closed
+$14.07 vs BS-with-VIX $13.97 — $0.10 error, so the daily-track
+realistic backtest (BS-modeled) is trustworthy; 0DTE is where real
+data matters.
+
+**Memory:** corrected reference-intraday-data-tiers (paid tier);
+saved user-strategy-preferences earlier.
+
+**Ops:** smta.service restarted again — ADX 32 + the 5DTE alert job
+are LIVE. (options_history is a data/backtest layer, not live-path.)
+
+**Roadmap now:** 0DTE/1DTE engine has a real-data backtest path. Next:
+(1) paginate/cache ~2yr intraday SPY + option data, (2) intraday
+signal engine, (3) real-priced 0DTE backtest via options_history,
+(4) wire live. Plus the deferred per-track journaling, and the ML
+learner (#17) much later.
+
+**Tests:** full suite 610/610.
+
+---
+
 ## 2026-05-20 (cont.) | Strategy tuning (Sharpe→3.54) + realistic pricing + 4-track scaffold
 
 Same day, continued. After the 5-item fix list, the conversation moved
