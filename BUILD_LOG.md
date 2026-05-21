@@ -4,6 +4,92 @@
 
 ---
 
+## 2026-05-20 | "How's trading going" → 5-item fix list (data, scoring, exits, resilience, strategy)
+
+Started as a status check, turned into a five-item work session. Key
+context the user set: bot moves toward autonomy ("you trade, I watch
+until you're skilled"), prefers debit spreads / iron condors and
+DISLIKES credit spreads, exit style is "let it ride but
+context-dependent — not greedy, not impatient", and same-day/intraday
+exits are fine as long as fills are modeled realistically (no
+fabricated settlement-price wins).
+
+**#9 — MTM fetch on skip days** (commit `13bff43`). resolve_today()
+short-circuited on skip days and passed spy_close=None to the MTM
+snapshot, so the open 5/18 bull put logged "no SPY data" on 5/19 +
+5/20. Hoisted the fetch above the tradeable branch; skip predictions
+now store the real close too.
+
+**#10 — score skips ("right call" metric)** (commit `699b50d`).
+Skips were invisible to the scorecard (accuracy only counts trades),
+so the bot's two correct stand-downs didn't show. Added
+score_skip() + PredictionLog.skip_quality(), kept SEPARATE from
+prediction accuracy so skips can't inflate the directional number.
+Surfaced on /learning (skip-quality stat + per-row skip ✓/✗ badge).
+Plumbing: _skip_card persists regime_metrics + intended_direction;
+paper_broker stops discarding metrics on SKIP days.
+
+Backfilled the 5/19 skip (737.80 → 733.73 = right call) and manually
+re-resolved 5/20 with the new code (SPY closed 741.25, +1.03% → the
+skip was a MISS). Skip quality now 1 right / 1 missed — honest signal
+that the extension gate may be over-skipping. Also: the 5/18 bull put
+RECOVERED (SPY back above the 739 short strike), validating "let it
+ride" — a hard stop on 5/19 would have locked the loss before the
+bounce.
+
+**#11 — mid-life exit manager** (commit `359238f`). New 16:08 ET job.
+Marks open spreads with Black-Scholes (VIX as IV) and closes on:
+profit target >= 70% of max (user chose the 65-75% band), or <= 21
+DTE; NO hard stop (losers ride to expiry). Fills at the BS mark +
+slippage in our disfavor (nearest-ask realism); same-day exits
+allowed. Verified read-only against the live 5/18 position → hold
+(37 DTE, target not hit). PROFIT_TARGET_PCT + DTE_CLOSE_THRESHOLD
+added to TUNABLE_PARAMS.
+
+**#12 / #14 — API cap + Ollama fallback** (commit `e92e5e5`). The
+empty 5/20 reflection was NOT a bug: the Anthropic account hit its
+monthly usage cap (HTTP 400, "regain access 2026-06-01"), killing
+every hosted Claude call. Built data/llm_client.call_llm: Anthropic
+first, then local nucbox Ollama (phi4:14b, config-driven) on failure
+or empty. Reflector + morning briefer delegate to it. Verified live
+— phi4 returns valid JSON the parser extracts cleanly. Keeps the
+learning loop generating KB entries during the cap. (To restore the
+hosted model: raise the monthly spend limit in the Anthropic Console,
+or wait for the 6/1 reset.)
+
+**#13 — debit bias + TRENDING_HIGH_VOL regression** (commit
+`e9d862d`). Backtest-gated, validated on the 5-yr replay:
+  - PREFER_DEBIT_OVER_CREDIT (default true) — honors the user's
+    dislike of credit spreads. Neutral (+$40, +0.01 Sharpe) because
+    credit spreads fire ~3x in 5 years.
+  - The credit question surfaced the real money: the detector had
+    DRIFTED from its documented "TRENDING_HIGH_VOL = skip" decision
+    and was trading it reduced-size at a -$4,600 / half-Sharpe loss.
+    Restoring the skip recovered the documented baseline EXACTLY:
+    47.9%/$6,870/0.83 → 50.1%/$11,470/1.73 (docs: 50.3%/$11,550/1.73).
+
+**Pre-market readiness / state**
+  - Full suite 582/582 (was 551 → +31 tests across the five items),
+    ~228s. Six commits pushed: 13bff43, 699b50d, 359238f, e92e5e5,
+    e9d862d (+ this log).
+  - RESTART STILL PENDING — the running bot has 2026-05-19's code.
+    None of today's six commits are live until smta.service restarts
+    (needed before tomorrow's 09:15 ET).
+  - New memories saved: user-strategy-preferences (structures + exit
+    philosophy + catalyst-days direction).
+
+**Open / next-session items**
+  - Restart smta.service to make today's work live.
+  - bear_debit is a -$6,040 drag in the backtest and the extension
+    gate may be over-skipping (5/20 miss) — both candidates for the
+    self-learning loop / a future tuning pass.
+  - The morning briefer event_calendar bug ('list' has no
+    get_next_events) is still unfixed — separate from the API cap.
+
+**Tests:** full suite 582/582 — 228s.
+
+---
+
 ## 2026-05-19 (PM) | Latent-bug cleanup + 2nd KB-driven gate + voice + sparkline
 
 Continuation of the morning's session — the user asked "what else
