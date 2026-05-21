@@ -27,16 +27,20 @@ from signals.regime_detector import RegimeDetector, Regime
 def _make_df(trend: str = "up", bars: int = 250) -> pd.DataFrame:
     """
     Generate synthetic SPY daily data.
-    trend="up"   → strong upward drift, ADX > 20
-    trend="down" → strong downward drift, ADX > 20
-    trend="flat" → pure sine-wave oscillation around a fixed mean,
-                   producing near-zero net DM → ADX < 20
+    trend="up"   → steady upward drift, ADX ~33 (clears ADX_TREND_MIN=30),
+                   ~7% above 200MA (under the 9% over-extension cap)
+    trend="down" → steady downward drift, ADX ~33, ~7% below 200MA
+    trend="flat" → strict alternation → ADX ≈ 0, the choppy branch
+
+    Low noise (sd 0.5) keeps the trend directionally consistent so ADX
+    clears 30 without inflating the distance from the 200MA past the
+    over-extension cap.
     """
     rng = np.random.default_rng(42)
     if trend == "up":
-        closes = 400 + np.cumsum(rng.normal(0.35, 1.2, bars))
+        closes = 400 + np.cumsum(rng.normal(0.35, 0.5, bars))
     elif trend == "down":
-        closes = 500 - np.cumsum(rng.normal(0.35, 1.2, bars))
+        closes = 500 - np.cumsum(rng.normal(0.35, 0.5, bars))
     else:
         # Strictly alternating +0.05 / -0.05 bars → +DM and -DM cancel
         # producing ADX ≈ 0, which reliably triggers the choppy branch.

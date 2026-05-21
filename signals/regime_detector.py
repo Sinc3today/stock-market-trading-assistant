@@ -81,9 +81,15 @@ class RegimeResult:
 # ─────────────────────────────────────────
 # THRESHOLDS — tune via backtest, not vibes
 # ─────────────────────────────────────────
-VIX_CALM_MAX     = 17.0   # Below this = calm
+VIX_CALM_MAX     = 18.0   # Below this = calm (raised 17→18 2026-05-20: promotes
+                          # VIX 17-18 choppy days from reduced to full-size
+                          # condors; those are ~82% win)
 VIX_ELEVATED_MAX = 22.0   # Above this = skip condors / reduce size
-ADX_TREND_MIN    = 25.0   # Above this = trending market
+ADX_TREND_MIN    = 30.0   # Above this = trending market. Raised 25→30 (5yr
+                          # backtest 2026-05-20): weak ADX 25-30 "trends" have
+                          # no directional edge; reclassifying them as choppy
+                          # routes them to 74%-win condors. Lifted win 59→64%,
+                          # P&L +$4.8k, Sharpe 3.06→3.54.
 TREND_MA_PERIOD  = 200
 ADX_PERIOD       = 14
 

@@ -32,7 +32,7 @@ def iso_logs(tmp_path, monkeypatch):
 def test_production_stats_returns_defaults_when_no_file(iso_logs):
     stats = bs.production_stats()
     assert stats["source"] == "static_defaults"
-    assert stats["overview"]["sharpe"] == pytest.approx(3.06)
+    assert stats["overview"]["sharpe"] == pytest.approx(3.54)
     # Core regime claim from docs
     ic = next(r for r in stats["by_regime"] if r["regime"] == "choppy_low_vol")
     assert ic["win_rate_pct"] == pytest.approx(74.1)
