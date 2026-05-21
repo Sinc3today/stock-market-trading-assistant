@@ -36,6 +36,8 @@ from enum import Enum
 import pandas as pd
 from loguru import logger
 
+import config
+
 
 # ─────────────────────────────────────────
 # ENUMS + DATACLASS
@@ -233,13 +235,20 @@ class RegimeDetector:
                 f"SPY {ma_dist_pct:+.1f}% above 200MA (uptrend confirmed)",
             ]
 
-            # Elevated VIX in a trending tape → reduced-size directional only.
+            # Elevated VIX in a trending tape → SKIP. The tuned 5yr backtest
+            # confirms TRENDING_HIGH_VOL has no edge (19% win rate); trading
+            # it "reduced size" cost -$4,600 / ~half the Sharpe over 5 years
+            # (verified 2026-05-20). This matches the documented decision in
+            # CLAUDE.md ("TRENDING_HIGH_VOL tradeable = False").
             if is_elevated:
-                reasons.append(f"VIX {vix_current:.1f} elevated — 50% size, widen stops")
+                reasons += [
+                    f"VIX {vix_current:.1f} elevated in a trending tape",
+                    "TRENDING_HIGH_VOL has no backtested edge (19% win rate) — skip",
+                ]
                 return RegimeResult(
-                    Regime.TRENDING_HIGH_VOL, True,
-                    "BULL CALL DEBIT SPREAD — reduced size (50%), elevated vol",
-                    0.6, reasons, metrics,
+                    Regime.TRENDING_HIGH_VOL, False,
+                    "SKIP — trending into elevated vol, no edge",
+                    0.9, reasons, metrics,
                 )
 
             # Skip-check 1: trend hasn't separated from MA200 — no directional
@@ -271,16 +280,19 @@ class RegimeDetector:
                     0.6, reasons, metrics,
                 )
 
-            # Pick play by IVR.
-            play = (
-                "BULL PUT CREDIT SPREAD — IVR elevated, sell the put side"
-                if ivr_current >= 50 else
-                "BULL CALL DEBIT SPREAD — low IVR, cheap calls, buy the move"
-            )
-            reasons.append(
-                f"IVR {ivr_current:.0f} {'≥' if ivr_current >= 50 else '<'} 50 "
-                f"→ {'sell premium' if ivr_current >= 50 else 'buy directional'}"
-            )
+            # Pick play by IVR — unless the user prefers debit structures, in
+            # which case high-IVR days take a bull call debit too (backtest-
+            # neutral; see config.PREFER_DEBIT_OVER_CREDIT).
+            want_credit = ivr_current >= 50 and not config.PREFER_DEBIT_OVER_CREDIT
+            if want_credit:
+                play = "BULL PUT CREDIT SPREAD — IVR elevated, sell the put side"
+                reasons.append(f"IVR {ivr_current:.0f} ≥ 50 → sell premium")
+            else:
+                play = "BULL CALL DEBIT SPREAD — buy the directional move"
+                if ivr_current >= 50:
+                    reasons.append(f"IVR {ivr_current:.0f} ≥ 50 but preferring debit structure")
+                else:
+                    reasons.append(f"IVR {ivr_current:.0f} < 50 → buy directional")
             return RegimeResult(
                 Regime.TRENDING_UP_CALM, True, play, 0.85, reasons, metrics,
             )
@@ -291,22 +303,27 @@ class RegimeDetector:
                 f"ADX {adx:.1f} ≥ {ADX_TREND_MIN} (trending)",
                 f"SPY {ma_dist_pct:+.1f}% below 200MA (downtrend confirmed)",
             ]
+            # Same no-edge skip as the up-trend case (see note above).
             if is_elevated:
-                reasons.append(f"VIX {vix_current:.1f} elevated — 50% size, widen stops")
+                reasons += [
+                    f"VIX {vix_current:.1f} elevated in a trending tape",
+                    "TRENDING_HIGH_VOL has no backtested edge (19% win rate) — skip",
+                ]
                 return RegimeResult(
-                    Regime.TRENDING_HIGH_VOL, True,
-                    "BEAR PUT DEBIT SPREAD — reduced size (50%), elevated vol",
-                    0.6, reasons, metrics,
+                    Regime.TRENDING_HIGH_VOL, False,
+                    "SKIP — trending into elevated vol, no edge",
+                    0.9, reasons, metrics,
                 )
-            play = (
-                "BEAR CALL CREDIT SPREAD — IVR elevated, sell the call side"
-                if ivr_current >= 50 else
-                "BEAR PUT DEBIT SPREAD — low IVR, cheap puts, buy the move down"
-            )
-            reasons.append(
-                f"IVR {ivr_current:.0f} {'≥' if ivr_current >= 50 else '<'} 50 "
-                f"→ {'sell premium' if ivr_current >= 50 else 'buy directional'}"
-            )
+            want_credit = ivr_current >= 50 and not config.PREFER_DEBIT_OVER_CREDIT
+            if want_credit:
+                play = "BEAR CALL CREDIT SPREAD — IVR elevated, sell the call side"
+                reasons.append(f"IVR {ivr_current:.0f} ≥ 50 → sell premium")
+            else:
+                play = "BEAR PUT DEBIT SPREAD — buy the directional move down"
+                if ivr_current >= 50:
+                    reasons.append(f"IVR {ivr_current:.0f} ≥ 50 but preferring debit structure")
+                else:
+                    reasons.append(f"IVR {ivr_current:.0f} < 50 → buy directional")
             return RegimeResult(
                 Regime.TRENDING_DOWN_CALM, True, play, 0.85, reasons, metrics,
             )

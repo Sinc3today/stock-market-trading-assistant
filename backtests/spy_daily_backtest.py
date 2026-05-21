@@ -186,9 +186,10 @@ class SPYBacktest:
         if not r.tradeable: return 'skip'
         ivr  = r.metrics.get('ivr', 30)
         dist = r.metrics.get('ma200_dist_%', 0)
-        if r.regime == Regime.TRENDING_UP_CALM:   return 'bull_credit' if ivr >= 50 else 'bull_debit'
-        if r.regime == Regime.TRENDING_DOWN_CALM: return 'bear_credit' if ivr >= 50 else 'bear_debit'
-        if r.regime == Regime.TRENDING_HIGH_VOL:  return 'bull_debit'  if dist >= 0  else 'bear_debit'
+        want_credit = ivr >= 50 and not config.PREFER_DEBIT_OVER_CREDIT
+        if r.regime == Regime.TRENDING_UP_CALM:   return 'bull_credit' if want_credit else 'bull_debit'
+        if r.regime == Regime.TRENDING_DOWN_CALM: return 'bear_credit' if want_credit else 'bear_debit'
+        if r.regime == Regime.TRENDING_HIGH_VOL:  return 'bull_debit'  if dist >= 0   else 'bear_debit'
         if r.regime == Regime.CHOPPY_LOW_VOL:     return 'iron_condor'
         return 'skip'
 

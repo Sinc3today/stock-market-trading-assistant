@@ -115,13 +115,29 @@ def test_trending_up_calm_low_ivr(detector, up_df):
     print(f"\n✅ Uptrend calm low IVR → {result.play}")
 
 
-def test_trending_up_calm_high_ivr(detector, up_df):
-    """Uptrend + calm VIX + high IVR → BULL PUT CREDIT SPREAD."""
+def test_trending_up_calm_high_ivr_credit_when_flag_off(detector, up_df, monkeypatch):
+    """Uptrend + calm VIX + high IVR → BULL PUT CREDIT SPREAD, but only when
+    the debit-preference flag is off."""
+    import config
+    monkeypatch.setattr(config, "PREFER_DEBIT_OVER_CREDIT", False)
     result = detector.classify(up_df, vix_current=14.0, ivr_current=62)
     assert result.regime    == Regime.TRENDING_UP_CALM
     assert result.tradeable is True
     assert "CREDIT SPREAD" in result.play.upper()
-    print(f"\n✅ Uptrend calm high IVR → {result.play}")
+    print(f"\n✅ Uptrend calm high IVR (flag off) → {result.play}")
+
+
+def test_trending_up_calm_high_ivr_prefers_debit_by_default(detector, up_df, monkeypatch):
+    """With PREFER_DEBIT_OVER_CREDIT on (default), high IVR still takes a
+    bull call debit instead of a credit spread (user preference)."""
+    import config
+    monkeypatch.setattr(config, "PREFER_DEBIT_OVER_CREDIT", True)
+    result = detector.classify(up_df, vix_current=14.0, ivr_current=62)
+    assert result.regime    == Regime.TRENDING_UP_CALM
+    assert result.tradeable is True
+    assert "DEBIT SPREAD" in result.play.upper()
+    assert "CREDIT" not in result.play.upper()
+    print(f"\n✅ Uptrend calm high IVR (flag on) → {result.play}")
 
 
 def test_trending_down_calm_low_ivr(detector, down_df):
@@ -133,22 +149,46 @@ def test_trending_down_calm_low_ivr(detector, down_df):
     print(f"\n✅ Downtrend calm low IVR → {result.play}")
 
 
-def test_trending_down_calm_high_ivr(detector, down_df):
-    """Downtrend + calm VIX + high IVR → BEAR CALL CREDIT SPREAD."""
+def test_trending_down_calm_high_ivr(detector, down_df, monkeypatch):
+    """Downtrend + calm VIX + high IVR → BEAR CALL CREDIT SPREAD (flag off)."""
+    import config
+    monkeypatch.setattr(config, "PREFER_DEBIT_OVER_CREDIT", False)
     result = detector.classify(down_df, vix_current=16.0, ivr_current=65)
     assert result.regime    == Regime.TRENDING_DOWN_CALM
     assert result.tradeable is True
     assert "CREDIT SPREAD" in result.play.upper()
-    print(f"\n✅ Downtrend calm high IVR → {result.play}")
+    print(f"\n✅ Downtrend calm high IVR (flag off) → {result.play}")
 
 
-def test_trending_high_vol_reduces_size(detector, up_df):
-    """Uptrend + elevated VIX → tradeable but half size warning."""
+def test_trending_down_calm_high_ivr_prefers_debit_by_default(detector, down_df, monkeypatch):
+    """With the debit-preference flag on (default), high IVR downtrend takes
+    a bear put debit instead of a bear call credit spread."""
+    import config
+    monkeypatch.setattr(config, "PREFER_DEBIT_OVER_CREDIT", True)
+    result = detector.classify(down_df, vix_current=16.0, ivr_current=65)
+    assert result.regime    == Regime.TRENDING_DOWN_CALM
+    assert result.tradeable is True
+    assert "DEBIT SPREAD" in result.play.upper()
+    assert "CREDIT" not in result.play.upper()
+
+
+def test_trending_high_vol_is_skipped(detector, up_df):
+    """Uptrend + elevated VIX → SKIP. TRENDING_HIGH_VOL has no backtested
+    edge (19% win rate); trading it 'reduced size' cost -$4,600 / ~half the
+    Sharpe over 5 years. Matches CLAUDE.md's documented tradeable=False."""
     result = detector.classify(up_df, vix_current=25.0, ivr_current=40)
     assert result.regime    == Regime.TRENDING_HIGH_VOL
-    assert result.tradeable is True
-    assert any("half size" in r.lower() or "50%" in r for r in result.reasons)
-    print(f"\n✅ High vol trending → {result.play}")
+    assert result.tradeable is False
+    assert "skip" in result.play.lower() or "no edge" in result.play.lower()
+    print(f"\n✅ High vol trending skipped → {result.play}")
+
+
+def test_trending_high_vol_down_is_skipped(detector, down_df):
+    """Downtrend + elevated VIX → SKIP, same no-edge rationale."""
+    result = detector.classify(down_df, vix_current=25.0, ivr_current=40)
+    assert result.regime    == Regime.TRENDING_HIGH_VOL
+    assert result.tradeable is False
+    print(f"\n✅ High vol downtrend skipped → {result.play}")
 
 
 # ─────────────────────────────────────────
@@ -217,14 +257,17 @@ def test_uptrend_too_close_to_ma200_skips(detector, up_df, monkeypatch):
     print(f"\n✅ Too-close-to-MA200 skip fired: {result.play}")
 
 
-def test_moderate_uptrend_still_allows_bull_put(detector, up_df):
-    """SPY ≤8% above 200MA + high IVR → bull put still tradeable."""
+def test_moderate_uptrend_high_ivr_tradeable_below_extension_cap(detector, up_df, monkeypatch):
+    """SPY ≤8% above 200MA + high IVR → tradeable (extension gate doesn't
+    fire). Structure is credit only when the debit-preference flag is off."""
+    import config
+    monkeypatch.setattr(config, "PREFER_DEBIT_OVER_CREDIT", False)
     result = detector.classify(up_df, vix_current=14.0, ivr_current=62)
     assert result.metrics["ma200_dist_%"] <= 8.0
     assert result.regime    == Regime.TRENDING_UP_CALM
     assert result.tradeable is True
     assert "CREDIT" in result.play.upper()
-    print(f"\n✅ Moderate uptrend bull put OK → {result.play}")
+    print(f"\n✅ Moderate uptrend high IVR (flag off) → {result.play}")
 
 
 # ─────────────────────────────────────────

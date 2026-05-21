@@ -56,6 +56,17 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi4:14b")
 OLLAMA_FALLBACK_ENABLED = os.getenv("OLLAMA_FALLBACK_ENABLED", "true").lower() == "true"
 
 # ─────────────────────────────────────────
+# STRATEGY STRUCTURE PREFERENCE
+# ─────────────────────────────────────────
+# Prefer debit spreads over credit spreads in trending regimes. The user
+# dislikes credit spreads; the 5-year backtest (2026-05-20) confirms the
+# switch is performance-neutral (+$40, +0.01 Sharpe) because credit spreads
+# fire only ~3x in 5 years (IVR rarely >= 50). Iron condors are unaffected
+# and remain the core edge. The bull-put extension gate + MIN_CREDIT_SPREAD_RR
+# stay as protection if this is flipped off.
+PREFER_DEBIT_OVER_CREDIT = os.getenv("PREFER_DEBIT_OVER_CREDIT", "true").lower() == "true"
+
+# ─────────────────────────────────────────
 # WEB SERVER  (FastAPI alert detail page)
 # ─────────────────────────────────────────
 # Bind to localhost only — Cloudflare Tunnel is the intended public ingress.
