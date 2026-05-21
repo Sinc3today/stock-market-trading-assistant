@@ -6,6 +6,7 @@ Call register_learning_jobs(scheduler, polygon_client, post_fn) from main.py
 
     09:16 ET (Mon-Fri)  paper_broker.execute_today()
     16:05 ET (Mon-Fri)  outcome_resolver.resolve_today()
+    16:08 ET (Mon-Fri)  exit_manager.manage_open()    (profit target / time stop)
     16:10 ET (Mon-Fri)  expiry_resolver.resolve_expired()
     19:01 ET (Mon-Fri)  reflector.reflect_today()
     Sat 10:00 ET        hypothesis_engine.propose_weekly()
@@ -33,6 +34,7 @@ from learning.hypothesis_engine import HypothesisEngine
 from learning.hypothesis_runner import HypothesisRunner
 from learning.off_hours_learner import OffHoursLearner
 from learning.expiry_resolver   import ExpiryResolver, format_expiry_message
+from learning.exit_manager      import ExitManager, format_exit_message
 
 
 # ── JOB WRAPPERS ──────────────────────────────────────
@@ -58,6 +60,21 @@ def job_outcome_resolver(polygon_client, post_fn=None):
                     logger.warning(f"learning.outcome_resolver notify failed: {e}")
     except Exception as e:
         logger.exception(f"learning.outcome_resolver failed: {e}")
+
+
+def job_exit_manager(polygon_client, vix_client=None, post_fn=None):
+    try:
+        closed = ExitManager(
+            polygon_client=polygon_client, vix_client=vix_client,
+        ).manage_open()
+        logger.info(f"learning.exit_manager -> {len(closed)} closed")
+        if closed and post_fn:
+            try:
+                post_fn(format_exit_message(closed))
+            except Exception as e:
+                logger.warning(f"learning.exit_manager notify failed: {e}")
+    except Exception as e:
+        logger.exception(f"learning.exit_manager failed: {e}")
 
 
 def job_expiry_resolver(polygon_client, post_fn=None):
@@ -113,9 +130,10 @@ def job_off_hours_learner():
 def register_learning_jobs(
     scheduler,
     polygon_client=None,
+    vix_client=None,
     post_fn=None,
 ):
-    """Register all six learning jobs onto an already-running scheduler."""
+    """Register all learning jobs onto an already-running scheduler."""
     from apscheduler.triggers.cron import CronTrigger
     eastern = pytz.timezone("US/Eastern")
 
@@ -133,6 +151,15 @@ def register_learning_jobs(
         kwargs={"polygon_client": polygon_client, "post_fn": post_fn},
         id="learning_outcome_resolver",
         name="Learning: outcome resolver",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        job_exit_manager,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=8, timezone=eastern),
+        kwargs={"polygon_client": polygon_client, "vix_client": vix_client, "post_fn": post_fn},
+        id="learning_exit_manager",
+        name="Learning: exit manager",
         replace_existing=True,
     )
 

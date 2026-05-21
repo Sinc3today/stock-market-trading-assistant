@@ -412,6 +412,7 @@ if __name__ == "__main__":
         register_learning_jobs(
             scheduler      = scheduler,
             polygon_client = PolygonClient(),
+            vix_client     = VIXClient(),   # exit_manager marks spreads with VIX as IV
             post_fn        = notifier.message,
         )
         logger.info("✅ Self-learning jobs registered")

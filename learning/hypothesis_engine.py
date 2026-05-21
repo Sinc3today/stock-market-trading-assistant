@@ -53,6 +53,8 @@ TUNABLE_PARAMS = {
     ("signals.regime_detector", "MIN_TREND_SEPARATION_PCT"): {"type": "float", "min": 0.5,  "max": 3.0},
     ("signals.regime_detector", "EXTENDED_TREND_MAX_PCT"):   {"type": "float", "min": 5.0,  "max": 15.0},
     ("signals.options_layer",   "MIN_CREDIT_SPREAD_RR"):     {"type": "float", "min": 0.20, "max": 0.75},
+    ("learning.exit_manager",   "PROFIT_TARGET_PCT"):        {"type": "float", "min": 0.40, "max": 0.90},
+    ("learning.exit_manager",   "DTE_CLOSE_THRESHOLD"):      {"type": "int",   "min": 7,    "max": 30},
     ("config",                  "SCORE_ALERT_MINIMUM"):    {"type": "int",   "min": 30,   "max": 75},
     ("config",                  "SCORE_HIGH_CONVICTION"):  {"type": "int",   "min": 55,   "max": 90},
     ("config",                  "MIN_RISK_REWARD_RATIO"):  {"type": "float", "min": 1.0,  "max": 3.0},

@@ -29,17 +29,32 @@ class FakeScheduler:
 def test_register_learning_jobs_adds_all_jobs():
     s = FakeScheduler()
     sched.register_learning_jobs(s, polygon_client=None, post_fn=None)
-    assert len(s.jobs) == 7
+    assert len(s.jobs) == 8
     job_ids = {j["id"] for j in s.jobs}
     assert job_ids == {
         "learning_paper_broker",
         "learning_outcome_resolver",
+        "learning_exit_manager",
         "learning_expiry_resolver",
         "learning_reflector",
         "learning_hypothesis_engine",
         "learning_hypothesis_runner",
         "learning_off_hours",
     }
+
+
+def test_exit_manager_job_receives_polygon_vix_and_post_fn():
+    """Exit manager needs SPY close (polygon), VIX (for the BS mark), and a
+    notifier (post_fn)."""
+    s = FakeScheduler()
+    polygon, vixc = object(), object()
+    post_fn = lambda msg: None
+    sched.register_learning_jobs(s, polygon_client=polygon, vix_client=vixc, post_fn=post_fn)
+
+    job = next(j for j in s.jobs if j["id"] == "learning_exit_manager")
+    assert job["kwargs"]["polygon_client"] is polygon
+    assert job["kwargs"]["vix_client"]     is vixc
+    assert job["kwargs"]["post_fn"]        is post_fn
 
 
 def test_expiry_resolver_job_receives_polygon_client_and_post_fn():
