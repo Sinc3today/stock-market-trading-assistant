@@ -60,29 +60,30 @@ HYPOTHESES_DIR = "learning/hypotheses"
 # a fresh logs/backtest_summary.json after re-running the backtest.
 _PRODUCTION_DEFAULTS = {
     "source":   "static_defaults",
-    "version":  "tuned-2025",
+    "version":  "tuned-2026-05 (over-extension cap)",
     "years":    5,
     "overview": {
-        "sharpe":             1.73,
-        "win_rate_pct":       50.3,
+        "sharpe":             3.06,
+        "win_rate_pct":       59.4,
         "total_return_pct":   None,    # not recorded in the docs snapshot
-        "trade_days":         None,
-        "skip_days":          None,
+        "trade_days":         495,
+        "skip_days":          525,
     },
     "by_regime": [
         {"regime": "choppy_low_vol",     "win_rate_pct": 74.1, "tradeable": True,
          "note":   "Iron condor edge — the core profit driver."},
         {"regime": "trending_down_calm", "win_rate_pct": 44.7, "tradeable": True,
          "note":   "Bear debit spread, modest edge."},
-        {"regime": "trending_up_calm",   "win_rate_pct": 38.5, "tradeable": True,
-         "note":   "Bull debit spread, weak edge."},
+        {"regime": "trending_up_calm",   "win_rate_pct": 59.4, "tradeable": True,
+         "note":   "Bull debit, now capped at <9% above 200MA (over-extended skipped)."},
         {"regime": "trending_high_vol",  "win_rate_pct": 19.0, "tradeable": False,
          "note":   "Confirmed no edge — skipped in production."},
     ],
     "thresholds": {
-        "ADX_TREND_MIN":     25.0,
-        "VIX_CALM_MAX":      17.0,
-        "IC_RANGE_PCT":      2.5,
+        "ADX_TREND_MIN":          25.0,
+        "VIX_CALM_MAX":           17.0,
+        "EXTENDED_TREND_MAX_PCT":  9.0,
+        "IC_RANGE_PCT":            2.5,
     },
 }
 

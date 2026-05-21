@@ -279,9 +279,9 @@ def test_macro_page_renders_baseline_card_from_static_defaults(client, app_modul
     r = client.get("/macro")
     assert r.status_code == 200
     assert "Tuned baseline" in r.text
-    # Static defaults: 50.3% / 1.73 / 5y
-    assert "50.3%"          in r.text
-    assert "1.73"           in r.text
+    # Static defaults: 59.4% / 3.06 / 5y (post over-extension cap)
+    assert "59.4%"          in r.text
+    assert "3.06"           in r.text
     assert "backtests.rerun" in r.text   # call-to-action mentions the CLI
 
 
@@ -1198,7 +1198,7 @@ def test_backtest_page_baseline_only(client, app_modules):
     r = client.get("/backtest")
     assert r.status_code == 200
     assert "Production Baseline"   in r.text
-    assert "1.73"                  in r.text   # default Sharpe from docs
+    assert "3.06"                  in r.text   # default Sharpe (post over-extension cap)
     assert "74.1%"                 in r.text   # iron condor edge
     assert "By Regime"             in r.text
     assert "Prediction Accuracy"   in r.text

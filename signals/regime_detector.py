@@ -92,12 +92,13 @@ ADX_PERIOD       = 14
 # a debit or credit spread to have a directional edge.
 MIN_TREND_SEPARATION_PCT = 1.5
 
-# Entry-timing guard for bull put credit spreads: when SPY is more than this
-# many percent above the 200MA, selling puts on the same day risks an
-# immediate mean-reversion that puts the short strike ITM before theta can
-# work. Derived from 2026-05-18 KB entry (entry at +9.3% extension closed
-# -0.19% same day; short strike $1.20 ITM by EOD).
-EXTENDED_TREND_MAX_PCT = 8.0
+# Over-extension cap for ALL bull structures (debit + credit): when SPY is
+# more than this many percent above the 200MA, long-biased trades have
+# negative expectancy (the rally mean-reverts). 5yr backtest grid found 9%
+# optimal — capping here lifts win rate 50%→60%, P&L +$2,420, Sharpe
+# 1.73→2.49 vs no cap. First seen as the 2026-05-18 bull-put loss
+# (KB entry_timing); confirmed to generalize to debit spreads.
+EXTENDED_TREND_MAX_PCT = 9.0
 
 
 # ─────────────────────────────────────────
@@ -264,19 +265,22 @@ class RegimeDetector:
                     0.4, reasons, metrics,
                 )
 
-            # Skip-check 2: bull-put-only entry-timing guard. Selling puts
-            # into an already-extended rally puts the short strike at risk
-            # on a normal same-day mean-reversion. See KB 2026-05-18
-            # entry_timing entry.
-            if ivr_current >= 50 and ma_dist_pct > EXTENDED_TREND_MAX_PCT:
+            # Skip-check 2: over-extension guard for ALL bull structures.
+            # An extended rally mean-reverts; entering long-biased (debit or
+            # credit) when SPY is far above its 200MA has negative expectancy.
+            # 5yr backtest (2026-05-20): bull trades >9% above 200MA win only
+            # ~30% and lose money; capping here lifts win rate 50%→60%, P&L
+            # +$2,420, Sharpe 1.73→2.49. First seen as the 5/18 bull-put loss
+            # (KB 2026-05-18 entry_timing); confirmed to generalize to debit.
+            if ma_dist_pct > EXTENDED_TREND_MAX_PCT:
                 reasons.append(
                     f"SPY {ma_dist_pct:+.1f}% above 200MA exceeds "
-                    f"{EXTENDED_TREND_MAX_PCT:.1f}% extension cap — same-day "
-                    f"reversion risk on bull put too high; wait for pullback"
+                    f"{EXTENDED_TREND_MAX_PCT:.1f}% extension cap — "
+                    f"over-extended, negative expectancy; wait for pullback"
                 )
                 return RegimeResult(
                     Regime.TRENDING_UP_CALM, False,
-                    "SKIP — trend too extended for bull put (wait for pullback)",
+                    "SKIP — trend too extended (wait for pullback)",
                     0.6, reasons, metrics,
                 )
 

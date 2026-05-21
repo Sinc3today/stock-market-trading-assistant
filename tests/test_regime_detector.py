@@ -225,16 +225,18 @@ def test_extended_uptrend_blocks_bull_put(detector):
     print(f"\n✅ Extended uptrend bull put blocked → {result.play}")
 
 
-def test_extended_uptrend_allows_bull_call_debit(detector):
-    """Same extended uptrend but LOW IVR (debit) → still tradeable.
-    The gate only fires on credit spreads where the short strike is exposed."""
+def test_extended_uptrend_blocks_debit_too(detector):
+    """Over-extension cap now applies to debit spreads as well, not just
+    credit. A LOW-IVR (debit) day that's far above the 200MA still skips —
+    the 5yr backtest showed bull debits >9% extended have negative
+    expectancy (win rate 50%→60%, Sharpe 1.73→3.06 after capping)."""
     df     = _make_extended_uptrend_df()
     result = detector.classify(df, vix_current=14.0, ivr_current=22)
-    assert result.metrics["ma200_dist_%"] > 8.0
+    assert result.metrics["ma200_dist_%"] > 9.0
     assert result.regime    == Regime.TRENDING_UP_CALM
-    assert result.tradeable is True
-    assert "DEBIT" in result.play.upper()
-    print(f"\n✅ Extended uptrend debit still allowed → {result.play}")
+    assert result.tradeable is False
+    assert "extended" in result.play.lower() or "pullback" in result.play.lower()
+    print(f"\n✅ Extended uptrend debit now blocked → {result.play}")
 
 
 def test_uptrend_too_close_to_ma200_skips(detector, up_df, monkeypatch):
