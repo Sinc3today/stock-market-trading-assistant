@@ -60,15 +60,35 @@ flatten), run_intraday_backtest. Verified end-to-end on real data.
   the user's "confirmation from our strategies" instinct). Caveats:
   small sample, untuned params, naive entry.
 
-**Still pending:**
-  - PHASE 1 confirmation layer (IN PROGRESS): pre-market-informed entry
-    + VWAP/opening-range timing + intraday indicator confirmation.
-    Re-test: does confirmed entry turn 0DTE profitable? Do NOT wire
-    0DTE live until it does.
-  - context_analyst built but NOT yet wired into the live morning flow.
-  - Then: wire intraday tracks live; per-track journaling; ML learner.
+**Phase 1 confirmation layer + verdict** (commits `2c1ecfe`, `d6f806d`).
+Built the blend confirmation (opening-range + VWAP gate at ~9:45 ET;
+condor needs price in-range & near VWAP, debit needs a held breakout)
+and option-aggregate caching (parquet, empty results cached).
 
-**Tests:** full suite 632/632.
+  THE VERDICT (real option prices):
+    Blind, 2mo:      41 trades  46% win  -$312
+    Confirmed, 2mo:  11 trades  55% win  +$20   (small-sample luck)
+    Confirmed, FULL-YEAR 2024:  48 trades  54% win  -$515  Sharpe -2.23
+      iron_condor 31 @ 61% win -> -$433  (wins often, LOSES money)
+      bull_debit  17 @ 41% win -> -$82
+
+  0DTE as designed has NO edge. The condor's 61%-win-but-net-loss is a
+  MATHEMATICAL exit flaw: 50% profit target + 2x stop => each loss ~4x a
+  win => needs ~80% win to break even. Phase 1 did its job — caught a
+  losing strategy BEFORE wiring live. Re-tuning the exit could fix it,
+  but MUST be walk-forward validated (not in-sample on 2024).
+
+**State of the tracks:**
+  - 45DTE + 5DTE: VALIDATED (walk-forward, Sharpe 3.58). Live-alerting.
+  - 0DTE/1DTE: NOT validated (loses as designed). Blocked on finding a
+    real edge — the path to "2-3 trades/day" is gated on this.
+
+**Still pending:**
+  - 0DTE: re-tune exit rules with WALK-FORWARD validation, or shelve.
+  - context_analyst built but NOT yet wired into the live morning flow.
+  - per-track journaling; ML learner (#17).
+
+**Tests:** full suite 639/639.
 
 ---
 
