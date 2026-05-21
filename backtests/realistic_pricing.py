@@ -114,11 +114,18 @@ def _spread_width(legs: list[dict]) -> float:
 
 
 def simulate_trade(spy_df: pd.DataFrame, dates: list, entry_idx: int,
-                   play: str, vix_at: dict) -> dict | None:
+                   play: str, vix_at: dict,
+                   entry_dte: int = ENTRY_DTE,
+                   profit_target_pct: float = PROFIT_TARGET_PCT,
+                   dte_close_threshold: int = DTE_CLOSE_THRESHOLD) -> dict | None:
     """
     Price one trade's full lifecycle realistically. Returns a dict with
     realized pnl_dollars, outcome, exit_reason, days_held -- or None if the
     play isn't a recognised structure.
+
+    entry_dte / profit_target_pct / dte_close_threshold default to the 45DTE
+    track's values but are overridden per TimeframeTrack so each timeframe is
+    priced with its own expiry + exit math.
 
     vix_at: mapping date -> vix (falls back to 16.0).
     """
@@ -126,13 +133,13 @@ def simulate_trade(spy_df: pd.DataFrame, dates: list, entry_idx: int,
     if not legs:
         return None
     entry_date = dates[entry_idx]
-    expiry     = entry_date + timedelta(days=ENTRY_DTE)
+    expiry     = entry_date + timedelta(days=entry_dte)
     spot0      = float(spy_df.loc[entry_date, "close"])
     vix0       = vix_at.get(entry_date, 16.0)
     credit     = _is_credit(play)
     width      = _spread_width(legs)
 
-    long0, short0 = _net_value(legs, spot0, vix0, ENTRY_DTE)
+    long0, short0 = _net_value(legs, spot0, vix0, entry_dte)
     if credit:
         entry_px   = max(0.0, short0 - long0) - ENTRY_SLIPPAGE   # credit received (less, slipped)
         max_profit = entry_px * 100
@@ -159,8 +166,8 @@ def simulate_trade(spy_df: pd.DataFrame, dates: list, entry_idx: int,
             proceeds = max(0.0, long_v - short_v) - EXIT_SLIPPAGE  # receive to close (slipped worse)
             pnl      = (proceeds - entry_px) * 100
 
-        hit_target = max_profit > 0 and pnl / max_profit >= PROFIT_TARGET_PCT
-        if hit_target or dte <= DTE_CLOSE_THRESHOLD or dte <= 0:
+        hit_target = max_profit > 0 and pnl / max_profit >= profit_target_pct
+        if hit_target or dte <= dte_close_threshold or dte <= 0:
             net = pnl - commission
             return {
                 "play":        play,
@@ -194,25 +201,37 @@ def _vix_lookup(dates, vix_df) -> dict:
 
 
 def run_realistic_backtest(spy_df, regime_results: pd.DataFrame, vix_df=None,
-                           max_concurrent: int = 1) -> pd.DataFrame:
+                           max_concurrent: int = 1, track=None) -> pd.DataFrame:
     """
-    Replay realistic per-trade P&L under a position-CONCURRENCY limit.
+    Replay realistic per-trade P&L for one timeframe TRACK under a position-
+    CONCURRENCY limit.
 
     regime_results: the DataFrame from SPYBacktest.run() (date/play/tradeable).
+    track: a signals.timeframes.TimeframeTrack (DTE + exit params). Defaults
+        to 45DTE behaviour when None.
     max_concurrent: how many positions may be open at once. 1 = a single-
     position account (what one busy human can actually follow); a large
     number approximates the unconstrained "take every signal" backtest.
 
     Concurrency matters enormously: the unconstrained backtest opens a fresh
-    45-DTE trade EVERY tradeable day, stacking 10+ overlapping positions on
-    the same market move. That inflates totals to fantasy levels. Capping
-    concurrency is what makes the P&L reflect a real account.
+    trade EVERY tradeable day, stacking overlapping positions on the same
+    market move, which inflates totals to fantasy levels. Capping concurrency
+    is what makes the P&L reflect a real account.
     """
     from datetime import timedelta
     spy_df = spy_df.copy(); spy_df.index = pd.to_datetime(spy_df.index)
     dates  = sorted(pd.to_datetime(spy_df.index))
     didx   = {d: i for i, d in enumerate(dates)}
     va     = _vix_lookup(dates, vix_df)
+
+    if track is not None:
+        sim_kw = dict(
+            entry_dte=track.target_dte,
+            profit_target_pct=track.profit_target_pct,
+            dte_close_threshold=track.dte_close_threshold,
+        )
+    else:
+        sim_kw = {}
 
     signals = {
         pd.to_datetime(r["date"]): r["play"]
@@ -225,7 +244,7 @@ def run_realistic_backtest(spy_df, regime_results: pd.DataFrame, vix_df=None,
     for d in dates:
         open_until = [x for x in open_until if x > d]
         if d in signals and len(open_until) < max_concurrent:
-            r = simulate_trade(spy_df, dates, didx[d], signals[d], va)
+            r = simulate_trade(spy_df, dates, didx[d], signals[d], va, **sim_kw)
             if r:
                 r["date"] = d
                 rows.append(r)
