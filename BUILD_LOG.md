@@ -46,15 +46,29 @@ days is slow/non-deterministic).
     condors, the wrong structure for those days). To be validated with
     real 0DTE option data.
 
+**Phase 1 engine + baseline** (commit `4a3bd17`). backtests/intraday
+_backtest.py: real-priced 0DTE backtest on options_history +
+intraday_data (no BS). decide_structure (regime-split + the high-vol
+reframe: engage directionally), build_0dte_legs, simulate_0dte_day
+(pulls real intraday option bars, exits on target/stop/15:45 ET
+flatten), run_intraday_backtest. Verified end-to-end on real data.
+
+  BASELINE (Jun-Jul 2024, 41 trades): 43.9% win, -$539, avg -$13 ->
+  LOSES money. This is the honest answer Phase 1 exists to give: the
+  engine currently enters BLIND at 9:35 — the CONFIRMATION layer isn't
+  built yet. Proves the confirmation gate is load-bearing (validates
+  the user's "confirmation from our strategies" instinct). Caveats:
+  small sample, untuned params, naive entry.
+
 **Still pending:**
-  - context_analyst is built but NOT yet wired into the live morning
-    flow (standalone engine).
-  - PHASE 1 (the make-or-break): real-priced 0DTE/1DTE backtest of the
-    mechanical core via options_history + intraday_data. Validates the
-    strategy BEFORE wiring live.
+  - PHASE 1 confirmation layer (IN PROGRESS): pre-market-informed entry
+    + VWAP/opening-range timing + intraday indicator confirmation.
+    Re-test: does confirmed entry turn 0DTE profitable? Do NOT wire
+    0DTE live until it does.
+  - context_analyst built but NOT yet wired into the live morning flow.
   - Then: wire intraday tracks live; per-track journaling; ML learner.
 
-**Tests:** full suite 622/622.
+**Tests:** full suite 632/632.
 
 ---
 
