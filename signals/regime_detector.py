@@ -85,11 +85,13 @@ VIX_CALM_MAX     = 18.0   # Below this = calm (raised 17→18 2026-05-20: promot
                           # VIX 17-18 choppy days from reduced to full-size
                           # condors; those are ~82% win)
 VIX_ELEVATED_MAX = 22.0   # Above this = skip condors / reduce size
-ADX_TREND_MIN    = 30.0   # Above this = trending market. Raised 25→30 (5yr
-                          # backtest 2026-05-20): weak ADX 25-30 "trends" have
-                          # no directional edge; reclassifying them as choppy
-                          # routes them to 74%-win condors. Lifted win 59→64%,
-                          # P&L +$4.8k, Sharpe 3.06→3.54.
+ADX_TREND_MIN    = 32.0   # Above this = trending market. Raised 25→30→32. The
+                          # 30→32 bump is walk-forward validated (2026-05-20):
+                          # the harness independently picked ADX 32 in 3 of 4
+                          # out-of-sample folds. Weak ADX <32 "trends" have no
+                          # directional edge; reclassifying them as choppy
+                          # routes them to 74%-win condors. In-sample:
+                          # 65.2% win, +$19,440, Sharpe 3.58.
 TREND_MA_PERIOD  = 200
 ADX_PERIOD       = 14
 
