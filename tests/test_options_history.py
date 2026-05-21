@@ -43,12 +43,21 @@ class _Bar:
 
 
 class _FakeClient:
-    def __init__(self, bars): self._bars = bars
-    def list_aggs(self, *a, **k): return iter(self._bars)
+    def __init__(self, bars): self._bars = bars; self.calls = 0
+    def list_aggs(self, *a, **k):
+        self.calls += 1
+        return iter(self._bars)
 
 
 class _BoomClient:
     def list_aggs(self, *a, **k): raise RuntimeError("api down")
+
+
+@pytest.fixture(autouse=True)
+def tmp_cache(tmp_path, monkeypatch):
+    """Redirect the parquet cache to a tmp dir so tests stay hermetic."""
+    import data.options_history as oh_mod
+    monkeypatch.setattr(oh_mod, "_CACHE_DIR", str(tmp_path / "opt_cache"))
 
 
 def test_get_aggs_builds_dataframe():
@@ -69,6 +78,25 @@ def test_get_aggs_empty_on_no_bars():
 def test_get_aggs_empty_on_exception():
     oh = OptionsHistory(client=_BoomClient())
     assert oh.get_aggs("O:X", 1, "day", date(2024, 1, 1), date(2024, 1, 2)).empty
+
+
+def test_cache_roundtrip_skips_refetch():
+    bars = [_Bar(1721016000000, 18.0, 19.0, 17.5, 17.48, 1017)]
+    fake = _FakeClient(bars)
+    oh = OptionsHistory(client=fake)
+    a = oh.get_aggs("O:SPY240816C00550000", 1, "day", date(2024, 7, 15), date(2024, 8, 16))
+    b = oh.get_aggs("O:SPY240816C00550000", 1, "day", date(2024, 7, 15), date(2024, 8, 16))
+    assert fake.calls == 1            # second call served from parquet cache
+    assert len(a) == len(b) == 1
+
+
+def test_empty_results_are_cached_too():
+    """An illiquid strike with no bars must not re-fetch every run."""
+    fake = _FakeClient([])
+    oh = OptionsHistory(client=fake)
+    oh.get_aggs("O:SPY240816C00999000", 5, "minute", date(2024, 8, 16), date(2024, 8, 16))
+    oh.get_aggs("O:SPY240816C00999000", 5, "minute", date(2024, 8, 16), date(2024, 8, 16))
+    assert fake.calls == 1            # empty result cached, no second fetch
 
 
 def test_leg_close_returns_last_close():

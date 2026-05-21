@@ -29,6 +29,15 @@ from loguru import logger
 
 import config
 
+_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "backtests", ".cache", "options")
+_COLS = ["open", "high", "low", "close", "volume"]
+
+
+def _cache_path(contract: str, multiplier: int, timespan: str,
+                from_s: str, to_s: str) -> str:
+    safe = contract.replace(":", "_")
+    return os.path.join(_CACHE_DIR, f"{safe}_{multiplier}{timespan}_{from_s}_{to_s}.parquet")
+
 
 def option_ticker(underlying: str, expiry: date, cp: str, strike: float) -> str:
     """
@@ -60,32 +69,55 @@ class OptionsHistory:
         return self._client
 
     def get_aggs(self, contract: str, multiplier: int, timespan: str,
-                 from_date, to_date, limit: int = 50000) -> pd.DataFrame:
+                 from_date, to_date, limit: int = 50000,
+                 use_cache: bool = True) -> pd.DataFrame:
         """
         Fetch OHLCV bars for one option contract. timespan: 'day' | 'minute'.
         Returns a DataFrame indexed by timestamp with open/high/low/close/
         volume, or an empty DataFrame on any failure.
+
+        Cached to parquet (use_cache) so a multi-year backtest doesn't re-hit
+        the API for thousands of contracts. EMPTY results are cached too — an
+        illiquid strike with no bars shouldn't re-fetch on every run.
         """
         f = from_date.isoformat() if hasattr(from_date, "isoformat") else str(from_date)
         t = to_date.isoformat()   if hasattr(to_date, "isoformat")   else str(to_date)
+        path = _cache_path(contract, multiplier, timespan, f, t)
+
+        if use_cache and os.path.exists(path):
+            try:
+                return pd.read_parquet(path)
+            except Exception as e:
+                logger.warning(f"OptionsHistory: cache read failed ({path}): {e}")
+
         try:
             bars = list(self._ensure_client().list_aggs(
                 contract, multiplier, timespan, f, t, limit=limit,
             ))
         except Exception as e:
             logger.warning(f"OptionsHistory: list_aggs failed for {contract}: {e}")
-            return pd.DataFrame()
+            return pd.DataFrame(columns=_COLS)
+
         if not bars:
-            return pd.DataFrame()
-        rows = [{
-            "timestamp": pd.to_datetime(getattr(b, "timestamp", None), unit="ms"),
-            "open":   getattr(b, "open", None),
-            "high":   getattr(b, "high", None),
-            "low":    getattr(b, "low", None),
-            "close":  getattr(b, "close", None),
-            "volume": getattr(b, "volume", None),
-        } for b in bars]
-        df = pd.DataFrame(rows).set_index("timestamp").sort_index()
+            df = pd.DataFrame(columns=_COLS)
+            df.index.name = "timestamp"
+        else:
+            rows = [{
+                "timestamp": pd.to_datetime(getattr(b, "timestamp", None), unit="ms"),
+                "open":   getattr(b, "open", None),
+                "high":   getattr(b, "high", None),
+                "low":    getattr(b, "low", None),
+                "close":  getattr(b, "close", None),
+                "volume": getattr(b, "volume", None),
+            } for b in bars]
+            df = pd.DataFrame(rows).set_index("timestamp").sort_index()
+
+        if use_cache:
+            try:
+                os.makedirs(_CACHE_DIR, exist_ok=True)
+                df.to_parquet(path)
+            except Exception as e:
+                logger.warning(f"OptionsHistory: cache write failed ({path}): {e}")
         return df
 
     def leg_close(self, underlying: str, expiry: date, cp: str, strike: float,
