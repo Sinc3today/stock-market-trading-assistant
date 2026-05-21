@@ -83,12 +83,25 @@ and option-aggregate caching (parquet, empty results cached).
   - 0DTE/1DTE: NOT validated (loses as designed). Blocked on finding a
     real edge — the path to "2-3 trades/day" is gated on this.
 
-**Still pending:**
-  - 0DTE: re-tune exit rules with WALK-FORWARD validation, or shelve.
-  - context_analyst built but NOT yet wired into the live morning flow.
-  - per-track journaling; ML learner (#17).
+**Exit re-tune → 0DTE SHELVED** (commit `516565b`). Per the agreed
+"option 3" (one bounded exit re-tune, then decide): parameterized the
+0DTE exit and swept target/stop (incl. no-stop) walk-forward, split
+H1/H2 2024. Dropping the 2x stop helped (-$515 → -$439) but NO config
+was profitable out-of-sample — H2 (39 trades) lost in every one. The
+edge problem is deeper than the exit. So 0DTE is SHELVED (not wired
+live). Saved memory `project-0dte-shelved`: revisit via an ENTRY-level
+retune (walk-forward), the data infra is built + reusable. User wants
+to come back to it.
 
-**Tests:** full suite 639/639.
+**Net: the live edge is the daily tracks (5DTE/45DTE, walk-forward
+validated, Sharpe 3.58). 0DTE is a shelved research project.**
+
+**Still pending (decision point):**
+  - WIRE context_analyst into the live morning brief (built, standalone).
+  - per-track journaling; ML learner (#17).
+  - revisit 0DTE: ENTRY-level retune, walk-forward.
+
+**Tests:** full suite 639/639 (intraday 15/15 after exit param change).
 
 ---
 
