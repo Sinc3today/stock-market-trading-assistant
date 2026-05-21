@@ -45,6 +45,17 @@ PUSHOVER_BASE_URL  = os.getenv("PUSHOVER_BASE_URL", "https://alerts.nexus-lab.wo
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # ─────────────────────────────────────────
+# LOCAL LLM FALLBACK  (nucbox Ollama)
+# ─────────────────────────────────────────
+# When the hosted Anthropic API fails or returns empty (e.g. monthly usage
+# cap), the reflector / morning briefer fall back to the local Ollama stack
+# so the self-learning loop keeps producing output. Endpoint + model are
+# config-driven, never hardcoded.
+OLLAMA_HOST  = os.getenv("OLLAMA_HOST",  "http://nexus-nucbox-k8-plus:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi4:14b")
+OLLAMA_FALLBACK_ENABLED = os.getenv("OLLAMA_FALLBACK_ENABLED", "true").lower() == "true"
+
+# ─────────────────────────────────────────
 # WEB SERVER  (FastAPI alert detail page)
 # ─────────────────────────────────────────
 # Bind to localhost only — Cloudflare Tunnel is the intended public ingress.

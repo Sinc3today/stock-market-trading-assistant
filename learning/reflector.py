@@ -170,35 +170,16 @@ class Reflector:
     # ── CLAUDE ────────────────────────────────────────
 
     def _call_claude(self, prompt: str) -> str:
-        if not self.api_key:
-            logger.warning("Reflector: ANTHROPIC_API_KEY missing -- skipping LLM call")
-            return ""
-        import requests
-        try:
-            resp = requests.post(
-                CLAUDE_API_URL,
-                headers = {
-                    "Content-Type":      "application/json",
-                    "x-api-key":         self.api_key,
-                    "anthropic-version": "2023-06-01",
-                },
-                json = {
-                    "model":      CLAUDE_MODEL,
-                    "max_tokens": 1500,
-                    "system":     REFLECTOR_SYSTEM,
-                    "messages":   [{"role": "user", "content": prompt}],
-                },
-                timeout = 60,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            text = "".join(
-                b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"
-            )
-            return text
-        except Exception as e:
-            logger.error(f"Reflector Claude call failed: {e}")
-            return ""
+        # Anthropic first, then local Ollama fallback (keeps the learning
+        # loop producing KB entries when the hosted API is capped).
+        from data.llm_client import call_llm
+        return call_llm(
+            system          = REFLECTOR_SYSTEM,
+            user            = prompt,
+            anthropic_model = CLAUDE_MODEL,
+            api_key         = self.api_key,
+            max_tokens      = 1500,
+        )
 
     # ── PARSING ───────────────────────────────────────
 

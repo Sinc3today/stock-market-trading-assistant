@@ -267,34 +267,16 @@ class MorningBriefer:
         return "\n".join(ctx_lines)
 
     def _call_claude(self, prompt: str) -> str:
-        if not self.api_key:
-            logger.info("MorningBriefer: no API key -- skipping Claude pass")
-            return ""
-        import requests
-        try:
-            resp = requests.post(
-                CLAUDE_API_URL,
-                headers = {
-                    "Content-Type":      "application/json",
-                    "x-api-key":         self.api_key,
-                    "anthropic-version": "2023-06-01",
-                },
-                json = {
-                    "model":      CLAUDE_MODEL,
-                    "max_tokens": 1200,
-                    "system":     BRIEFER_SYSTEM,
-                    "messages":   [{"role": "user", "content": prompt}],
-                },
-                timeout = 60,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return "".join(
-                b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"
-            )
-        except Exception as e:
-            logger.error(f"MorningBriefer Claude call failed: {e}")
-            return ""
+        # Anthropic first, then local Ollama fallback so the morning brief
+        # still gets a narrative when the hosted API is capped.
+        from data.llm_client import call_llm
+        return call_llm(
+            system          = BRIEFER_SYSTEM,
+            user            = prompt,
+            anthropic_model = CLAUDE_MODEL,
+            api_key         = self.api_key,
+            max_tokens      = 1200,
+        )
 
     @staticmethod
     def _parse_reply(text: str) -> tuple[dict | None, str | None]:

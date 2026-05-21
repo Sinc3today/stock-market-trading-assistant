@@ -22,6 +22,8 @@ from learning.knowledge_base import KnowledgeBase
 def iso(tmp_path, monkeypatch):
     import config
     monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    # Keep tests hermetic: never reach for the live nucbox Ollama fallback.
+    monkeypatch.setattr(config, "OLLAMA_FALLBACK_ENABLED", False)
     return tmp_path
 
 

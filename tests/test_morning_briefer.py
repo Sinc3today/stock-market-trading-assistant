@@ -33,6 +33,8 @@ def iso_logs(tmp_path, monkeypatch):
     monkeypatch.setattr(mr_mod, "_MACRO_DIR", str(tmp_path / "macro"))
     # Strip the live key so unmocked Claude calls can't accidentally hit production.
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    # Keep tests hermetic: never reach for the live nucbox Ollama fallback.
+    monkeypatch.setattr(config, "OLLAMA_FALLBACK_ENABLED", False)
     return tmp_path
 
 
