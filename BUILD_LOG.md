@@ -4,6 +4,60 @@
 
 ---
 
+## 2026-05-21 | Intraday data layer, timezone audit, morning context analyst
+
+Designing toward the 0DTE/1DTE intraday tracks (the path to 2-3
+trades/day). Mostly foundation + a design conversation.
+
+**Intraday data foundation** (commit `3325cae`). data/intraday_data.py:
+cached, fully-paginated intraday stock bars (the old get_bars used
+single-page get_aggs and returned only the oldest ~3 months of a long
+window). Pairs with options_history.py (real option aggregates,
+including the 0DTE intraday session). Verified pre-market bars are
+available from 4am ET — the 8:30 release window is covered.
+
+**Timezone audit** (user flagged: host is Central, market is ET).
+Verdict: the existing code is already ET-disciplined where it matters —
+all scheduler cron jobs use explicit timezone=US/Eastern, and the
+market-hours / weekend guards use datetime.now(US/Eastern) +
+UTC→ET conversion. date.today() in the resolvers is incidentally safe
+(daytime jobs share the date). Only naive usage is the heartbeat log
+(cosmetic). The discipline matters most for NEW intraday code, which is
+built ET-explicit.
+
+**Morning context analyst** (commit `862934d`). signals/context_analyst
+.py: an LLM read of the day's context (events + pre-market gap +
+headlines) → structured {bias, confidence, key_levels, risk_flags,
+summary}. Policy: LOCAL phi4 first (free), ESCALATE to Anthropic only
+on low confidence (event/ambiguous days). Verified live: calm day →
+phi4 alone (free, no escalation); hot-CPI day → escalated to Claude for
+a nuanced read. Cost ~$1-3/yr escalation-only; total bot LLM <$10/yr.
+It's a bias+confidence INPUT that defers to technical signals, and a
+LIVE enhancement (NOT backtested — running a local LLM over hundreds of
+days is slow/non-deterministic).
+
+**0DTE design (agreed with user, not yet built):**
+  - Regime-split structure: condor on range days, directional debit on
+    trend days.
+  - Entry before noon, informed by 8:30 pre-market reaction; enter ~9:00.
+  - Blend confirmation: VWAP/opening-range timing + intraday indicators.
+  - KEY REFRAME: ENGAGE high-vol/event days on the DIRECTIONAL track
+    (they have the most direction; the old skip was calibrated for
+    condors, the wrong structure for those days). To be validated with
+    real 0DTE option data.
+
+**Still pending:**
+  - context_analyst is built but NOT yet wired into the live morning
+    flow (standalone engine).
+  - PHASE 1 (the make-or-break): real-priced 0DTE/1DTE backtest of the
+    mechanical core via options_history + intraday_data. Validates the
+    strategy BEFORE wiring live.
+  - Then: wire intraday tracks live; per-track journaling; ML learner.
+
+**Tests:** full suite 622/622.
+
+---
+
 ## 2026-05-20 (cont. 2) | Walk-forward validation + live 5DTE track + paid-data unlock
 
 Continued. Validated the tuning, wired a second live track, and
