@@ -4,6 +4,77 @@
 
 ---
 
+## 2026-05-20 (cont.) | Strategy tuning (Sharpe→3.54) + realistic pricing + 4-track scaffold
+
+Same day, continued. After the 5-item fix list, the conversation moved
+to "what are our results, how do we improve, how realistic is this to
+follow." Several backtest-gated strategy wins, then a hard look at how
+the P&L is actually computed, then the start of the 4-timeframe system.
+
+**Strategy tuning — restored then exceeded the documented baseline:**
+  - Restoring the documented TRENDING_HIGH_VOL=skip recovered Sharpe
+    1.73 exactly (commit `e9d862d`, logged above as part of #13).
+  - Over-extension cap generalized to ALL bull trades at 9% above
+    200MA (`88d140c`): bull debits >9% extended lose money (29.9%
+    win); capping lifted 50→59% win, Sharpe 1.73→3.06.
+  - ADX floor 25→30 + VIX_CALM_MAX 17→18 (`626688d`): weak ADX 25-30
+    "trends" have no edge — reclassifying them as choppy routes them
+    to 74%-win condors. Lifted to 64% win, +$18,660, Sharpe 3.54.
+    Both debit plays improved (the ask): bull 38→47.5%, bear -$970→
+    -$320. Test fixtures retuned (sd 1.2→0.5) to clear the ADX floor.
+
+  IMPORTANT CAVEAT recorded in the commits: all three are IN-SAMPLE on
+  2022-2026. Each has a mechanical rationale, but out-of-sample
+  validation is still pending (walk-forward is the next build).
+
+**How the $ is actually computed (key honesty finding):**
+  The legacy backtest maps each outcome to a FIXED dollar amount
+  (condor win +$130, etc.) off SPY's 5-day move — good for RANKING
+  configs, not realistic P&L. Built `backtests/realistic_pricing.py`
+  (commit `f35029c`): real spread legs, Black-Scholes entry/exit (VIX
+  as IV, reusing exit_manager.bs_price), live exit rules, commissions
+  + slippage. Verified directionality (bull wins up, bear wins down).
+
+  The big finding: the legacy backtest opens a fresh trade EVERY day
+  with NO concurrency limit — stacking 10+ overlapping positions on
+  the same move (fantasy). Added a max_concurrent cap. The followable
+  truth, single-position: ~47 trades over 4yr (~1/month), 64% win,
+  +$4,985. The +$54k headline needs many concurrent positions + lots
+  of capital. This reframed "how realistic is it to follow."
+
+**4-timeframe system started** (commit `03efa80`). User wants to scale
+to 2-3 trades/day via four independent tracks — 0DTE / 1DTE / 5DTE /
+45DTE — each with its own decision-making, executed MANUALLY. Built
+`signals/timeframes.py`: a TimeframeTrack registry (per-track DTE,
+profit target, exit threshold, intraday flag) that the backtest and
+the future live engine both read. Wired the daily tracks (5DTE, 45DTE)
+into the realistic engine.
+
+  Data reality (splits the four): 45DTE + 5DTE backtest on existing
+  daily data; 0DTE + 1DTE need intraday bars + intraday signal logic +
+  intraday backtest data (a 0DTE trade lives within one day — daily
+  bars can't model it). The fast tracks are scaffolded but disabled,
+  gated on intraday data. Per-track single-position results:
+  5DTE ~54/yr 77% win +$11,879; 45DTE ~11/yr 64% +$4,985.
+
+**Roadmap (tasks #16, #17 + intraday):**
+  1. ✅ realistic-pricing engine
+  2. ✅ multi-timeframe registry + 5DTE
+  3. ⏭ WALK-FORWARD validation — the gate. Confirm the in-sample
+     tuning + 5DTE win rate survive out-of-sample BEFORE scaling
+     frequency (more trades on a false edge loses faster).
+  4. ⏭ assess intraday data availability → build 0DTE/1DTE engine
+  5. ⏭ wire enabled tracks into the live scheduler (per-track alerts)
+  6. ⏭ quantitative ML learner; LLM stays in the narration role
+
+**Ops:** smta.service restarted ~midday — all of this session's commits
+(through `03efa80`) are now LIVE. The API cap also lifted (hosted
+Claude back; Ollama fallback remains as safety net).
+
+**Tests:** full suite 595/595 (was 551 at the start of the day).
+
+---
+
 ## 2026-05-20 | "How's trading going" → 5-item fix list (data, scoring, exits, resilience, strategy)
 
 Started as a status check, turned into a five-item work session. Key
