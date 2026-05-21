@@ -174,7 +174,9 @@ def _spread_value(legs_closes: list[tuple[dict, float]], structure: str) -> floa
 
 
 def simulate_0dte_day(day: date, structure: str, spy_intraday, options_history,
-                      require_confirmation: bool = True) -> dict | None:
+                      require_confirmation: bool = True,
+                      profit_target_pct: float = PROFIT_TARGET_PCT,
+                      stop_mult: float | None = STOP_MULT) -> dict | None:
     """
     Real-priced 0DTE simulation for one day. Entry is at the opening-range end
     (~9:45 ET) gated by the blend confirmation (opening-range + VWAP). Returns
@@ -260,9 +262,9 @@ def simulate_0dte_day(day: date, structure: str, spy_intraday, options_history,
         else:
             proceeds = max(0.0, val - SLIPPAGE)
             pnl      = (proceeds - entry_px) * 100 - commission
-        if max_profit > 0 and pnl >= PROFIT_TARGET_PCT * max_profit:
+        if max_profit > 0 and pnl >= profit_target_pct * max_profit:
             exit_reason = "target"; break
-        if pnl <= -STOP_MULT * max_profit:
+        if stop_mult is not None and pnl <= -stop_mult * max_profit:
             exit_reason = "stop"; break
 
     return {
@@ -276,7 +278,9 @@ def simulate_0dte_day(day: date, structure: str, spy_intraday, options_history,
 
 def run_intraday_backtest(from_date: date, to_date: date,
                           event_dates: set | None = None,
-                          require_confirmation: bool = True) -> "pd.DataFrame":
+                          require_confirmation: bool = True,
+                          profit_target_pct: float = PROFIT_TARGET_PCT,
+                          stop_mult: float | None = STOP_MULT) -> "pd.DataFrame":
     """
     Real-priced 0DTE backtest over a date range. Uses the daily RegimeDetector
     classification (no lookahead) for the structure decision — INCLUDING
@@ -313,7 +317,9 @@ def run_intraday_backtest(from_date: date, to_date: date,
         structure, _ = decision
         spy_intraday = get_stock_intraday("SPY", 5, "minute", d, d, use_cache=True)
         res = simulate_0dte_day(d, structure, spy_intraday, oh,
-                                require_confirmation=require_confirmation)
+                                require_confirmation=require_confirmation,
+                                profit_target_pct=profit_target_pct,
+                                stop_mult=stop_mult)
         if res:
             res["regime"] = regime
             rows.append(res)
