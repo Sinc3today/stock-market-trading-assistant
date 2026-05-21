@@ -44,13 +44,24 @@ saved user-strategy-preferences earlier.
 **Ops:** smta.service restarted again — ADX 32 + the 5DTE alert job
 are LIVE. (options_history is a data/backtest layer, not live-path.)
 
-**Roadmap now:** 0DTE/1DTE engine has a real-data backtest path. Next:
-(1) paginate/cache ~2yr intraday SPY + option data, (2) intraday
-signal engine, (3) real-priced 0DTE backtest via options_history,
-(4) wire live. Plus the deferred per-track journaling, and the ML
-learner (#17) much later.
+**Data foundation built** (commit `3325cae`). data/intraday_data.py:
+cached, fully-paginated intraday stock bars (the old get_bars used
+single-page get_aggs and only returned the oldest ~3 months of a long
+window; this uses list_aggs + parquet cache under backtests/.cache/).
+Pairs with options_history.py — together they feed the real-priced
+intraday backtest.
 
-**Tests:** full suite 610/610.
+**Roadmap now:** 0DTE/1DTE engine has a real-data backtest path AND
+the cached data layer.
+  ✅ (1) paginate/cache intraday SPY + option data
+  ⏭ (2) intraday SIGNAL engine — needs a strategy-design decision:
+        what triggers a 0DTE entry intraday? (daily regime is a bias,
+        not an intraday trigger.)
+  ⏭ (3) real-priced 0DTE backtest via options_history + intraday_data
+  ⏭ (4) wire intraday tracks live
+  Plus deferred per-track journaling, and the ML learner (#17) later.
+
+**Tests:** full suite 614/614.
 
 ---
 
