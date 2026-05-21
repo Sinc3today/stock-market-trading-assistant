@@ -108,3 +108,30 @@ def call_llm(system: str, user: str, anthropic_model: str,
     except Exception as e:
         logger.error(f"llm_client: Ollama fallback failed: {e}")
     return ""
+
+
+# ── Single-backend calls (for local-first + escalate orchestration) ──
+# call_llm above is Anthropic-first → Ollama-fallback. Some callers (e.g. the
+# morning context analyst) want the inverse: run LOCAL first to stay free, and
+# escalate to Anthropic only on low confidence. They orchestrate with these.
+
+def call_local(system: str, user: str, max_tokens: int = 800) -> str:
+    """Local Ollama only. Returns '' on failure."""
+    try:
+        return _call_ollama(system, user, max_tokens)
+    except Exception as e:
+        logger.error(f"llm_client.call_local: {e}")
+        return ""
+
+
+def call_anthropic(system: str, user: str, model: str,
+                   api_key: str | None = None, max_tokens: int = 800) -> str:
+    """Hosted Anthropic only. Returns '' on failure or missing key."""
+    key = api_key or config.ANTHROPIC_API_KEY
+    if not key:
+        return ""
+    try:
+        return _call_anthropic(system, user, model, max_tokens, key)
+    except Exception as e:
+        logger.error(f"llm_client.call_anthropic: {e}")
+        return ""
