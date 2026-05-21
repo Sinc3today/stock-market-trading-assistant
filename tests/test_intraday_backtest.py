@@ -85,6 +85,39 @@ def test_is_credit_structure():
     assert not ib.is_credit_structure("bull_debit")
 
 
+# ── confirm_entry (the blend: opening-range + VWAP) ────
+
+def test_condor_confirms_inside_range_near_vwap():
+    # price inside [or_low, or_high] and right at VWAP → confirmed
+    assert ib.confirm_entry("iron_condor", or_high=552, or_low=548, vwap=550.0, price=550.0)
+
+
+def test_condor_rejected_when_broken_out_or_far_from_vwap():
+    assert not ib.confirm_entry("iron_condor", 552, 548, vwap=550.0, price=553.0)   # broke range
+    assert not ib.confirm_entry("iron_condor", 552, 548, vwap=550.0, price=551.5)   # far from VWAP
+
+
+def test_bull_debit_confirms_only_above_range_and_vwap():
+    assert ib.confirm_entry("bull_debit", or_high=552, or_low=548, vwap=550.5, price=553.0)
+    assert not ib.confirm_entry("bull_debit", 552, 548, vwap=550.5, price=551.0)   # not above OR high
+    assert not ib.confirm_entry("bull_debit", 552, 548, vwap=553.5, price=553.0)   # below VWAP
+
+
+def test_bear_debit_confirms_only_below_range_and_vwap():
+    assert ib.confirm_entry("bear_debit", or_high=552, or_low=548, vwap=549.5, price=547.0)
+    assert not ib.confirm_entry("bear_debit", 552, 548, vwap=549.5, price=549.0)   # not below OR low
+
+
+def test_vwap_weights_by_volume():
+    import pandas as pd
+    bars = pd.DataFrame({
+        "high":   [101, 201], "low": [99, 199], "close": [100, 200],
+        "volume": [100, 900],
+    })
+    # Heavily weighted to the 200 bar → VWAP near 190
+    assert 180 < ib._session_vwap(bars) < 200
+
+
 # ── Real-priced simulation (live data) ─────────────────
 
 @pytest.mark.integration
@@ -93,7 +126,10 @@ def test_simulate_0dte_day_live():
     from data.options_history import OptionsHistory
     d = date(2024, 8, 14)
     spy = get_stock_intraday("SPY", 5, "minute", d, d, use_cache=True)
-    r = ib.simulate_0dte_day(d, "iron_condor", spy, OptionsHistory())
+    # require_confirmation=False to deterministically exercise the pricing path
+    # (confirmation depends on that day's tape).
+    r = ib.simulate_0dte_day(d, "iron_condor", spy, OptionsHistory(),
+                             require_confirmation=False)
     assert r is not None
     assert "pnl_dollars" in r and r["structure"] == "iron_condor"
     assert r["exit_reason"] in ("target", "stop", "eod")

@@ -42,6 +42,44 @@ STOP_MULT          = 2.0    # stop at this multiple of credit/debit risk
 EOD_FLATTEN_ET     = time(15, 45)   # hard flatten — dodge pin/assignment risk
 COMMISSION_PER_LEG = 0.65
 SLIPPAGE           = 0.05
+# Entry confirmation (the blend: opening-range + VWAP)
+MARKET_OPEN_ET     = time(9, 30)
+OR_MINUTES         = 15            # opening range = first 15 min after the open
+CONDOR_VWAP_NEAR_PCT = 0.0015      # condor: price must be within this % of VWAP
+
+
+def _session_vwap(bars) -> float:
+    """Volume-weighted average price over the given bars (typical price)."""
+    tp = (bars["high"] + bars["low"] + bars["close"]) / 3.0
+    vol = bars["volume"].fillna(0)
+    denom = float(vol.sum())
+    if denom <= 0:
+        return float(bars["close"].iloc[-1])
+    return float((tp * vol).sum() / denom)
+
+
+def confirm_entry(structure: str, or_high: float, or_low: float,
+                  vwap: float, price: float) -> bool:
+    """
+    The blend confirmation: opening-range + VWAP.
+
+      iron_condor : price holding INSIDE the opening range AND near VWAP
+                    → the range is real, sell premium around it.
+      bull_debit  : price ABOVE the opening-range high AND above VWAP
+                    → up-breakout held, ride it.
+      bear_debit  : price BELOW the opening-range low AND below VWAP
+                    → down-breakout held.
+    Returns False (no trade) when the setup hasn't confirmed.
+    """
+    if structure == "iron_condor":
+        in_range = or_low <= price <= or_high
+        near_vwap = abs(price - vwap) <= CONDOR_VWAP_NEAR_PCT * price
+        return in_range and near_vwap
+    if structure == "bull_debit":
+        return price > or_high and price > vwap
+    if structure == "bear_debit":
+        return price < or_low and price < vwap
+    return False
 
 
 def decide_structure(regime: str, direction: str, is_high_vol: bool,
@@ -136,21 +174,41 @@ def _spread_value(legs_closes: list[tuple[dict, float]], structure: str) -> floa
 
 
 def simulate_0dte_day(day: date, structure: str, spy_intraday, options_history,
-                      entry_et: time = time(9, 35)) -> dict | None:
+                      require_confirmation: bool = True) -> dict | None:
     """
-    Real-priced 0DTE simulation for one day. Returns realized P&L dict or None
-    if the day can't be priced (no SPY session bars, or missing option data).
+    Real-priced 0DTE simulation for one day. Entry is at the opening-range end
+    (~9:45 ET) gated by the blend confirmation (opening-range + VWAP). Returns
+    a realized P&L dict, or None when the day can't be priced OR the setup
+    never confirms (require_confirmation=True → no trade).
+
+    Set require_confirmation=False to reproduce the blind-entry baseline.
     """
+    from datetime import datetime, timedelta
     from data.options_history import option_ticker
+    import pandas as pd
 
     if spy_intraday is None or spy_intraday.empty:
         return None
     spy = _to_et(spy_intraday)
-    session = spy[(spy.index.time >= entry_et) & (spy.index.time <= EOD_FLATTEN_ET)]
-    if session.empty:
+    rth = spy[(spy.index.time >= MARKET_OPEN_ET) & (spy.index.time <= EOD_FLATTEN_ET)]
+    if rth.empty:
         return None
+
+    # Opening range = first OR_MINUTES after the open; entry at OR end.
+    or_end = (datetime.combine(day, MARKET_OPEN_ET) + timedelta(minutes=OR_MINUTES)).time()
+    or_bars = rth[rth.index.time < or_end]
+    session = rth[rth.index.time >= or_end]
+    if or_bars.empty or session.empty:
+        return None
+
     entry_ts   = session.index[0]
     entry_spot = float(session.iloc[0]["close"])
+    or_high    = float(or_bars["high"].max())
+    or_low     = float(or_bars["low"].min())
+    vwap       = _session_vwap(rth[rth.index <= entry_ts])
+
+    if require_confirmation and not confirm_entry(structure, or_high, or_low, vwap, entry_spot):
+        return None   # setup didn't confirm → no trade today
 
     legs = build_0dte_legs(entry_spot, structure)
     if not legs:
@@ -218,7 +276,7 @@ def simulate_0dte_day(day: date, structure: str, spy_intraday, options_history,
 
 def run_intraday_backtest(from_date: date, to_date: date,
                           event_dates: set | None = None,
-                          max_concurrent: int = 99) -> "pd.DataFrame":
+                          require_confirmation: bool = True) -> "pd.DataFrame":
     """
     Real-priced 0DTE backtest over a date range. Uses the daily RegimeDetector
     classification (no lookahead) for the structure decision — INCLUDING
@@ -254,7 +312,8 @@ def run_intraday_backtest(from_date: date, to_date: date,
             continue
         structure, _ = decision
         spy_intraday = get_stock_intraday("SPY", 5, "minute", d, d, use_cache=True)
-        res = simulate_0dte_day(d, structure, spy_intraday, oh)
+        res = simulate_0dte_day(d, structure, spy_intraday, oh,
+                                require_confirmation=require_confirmation)
         if res:
             res["regime"] = regime
             rows.append(res)
