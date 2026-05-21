@@ -93,6 +93,31 @@ def job_spy_premarket(
             post_fn(f"⚠️ **Morning brief error:** {e}")
 
 
+def job_spy_track_play(polygon_client, vix_client, ivr_client, post_fn,
+                       track, event_calendar=None):
+    """
+    09:16 ET — Post an additional timeframe track's play (e.g. 5DTE) as its
+    own alert. Shares the daily regime read but expresses it at the track's
+    DTE + exit rules. Alert-only for now: it does NOT save a plan or paper-
+    trade (the 45DTE morning brief owns the journal; per-track journaling is
+    a deliberate follow-on). The owner trades the alert manually.
+    """
+    logger.info(f"▶ SPY track play [{track.name}]")
+    try:
+        strategy = SPYDailyStrategy(
+            polygon_client = polygon_client,
+            vix_client     = vix_client,
+            ivr_client     = ivr_client,
+            event_calendar = event_calendar,
+        )
+        card = strategy.build_today(track=track)
+        if post_fn and card.get("discord_message"):
+            post_fn(card["discord_message"])
+        logger.info(f"Track [{track.name}] play posted — tradeable={card.get('tradeable')}")
+    except Exception as e:
+        logger.exception(f"SPY track play [{track.name}] failed: {e}")
+
+
 def job_spy_close_snapshot(polygon_client, post_fn=None):
     """
     16:30 ET — Record SPY close price against today's plan.
@@ -189,6 +214,32 @@ def register_spy_jobs(
         replace_existing = True,
     )
 
+    # 09:16 ET — additional enabled daily tracks (e.g. 5DTE) as their own
+    # alerts. 45DTE is the morning brief above; here we add the other
+    # daily-backtestable, enabled tracks. Intraday tracks (0DTE/1DTE) are
+    # skipped — they need the intraday engine, not yet built.
+    from signals.timeframes import enabled_tracks
+    extra = [t for t in enabled_tracks()
+             if t.name != "45DTE" and t.daily_backtestable]
+    for track in extra:
+        scheduler.add_job(
+            func    = job_spy_track_play,
+            trigger = CronTrigger(
+                day_of_week = "mon-fri", hour = 9, minute = 16, timezone = eastern,
+            ),
+            kwargs  = {
+                "polygon_client": polygon_client,
+                "vix_client":     vix_client,
+                "ivr_client":     ivr_client,
+                "post_fn":        post_fn,
+                "track":          track,
+                "event_calendar": event_calendar,
+            },
+            id      = f"spy_track_{track.name.lower()}",
+            name    = f"SPY {track.name} Play",
+            replace_existing = True,
+        )
+
     # 16:30 ET — close snapshot
     scheduler.add_job(
         func    = job_spy_close_snapshot,
@@ -208,5 +259,7 @@ def register_spy_jobs(
     )
 
     logger.info("✅ SPY daily jobs registered:")
-    logger.info("   09:15 ET — Pre-market play")
+    logger.info("   09:15 ET — Pre-market play (45DTE)")
+    for track in extra:
+        logger.info(f"   09:16 ET — {track.name} play")
     logger.info("   16:30 ET — Close snapshot")

@@ -56,6 +56,7 @@ class PlayCard:
     options:          dict   # OptionsLayer output (empty dict if skip day)
     discord_message:  str
     plan_payload:     dict   # written to journal/plan_logger — NOT a real fill
+    track:            str = "45DTE"   # which timeframe track produced this play
 
 
 # ─────────────────────────────────────────
@@ -92,13 +93,20 @@ class SPYDailyStrategy:
     # MAIN ENTRY
     # ─────────────────────────────────────────
 
-    def build_today(self, today: date | None = None) -> dict:
+    def build_today(self, today: date | None = None, track=None) -> dict:
         """
         Build today's SPY play.
+
+        track: an optional signals.timeframes.TimeframeTrack. When given, the
+        option structure uses the track's DTE and the play is tagged with the
+        track name (e.g. "5DTE"). Default (None) = the 45DTE swing behaviour.
+
         Returns a plain dict (from PlayCard.asdict) for easy JSON serialisation.
         """
         today = today or date.today()
-        logger.info(f"SPY daily strategy — building play for {today}")
+        track_name = track.name if track is not None else "45DTE"
+        dte_target = track.target_dte if track is not None else None
+        logger.info(f"SPY daily strategy [{track_name}] — building play for {today}")
 
         spy_df      = self._fetch_spy_daily()
         vix_current = self._fetch_vix()
@@ -113,7 +121,7 @@ class SPYDailyStrategy:
         logger.info(f"Regime: {regime_result.regime.value} | {regime_result.play}")
 
         if not regime_result.tradeable:
-            return asdict(self._skip_card(today, regime_result))
+            return asdict(self._skip_card(today, regime_result, track_name))
 
         # ── Build option structure ─────────────────────────────
         spy_close            = regime_result.metrics["spy_close"]
@@ -137,8 +145,11 @@ class SPYDailyStrategy:
             stop         = stop,
             mode         = "swing",
             iv_rank      = ivr_current,
+            dte_target   = dte_target,
         )
 
+        plan = self._format_plan(today, regime_result, options_payload)
+        plan["track"] = track_name
         card = PlayCard(
             date            = today.isoformat(),
             tradeable       = options_payload.get("tradeable", False),
@@ -148,8 +159,9 @@ class SPYDailyStrategy:
             reasons         = regime_result.reasons,
             metrics         = regime_result.metrics,
             options         = options_payload,
-            discord_message = self._format_discord(today, regime_result, options_payload),
-            plan_payload    = self._format_plan(today, regime_result, options_payload),
+            discord_message = self._format_discord(today, regime_result, options_payload, track_name),
+            plan_payload    = plan,
+            track           = track_name,
         )
 
         logger.info(
@@ -220,9 +232,9 @@ class SPYDailyStrategy:
     # SKIP CARD
     # ─────────────────────────────────────────
 
-    def _skip_card(self, today: date, rr: RegimeResult) -> PlayCard:
+    def _skip_card(self, today: date, rr: RegimeResult, track_name: str = "45DTE") -> PlayCard:
         msg = (
-            f"🛑 **STANDING DOWN TODAY — SPY** ({today.isoformat()})\n"
+            f"🛑 **STANDING DOWN TODAY — SPY [{track_name}]** ({today.isoformat()})\n"
             f"Regime: `{rr.regime.value}`\n"
             f"Why I'm not trading: {rr.play}\n"
             + "\n".join(f"  • {r}" for r in rr.reasons)
@@ -243,6 +255,7 @@ class SPYDailyStrategy:
                 "action": "SKIP",
                 "regime": rr.regime.value,
                 "reason": rr.play,
+                "track":  track_name,
                 # Persist the price + direction bias at decision time so the
                 # outcome resolver can score the skip ("was standing down the
                 # right call?") against where SPY actually closed.
@@ -251,6 +264,7 @@ class SPYDailyStrategy:
                     rr.regime, rr.metrics.get("spy_close", 0.0)
                 )[0],
             },
+            track           = track_name,
         )
 
     # ─────────────────────────────────────────
@@ -259,11 +273,11 @@ class SPYDailyStrategy:
 
     @staticmethod
     def _format_discord(
-        today: date, rr: RegimeResult, opts: dict
+        today: date, rr: RegimeResult, opts: dict, track_name: str = "45DTE"
     ) -> str:
         m = rr.metrics
         header = (
-            f"🤖 **TODAY'S PLAY — SPY** ({today.isoformat()})\n"
+            f"🤖 **TODAY'S PLAY — SPY [{track_name}]** ({today.isoformat()})\n"
             f"Regime:     `{rr.regime.value}` (conf {rr.confidence:.0%})\n"
             f"Play:       **{rr.play}**\n"
             f"VIX={m.get('vix')}  "

@@ -69,6 +69,7 @@ class OptionsLayer:
         mode:         str   = "swing",
         iv_rank:      float = None,
         iv_current:   float = None,
+        dte_target:   int   = None,   # override the mode-based DTE (per timeframe track)
     ) -> dict:
         """
         Generate full options strategy recommendation.
@@ -101,7 +102,7 @@ class OptionsLayer:
         )
 
         # ── DTE ──────────────────────────────────────────────────
-        dte_rec = self._recommend_dte(mode)
+        dte_rec = self._recommend_dte(mode, dte_target)
 
         # ── Real chain enrichment (Polygon Options Starter+) ─────
         # If injected, replace theoretical legs + risk/reward with
@@ -632,7 +633,13 @@ class OptionsLayer:
     # DTE / RECOMMENDATION / EXIT
     # ─────────────────────────────────────────
 
-    def _recommend_dte(self, mode: str) -> dict:
+    def _recommend_dte(self, mode: str, dte_target: int = None) -> dict:
+        if dte_target is not None:
+            return {
+                "dte":  dte_target,
+                "note": f"{dte_target} DTE — per timeframe track. "
+                        f"Manage to the track's profit target / time stop.",
+            }
         if mode == "swing":
             return {
                 "dte":  DTE_SWING_TARGET,
