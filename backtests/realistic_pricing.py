@@ -117,7 +117,8 @@ def simulate_trade(spy_df: pd.DataFrame, dates: list, entry_idx: int,
                    play: str, vix_at: dict,
                    entry_dte: int = ENTRY_DTE,
                    profit_target_pct: float = PROFIT_TARGET_PCT,
-                   dte_close_threshold: int = DTE_CLOSE_THRESHOLD) -> dict | None:
+                   dte_close_threshold: int = DTE_CLOSE_THRESHOLD,
+                   stop_loss_frac: float | None = None) -> dict | None:
     """
     Price one trade's full lifecycle realistically. Returns a dict with
     realized pnl_dollars, outcome, exit_reason, days_held -- or None if the
@@ -126,6 +127,12 @@ def simulate_trade(spy_df: pd.DataFrame, dates: list, entry_idx: int,
     entry_dte / profit_target_pct / dte_close_threshold default to the 45DTE
     track's values but are overridden per TimeframeTrack so each timeframe is
     priced with its own expiry + exit math.
+
+    stop_loss_frac: if set, close early the first day the marked loss reaches
+    this fraction of the position's defined MAX LOSS (e.g. 0.5 = bail at half
+    of max risk). Expressed against max loss rather than credit so it stays
+    meaningful regardless of how rich the credit is relative to the wing width.
+    None (default) = no hard stop, preserving the live-parity exit path.
 
     vix_at: mapping date -> vix (falls back to 16.0).
     """
@@ -167,13 +174,18 @@ def simulate_trade(spy_df: pd.DataFrame, dates: list, entry_idx: int,
             pnl      = (proceeds - entry_px) * 100
 
         hit_target = max_profit > 0 and pnl / max_profit >= profit_target_pct
-        if hit_target or dte <= dte_close_threshold or dte <= 0:
+        hit_stop   = (stop_loss_frac is not None and max_loss > 0
+                      and pnl <= -stop_loss_frac * max_loss)
+        if hit_target or hit_stop or dte <= dte_close_threshold or dte <= 0:
             net = pnl - commission
+            exit_reason = ("target" if hit_target else
+                           "stop"   if hit_stop else
+                           "expiry" if dte <= 0 else "time_stop")
             return {
                 "play":        play,
                 "pnl_dollars": round(net, 2),
                 "outcome":     "win" if net > 0 else "loss" if net < 0 else "breakeven",
-                "exit_reason": "target" if hit_target else ("expiry" if dte <= 0 else "time_stop"),
+                "exit_reason": exit_reason,
                 "days_held":   (d - entry_date).days,
                 "entry_px":    round(entry_px, 2),
             }

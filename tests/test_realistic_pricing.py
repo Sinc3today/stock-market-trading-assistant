@@ -74,6 +74,30 @@ def test_simulate_trade_returns_pnl_and_respects_directionality():
     assert r["days_held"] > 0
 
 
+def test_stop_loss_frac_caps_a_losing_condor():
+    """A steep up-ramp drives the condor's short call ITM → a loss. A tight
+    stop should fire with exit_reason 'stop' and cut the loss vs holding."""
+    df = _ramp_df(n=120, start=500.0, step=4.0)   # +4/day = strong uptrend
+    dates = list(df.index)
+    held    = simulate_trade(df, dates, 0, "iron_condor", {}, stop_loss_frac=None)
+    stopped = simulate_trade(df, dates, 0, "iron_condor", {}, stop_loss_frac=0.3)
+    assert held is not None and stopped is not None
+    assert held["pnl_dollars"] < 0                 # the condor loses on this ramp
+    assert stopped["exit_reason"] == "stop"        # the stop actually fired
+    assert stopped["days_held"] <= held["days_held"]
+    assert stopped["pnl_dollars"] >= held["pnl_dollars"]   # loss was capped
+
+
+def test_stop_loss_frac_none_is_unchanged():
+    """Default (no stop) must price identically to passing frac explicitly None."""
+    df = _ramp_df(n=120, start=500.0, step=4.0)
+    dates = list(df.index)
+    a = simulate_trade(df, dates, 0, "iron_condor", {})
+    b = simulate_trade(df, dates, 0, "iron_condor", {}, stop_loss_frac=None)
+    assert a["pnl_dollars"] == b["pnl_dollars"]
+    assert "stop" not in (a["exit_reason"], b["exit_reason"])
+
+
 def test_concurrency_cap_limits_overlap():
     """A signal every day on a 45-DTE hold should open far fewer trades at
     max_concurrent=1 than unconstrained."""
