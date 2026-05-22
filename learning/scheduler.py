@@ -206,6 +206,15 @@ def register_learning_jobs(
         replace_existing=True,
     )
 
+    from learning.meta_recalibrate import run_meta_recalibration
+    scheduler.add_job(
+        run_meta_recalibration,
+        CronTrigger(day_of_week="sat", hour=12, minute=0, timezone=eastern),
+        id="learning_meta_recalibration",
+        name="Learning: meta-model recalibration",
+        replace_existing=True,
+    )
+
     logger.info("Learning jobs registered:")
     logger.info("   09:16 ET (Mon-Fri) - paper broker")
     logger.info("   16:05 ET (Mon-Fri) - outcome resolver")
@@ -214,3 +223,4 @@ def register_learning_jobs(
     logger.info("   Sat 10:00 ET       - hypothesis engine")
     logger.info("   Sat 11:00 ET       - hypothesis runner")
     logger.info("   Sun 10:00 ET       - off-hours learner")
+    logger.info("   Sat 12:00 ET       - meta-model recalibration")
