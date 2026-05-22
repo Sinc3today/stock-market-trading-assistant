@@ -214,6 +214,17 @@ def load_watchlist() -> dict:
                 wl[key] = ["SPY"]
     return wl
 
+
+# ─────────────────────────────────────────
+# META-LABELING (secondary take/skip + conviction model)
+# ─────────────────────────────────────────
+# Inert until a trained model passes the walk-forward ship bar AND a human
+# flips this to True. Flag off OR model missing => gate is a no-op.
+META_LABEL_ENABLED  = False
+META_PROB_THRESHOLD = 0.55                       # take if P(win) >= this
+META_TIER_CUTOFFS   = {"med": 0.55, "high": 0.70}
+META_MODEL_PATH     = "logs/learning/meta_model.joblib"
+
 # ─────────────────────────────────────────
 # ENVIRONMENT
 # ─────────────────────────────────────────
