@@ -6,6 +6,9 @@
 venv/
 .venv/
 
+# Git worktrees (isolated dev workspaces)
+.worktrees/
+
 # Python
 __pycache__/
 *.pyc
