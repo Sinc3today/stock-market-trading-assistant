@@ -4,6 +4,60 @@
 
 ---
 
+## 2026-05-22 | Meta-labeling layer — built, validated, SHELVED (no OOS edge)
+
+Built the "honest ML" version of conditioning strategy on context: a
+secondary take/skip + conviction-tier model that sits as a gate AFTER the
+regime->play decision (primary sets the side, meta sets size in {0,1}).
+Full spec + plan in docs/superpowers/. Built subagent-driven on an isolated
+worktree (branch meta-labeling-layer), TDD throughout.
+
+**What was built (10 tasks, all green):**
+- indicators/fvg.py — daily Fair Value Gap detection + features (the user's
+  FVG idea, brought in as a *measured experiment*, not a hard-coded belief).
+- signals/feature_builder.py — ONE build_features() shared by the backtest
+  training path and the live scoring path, so train/inference features can't
+  drift. The keystone.
+- learning/meta_dataset.py — labels each tradeable backtest day win/loss from
+  the realistic BS-priced P&L.
+- learning/meta_trainer.py — pooled logistic regression (regime one-hot) +
+  walk-forward ship bar (must beat take-everything OOS, tiers monotonic OOS,
+  retain >= 40%). Plan had retain=0.60; corrected to 0.40 mid-build (a strong
+  filter should be free to skip half the candidates).
+- signals/meta_labeler.py — runtime scorer, FAILS OPEN (no model / flag off
+  => no-op; live trading can never break).
+- spy_daily_strategy.py — meta-gate wired in, default OFF.
+- learning/meta_recalibrate.py — weekly job (Sat 12:00 ET) that refits on
+  backtest + live paper outcomes and swaps the artifact ONLY if it still
+  passes the ship bar.
+
+**The verdict (the whole point):** ran the walk-forward on real 5yr data.
+  - core (ADX/VIX/IVR/MA-dist):  baseline OOS win 72.4%, filtered 70.4%,
+    tiers NOT monotonic, n_oos=460 -> FAILS ship bar.
+  - core+FVG:                    filtered 70.0% -> FVG adds nothing.
+The meta-filter does NOT beat take-everything out-of-sample. So
+META_LABEL_ENABLED stays False; the layer is SHELVED. This is the system
+working exactly as designed — same discipline that shelved 0DTE. The base
+win-rate is already high (72%) because it pools all tradeable regimes incl.
+the condor edge; these coarse features carry no extra trade-selection signal.
+
+Also (a) shipped earlier this session: a walk-forward test of iron-condor-in-
+uptrend (with/without stop) — condor strictly worse than the production play
+in every window; the stop slightly hurts. Confirmed the user's overextended-
+FOMO instinct points the wrong way *here*; the real lesson was that OOS
+results are dominated by which regime the window lands in (non-stationarity).
+
+**Open for next session:** the model artifact is trained + saved (inert) so
+re-validation is one command. To ever flip the flag we need features with
+real OOS edge — candidates: per-regime models (more data first), richer
+intraday/FVG features, or meta-labeling only WITHIN the condor regime where
+losses are fat-tailed. Decide before adding knobs.
+
+**Tests:** 667 passing (645 baseline + 22 new across fvg/feature_builder/
+meta_config/meta_dataset/meta_trainer/meta_labeler/meta_gate/meta_recalibrate).
+
+---
+
 ## 2026-05-22 | SPY-focus collapse — retire non-SPY notifications
 
 Short session, user-driven. The bot was scanning + alerting on a
