@@ -36,6 +36,8 @@ from loguru import logger
 from signals.regime_detector import RegimeDetector, Regime, RegimeResult
 from signals.options_layer   import OptionsLayer
 from data.options_chain      import OptionsChain
+from signals.feature_builder import build_features
+from signals.meta_labeler    import MetaLabeler
 
 
 # ─────────────────────────────────────────
@@ -57,6 +59,7 @@ class PlayCard:
     discord_message:  str
     plan_payload:     dict   # written to journal/plan_logger — NOT a real fill
     track:            str = "45DTE"   # which timeframe track produced this play
+    meta_tier:        str | None = None   # conviction tier from meta-labeler ("high"/"med"/None)
 
 
 # ─────────────────────────────────────────
@@ -123,6 +126,19 @@ class SPYDailyStrategy:
         if not regime_result.tradeable:
             return asdict(self._skip_card(today, regime_result, track_name))
 
+        # ── Meta-label gate (secondary take/skip + conviction) ──
+        # Inert unless explicitly enabled; fails open if no model is loaded.
+        meta_tier = None
+        if config.META_LABEL_ENABLED:
+            feats = build_features(regime_result.regime.value, regime_result.metrics)
+            decision = MetaLabeler().score(feats)
+            if not decision["take"]:
+                regime_result.reasons = list(regime_result.reasons) + [
+                    f"meta-filter: P(win) {decision['prob']} < {config.META_PROB_THRESHOLD}"
+                ]
+                return asdict(self._skip_card(today, regime_result, track_name))
+            meta_tier = decision["tier"]
+
         # ── Build option structure ─────────────────────────────
         spy_close            = regime_result.metrics["spy_close"]
         direction, tgt, stop = self._direction_and_levels(
@@ -162,6 +178,7 @@ class SPYDailyStrategy:
             discord_message = self._format_discord(today, regime_result, options_payload, track_name),
             plan_payload    = plan,
             track           = track_name,
+            meta_tier       = meta_tier,
         )
 
         logger.info(
