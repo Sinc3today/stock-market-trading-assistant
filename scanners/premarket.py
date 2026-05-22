@@ -314,9 +314,4 @@ class PremarketScanner:
     # ─────────────────────────────────────────
 
     def _load_watchlist(self) -> dict:
-        try:
-            with open(config.WATCHLIST_PATH, "r") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load watchlist: {e}")
-            return {"swing": [], "intraday": []}
+        return config.load_watchlist()

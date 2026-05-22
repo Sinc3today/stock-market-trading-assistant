@@ -324,11 +324,7 @@ class IntradayScanner:
         return df
 
     def _load_watchlist(self) -> dict:
-        try:
-            with open(config.WATCHLIST_PATH, "r") as f:
-                return json.load(f)
-        except Exception:
-            return {"intraday": ["SPY", "QQQ", "AAPL"]}
+        return config.load_watchlist()
 
 
 # ── Standalone test ──────────────────────────────────────────

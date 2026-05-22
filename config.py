@@ -10,6 +10,7 @@ v2 changes (SPY Options Focus):
   REGIME_FILTER_ENABLED:   False    (keep off until alerts confirmed flowing)
 """
 
+import json
 import os
 from dotenv import load_dotenv
 
@@ -184,6 +185,34 @@ NEWS_ARTICLES_LIMIT    = 10   # per-ticker fetch + market summary cap
 WATCHLIST_PATH = "config/watchlist.json"
 LOG_DIR        = "logs/"
 CACHE_DIR      = ".cache/"
+
+
+# ─────────────────────────────────────────
+# WATCHLIST LOADER
+# ─────────────────────────────────────────
+# Single source of truth for every scanner's ticker universe.
+#
+# When watchlist.json has "spy_focus": true, the swing / intraday /
+# options_enabled universes all collapse to ["SPY"] — the bot scans and
+# alerts on SPY only. The full multi-ticker lists stay in the file untouched;
+# flip spy_focus to false to bring the other tickers back in one move.
+SPY_FOCUS_KEYS = ("swing", "intraday", "options_enabled")
+
+
+def load_watchlist() -> dict:
+    """Load watchlist.json and apply the spy_focus collapse (see above)."""
+    try:
+        with open(WATCHLIST_PATH, "r") as f:
+            wl = json.load(f)
+    except Exception:
+        # SPY is always a safe fallback universe.
+        return {k: ["SPY"] for k in SPY_FOCUS_KEYS}
+
+    if wl.get("spy_focus"):
+        for key in SPY_FOCUS_KEYS:
+            if key in wl:
+                wl[key] = ["SPY"]
+    return wl
 
 # ─────────────────────────────────────────
 # ENVIRONMENT

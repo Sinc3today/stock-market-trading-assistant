@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-05-22 | SPY-focus collapse — retire non-SPY notifications
+
+Short session, user-driven. The bot was scanning + alerting on a
+10-ticker watchlist (QQQ, NVDA, AAPL, TSLA, MSFT, AMD, META, AMZN, IWM
++ SPY) across five scanners; the user wants to focus on SPY only until
+we have a proven, profitable edge, then re-expand later.
+
+**What changed:**
+- config.load_watchlist() is now the single source of truth every
+  scanner reads. When watchlist.json has "spy_focus": true (it already
+  did — the flag was dead), it collapses swing / intraday /
+  options_enabled to ["SPY"]. The full ticker lists stay in the file
+  untouched — flip spy_focus to false to bring them all back in one move.
+- The five scanner _load_watchlist() methods (premarket, news,
+  options_flow, swing, intraday) now just delegate to it — killed five
+  near-duplicate json-load blocks.
+- Chose full universe collapse (stops scanning + alerting + API calls
+  for non-SPY) over notifier-level muting — quieter and cheaper, and the
+  user explicitly wanted to retire, not just hide.
+
+**Left intentionally:** news_scanner's market-wide summary still
+characterizes the broad tape via a hardcoded SPY/QQQ pull — that's
+market context, not a per-ticker alert, so it stays.
+
+**Tests:** new tests/test_watchlist_loader.py (4) + 73 scanner/config
+tests passing. Also added .venv/ to .gitignore (was untracked, against
+global rules).
+
+**Open / discussed (not built):** user is skeptical of pure
+math/backtest validation — wants an ML/LLM "blind" approach that
+conditions strategy on the many variables driving price, iterates over
+possibilities, and outputs a regime-matched stacked suite. Design
+conversation pending; see BUILD_LOG next session.
+
+---
+
 ## 2026-05-21 | Intraday data layer, timezone audit, morning context analyst
 
 Designing toward the 0DTE/1DTE intraday tracks (the path to 2-3

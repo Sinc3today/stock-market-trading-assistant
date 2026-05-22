@@ -407,8 +407,4 @@ Flag anything that could override a technical signal (earnings, major catalyst).
     # ─────────────────────────────────────────
 
     def _load_watchlist(self) -> dict:
-        try:
-            with open(config.WATCHLIST_PATH, "r") as f:
-                return json.load(f)
-        except Exception:
-            return {"swing": [], "intraday": []}
+        return config.load_watchlist()

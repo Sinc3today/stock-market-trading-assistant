@@ -393,12 +393,7 @@ class OptionsFlowScanner:
         return now.weekday() < 5  # Mon-Fri only
 
     def _load_watchlist(self) -> dict:
-        try:
-            with open(config.WATCHLIST_PATH) as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Watchlist load failed: {e}")
-            return {"swing": [], "intraday": [], "options_enabled": []}
+        return config.load_watchlist()
 
 
 # ─────────────────────────────────────────
