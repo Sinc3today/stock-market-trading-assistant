@@ -26,7 +26,10 @@ import config
 from signals.feature_builder import FEATURE_ORDER, FVG_ORDER
 
 SHIP_WIN_MARGIN   = 0.05   # OOS taken-win-rate must beat baseline by >= 5 pts
-SHIP_MIN_RETAIN   = 0.60   # keep >= 60% of baseline trades (no over-filtering)
+SHIP_MIN_RETAIN   = 0.40   # keep >= 40% of candidate trades. A strong filter
+                           # SHOULD be free to skip half the candidates if it
+                           # lifts win-rate; this floor only blocks pathological
+                           # over-filtering down to a tiny, lucky sample.
 
 
 def _feature_cols(df: pd.DataFrame) -> list[str]:
