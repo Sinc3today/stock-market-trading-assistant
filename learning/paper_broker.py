@@ -31,6 +31,13 @@ from learning.predictions   import PredictionLog, Prediction
 
 AUTO_TAG = "[AUTO-PAPER]"
 
+# ── Multi-position concurrency caps ─────────────────────────────────────────
+# Per-book limits on open paper positions. Disciplined book is tighter (it's
+# the bot's real-money proxy); learning book is looser (it's sample-gathering).
+# Used by execute() and execute_signal() to gate new openings.
+MAX_CONCURRENT_DISCIPLINED = 3
+MAX_CONCURRENT_LEARNING    = 6
+
 
 class PaperBroker:
     """Records a paper position from a daily PlayCard."""
@@ -44,6 +51,22 @@ class PaperBroker:
         self.trades      = trade_recorder  or TradeRecorder()
         self.plans       = plan_logger     or PlanLogger()
         self.predictions = prediction_log  or PredictionLog()
+
+    # ── HELPERS ───────────────────────────────────────
+
+    def _open_count_by_book(self, book: str) -> int:
+        """Count currently-open paper trades tagged with the given book.
+        Trades that lack a book field (legacy untagged) are treated as
+        'disciplined' for the count, since that's all the bot historically
+        produced."""
+        n = 0
+        for t in self.trades.get_all_trades():
+            if t.get("outcome") != "open":
+                continue
+            t_book = t.get("book") or "disciplined"   # legacy untagged ↦ disciplined
+            if t_book == book:
+                n += 1
+        return n
 
     # ── MAIN ──────────────────────────────────────────
 
@@ -132,6 +155,19 @@ class PaperBroker:
             logger.info(f"PaperBroker: {today_str} skip day, prediction logged only")
             return {"prediction_date": today_str, "trade_id": None, "recorded": False}
 
+        open_disc = self._open_count_by_book("disciplined")
+        if open_disc >= MAX_CONCURRENT_DISCIPLINED:
+            logger.info(
+                f"PaperBroker: disciplined cap reached ({open_disc}/{MAX_CONCURRENT_DISCIPLINED})"
+                f" — prediction logged, no new position"
+            )
+            return {
+                "prediction_date": today_str,
+                "trade_id":        None,
+                "recorded":        False,
+                "skipped_reason":  "disciplined_book_cap",
+            }
+
         legs       = options.get("legs", []) or []
         strategy   = options.get("strategy", "single_leg")
         max_profit = options.get("max_profit")
@@ -167,6 +203,53 @@ class PaperBroker:
             f"recorded as trade {trade_id}"
         )
         return {"prediction_date": today_str, "trade_id": trade_id, "recorded": True}
+
+    def execute_signal(self, setup: dict) -> dict:
+        """Event-driven entry — Phase 3's intraday scanner will call this when
+        a sub-strategy setup fires intraday. Respects per-book concurrency caps.
+
+        setup dict shape:
+          {
+            "date":        str (today's ISO date),
+            "strategy":    str ("call_debit_spread" / "put_debit_spread" / "iron_condor"),
+            "dte_bucket":  str ("0DTE" / "1-3DTE"),
+            "book":        str ("disciplined" / "learning"),
+            "direction":   str ("bullish" / "bearish" / "neutral"),
+            "entry_price": float,
+            "max_profit":  float,
+            "max_loss":    float,
+            "legs":        list[dict],
+          }
+        """
+        book = setup.get("book", "disciplined")
+        cap  = MAX_CONCURRENT_LEARNING if book == "learning" else MAX_CONCURRENT_DISCIPLINED
+        open_n = self._open_count_by_book(book)
+        if open_n >= cap:
+            logger.info(
+                f"PaperBroker.execute_signal: {book} cap reached ({open_n}/{cap}) — skipped"
+            )
+            return {"trade_id": None, "recorded": False, "skipped_reason": f"{book}_book_cap"}
+
+        tid = self.trades.log_entry(
+            ticker      = "SPY",
+            entry_price = float(setup.get("entry_price", 0.0)),
+            size        = 1,
+            trade_type  = "option_spread",
+            strategy    = setup.get("strategy"),
+            direction   = setup.get("direction", "neutral"),
+            mode        = "intraday" if setup.get("dte_bucket") in ("0DTE", "1-3DTE") else "swing",
+            legs        = setup.get("legs", []),
+            max_profit  = setup.get("max_profit"),
+            max_loss    = setup.get("max_loss"),
+            notes       = f"[AUTO-PAPER {setup.get('date')}] event-driven entry",
+            dte_bucket  = setup.get("dte_bucket"),
+            book        = book,
+        )
+        logger.info(
+            f"PaperBroker.execute_signal: opened {tid} | "
+            f"{setup.get('strategy')} @ {setup.get('dte_bucket')} ({book})"
+        )
+        return {"trade_id": tid, "recorded": True}
 
     # ── HELPERS ───────────────────────────────────────
 
