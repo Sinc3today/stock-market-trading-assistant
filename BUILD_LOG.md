@@ -4,6 +4,55 @@
 
 ---
 
+## 2026-05-23 | Phase 2a — per-strategy tag substrate + walk-forward primitive
+
+Continuation of the 2026-05-23 strategic roadmap session. Phase 1 (foundation +
+correctness fix) shipped earlier today. Phase 2a is the next safe chunk —
+data substrate for per-sub-strategy edge measurement, no live behavior change.
+
+**Three tasks shipped, 728 tests passing (+20 from Phase 1's 708):**
+- `Prediction` dataclass + `TradeRecorder` records carry optional
+  `strategy` / `dte_bucket` / `book` tags (default None, backward-compat).
+  `paper_broker` populates `dte_bucket="45DTE"`, `book="disciplined"` on
+  every Prediction + trade entry — that's all the bot currently produces;
+  Phase 3 intraday brokers will populate other values.
+- `TradeRecorder.log_exit` accepts an optional structured `exit_reason`
+  kwarg; old callers that only pass `notes` still work. New
+  `TradeRecorder.get_trades_by(strategy=, dte_bucket=, book=, exit_reason=)`
+  filter API composes filters for Phase 3+ analytics.
+- `backtests/wf_common.py` — shared chronological 60/40 split + per-slice
+  metrics-block primitive, extracted so future per-sub-strategy harnesses
+  don't re-implement and drift. Existing harnesses NOT migrated (they keep
+  their inline versions; lazy migration only — no risky changes to working
+  walk-forward code).
+
+**Final reviewer (Opus, full diff):** ready to merge, zero Critical/Important
+issues. Live decision paths confirmed unchanged by grep + by reading consumer
+modules — paper_broker is the only producer that now writes the new tag fields;
+all other live paths are byte-identical to Phase 1.
+
+**Known follow-ups for Phase 2b (deferred, not blocking):**
+1. Wire `exit_reason=...` into the existing `log_exit` callers in
+   `learning/exit_manager.py:151` and `learning/expiry_resolver.py:118` so the
+   new `get_trades_by(exit_reason=...)` filter has data on production trades.
+   These callers already have a `reason` variable in scope — it's a 2-line
+   change per file. Will land naturally as part of Phase 2b's strategy-aware
+   ExitManager refactor.
+2. Sharpe rounding consistency: `wf_common.metrics_block` rounds to 3 decimals;
+   the existing `walk_forward._metrics` rounds to 2. Pick one when existing
+   harnesses migrate.
+
+**Tests:** 728 passing (708 Phase-1 baseline + 6 + 6 + 8 new across
+`test_per_strategy_tags.py` / `test_exit_reason_tracking.py` /
+`test_wf_common.py`).
+
+**Phase 2b remains** — strategy-aware ExitManager refactor (#13), multi-position
+concurrency support (#10), multi-timeframe regime detector formalization (#1).
+These touch live paths and deserve careful walk-forward validation; not
+appropriate for the pre-Tuesday window.
+
+---
+
 ## 2026-05-23 | Phase 1 foundation + correctness fix (multi-strategy prep)
 
 End of a long strategic session that mapped the bot's full daily/weekly
