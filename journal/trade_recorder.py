@@ -168,6 +168,7 @@ class TradeRecorder:
         exit_price: float,    # For spreads: net credit received to close (debit spread)
                               #              or net debit paid to close (credit spread)
         notes:      str = "",
+        exit_reason: str | None = None,   # "target" / "stop" / "time_stop" / "target_intraday" / "expiry"
     ) -> bool:
         """
         Log the exit of an open trade.
@@ -226,6 +227,7 @@ class TradeRecorder:
                                         if strategy != "stock" else None
             trade["outcome"]          = outcome
             trade["notes_exit"]       = notes
+            trade["exit_reason"]      = exit_reason
             updated = True
 
             logger.info(
@@ -360,6 +362,27 @@ class TradeRecorder:
             "total_pnl":   round(sum(pnls), 2),
             "avg_pnl_pct": round(sum(pnl_pcts) / len(pnl_pcts), 2) if pnl_pcts else 0.0,
         }
+
+    def get_trades_by(self, *, strategy: str | None = None,
+                      dte_bucket: str | None = None,
+                      book: str | None = None,
+                      exit_reason: str | None = None) -> list:
+        """Filter trades by optional tag values. Trades that lack a tag are
+        EXCLUDED from filters that specify that tag — old (untagged) trades
+        don't participate in strategy/book/dte_bucket searches.
+
+        No-filter call returns all trades.
+        """
+        rows = self.get_all_trades()
+        if strategy is not None:
+            rows = [t for t in rows if t.get("strategy") == strategy]
+        if dte_bucket is not None:
+            rows = [t for t in rows if t.get("dte_bucket") == dte_bucket]
+        if book is not None:
+            rows = [t for t in rows if t.get("book") == book]
+        if exit_reason is not None:
+            rows = [t for t in rows if t.get("exit_reason") == exit_reason]
+        return rows
 
     def import_from_robinhood(self) -> list:
         """Placeholder — Robinhood import added in future session."""
