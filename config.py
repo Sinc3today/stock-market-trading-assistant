@@ -279,6 +279,33 @@ CONDOR_SHORT_STRIKE_TOUCH_EXIT_0DTE = True
 FORCED_CLOSE_TIME_0DTE_DEBIT    = "15:30"    # ET, HH:MM
 FORCED_CLOSE_TIME_0DTE_CONDOR   = "15:00"    # ET — gamma into the bell
 
+
+# ─────────────────────────────────────────
+# PHASE 3: INTRADAY ENTRY PIPELINE
+# ─────────────────────────────────────────
+# Wires intraday_scanner's high-conviction setups → paper_broker.execute_signal.
+# Kill-switch for the intraday-scanner → paper_broker wiring. Default True
+# (Phase 3's behavior change ships ON at merge); flip to False + commit to
+# instantly disable the pipeline without untangling code.
+INTRADAY_PAPER_BROKER_ENABLED = True
+
+# Which conviction tier qualifies as an intraday entry. Configurable so we
+# can widen later to include "standard" (45-67 score) without code change.
+ENTRY_TIER_MINIMUM = "high"   # one of "high" / "standard"
+
+# H2 DTE assignment: morning (< this ET time) → 0DTE; afternoon → 1-3DTE.
+# Friday PM safeguard fires in the router regardless (no weekend exposure).
+INTRADAY_DTE_MORNING_CUTOFF = "12:30"
+
+# Ultra-conviction exception: setups with score ≥ this open BOTH 0DTE and
+# 1-3DTE buckets (rare — empirically 1-2/week on high-conv setups).
+ULTRA_CONVICTION_DOUBLE_DTE_SCORE = 85
+
+# Option D position dedup: max entries per (strategy, dte_bucket) per day.
+# After a position closes, a fresh setup can re-open up to this cap.
+INTRADAY_PER_COMBO_DAILY_CAP = 2
+
+
 # ─────────────────────────────────────────
 # ENVIRONMENT
 # ─────────────────────────────────────────
