@@ -225,6 +225,18 @@ META_PROB_THRESHOLD = 0.55                       # take if P(win) >= this
 META_TIER_CUTOFFS   = {"med": 0.55, "high": 0.70}
 META_MODEL_PATH     = "logs/learning/meta_model.joblib"
 
+
+# ─────────────────────────────────────────
+# INTRADAY-TOUCH EXIT (backtest ship-bar floors)
+# ─────────────────────────────────────────
+# Binding floors for the default-2σ preset in backtests/intraday_touch_wf.py.
+# Five other presets are hard-coded inside the harness itself (learning context;
+# they print verdicts but do not auto-ship). See spec
+# docs/superpowers/specs/2026-05-22-intraday-touch-exit-design.md §6.
+INTRADAY_TOUCH_SHIP_MIN_DOLLAR = 25.0    # statistical floor ($/trade, ~2σ on ~230 OOS)
+INTRADAY_TOUCH_SHIP_MIN_FRAC   = 0.10    # scale floor (improvement >= 10% of baseline)
+INTRADAY_TOUCH_SHIP_MIN_ATTRIB = 0.15    # >=15% of OOS exits via target_intraday
+
 # ─────────────────────────────────────────
 # ENVIRONMENT
 # ─────────────────────────────────────────
