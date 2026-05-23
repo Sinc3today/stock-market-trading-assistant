@@ -37,8 +37,36 @@ SHARPE_ACCEPT_DELTA   = 0.10
 SHARPE_REJECT_DELTA   = -0.10
 PNL_REJECT_DELTA      = -250
 MIN_OOS_TRADES        = 30    # below this floor in the OOS slice → auto-inconclusive
+PENDING_PROMOTION_ALERT_THRESHOLD = 5
 
 BACKTEST_YEARS = 5
+
+
+def _count_pending_promotions(hyp_dir: str) -> int:
+    """Count hypothesis files with status == 'accepted' (i.e. awaiting human promotion)."""
+    if not os.path.isdir(hyp_dir):
+        return 0
+    n = 0
+    for fn in os.listdir(hyp_dir):
+        if not (fn.startswith("hyp_") and fn.endswith(".json")):
+            continue
+        try:
+            with open(os.path.join(hyp_dir, fn)) as f:
+                spec = json.load(f)
+            if spec.get("status") == "accepted":
+                n += 1
+        except Exception:
+            continue   # malformed file — don't fail the count for that
+    return n
+
+
+def _pending_alert_line(count: int) -> str:
+    """Return a one-line warning if pending promotions are at/above the threshold;
+    empty string otherwise."""
+    if count < PENDING_PROMOTION_ALERT_THRESHOLD:
+        return ""
+    return (f"\n⚠️ Promotion queue is **{count}** — consider a review session "
+            f"before backlog grows.")
 
 
 class HypothesisRunner:
@@ -131,6 +159,8 @@ class HypothesisRunner:
         # whole self-learning loop has a silent last mile.
         if verdict == "accepted" and self._post_fn:
             try:
+                hyp_dir = os.path.join(config.LOG_DIR, "learning", "hypotheses")
+                pending = _count_pending_promotions(hyp_dir)
                 self._post_fn(
                     f"**Hypothesis accepted: {spec.get('id')}**\n"
                     f"{spec.get('module')}.{spec.get('var')}: "
@@ -138,7 +168,9 @@ class HypothesisRunner:
                     f"OOS ΔSharpe {deltas['oos_sharpe_delta']:+.2f} · "
                     f"OOS ΔP&L {deltas['oos_pnl_delta']:+,} "
                     f"(n={modified['oos']['trades']} OOS trades)\n\n"
-                    f"Apply with: python -m learning.promote {spec.get('id')}"
+                    f"Apply with: python -m learning.promote {spec.get('id')}\n"
+                    f"Pending promotions in queue: **{pending}**"
+                    f"{_pending_alert_line(pending)}"
                 )
             except Exception as e:
                 logger.warning(f"HypothesisRunner: accept notify failed: {e}")
