@@ -199,8 +199,9 @@ class IntradayScanner:
             # router + paper_broker.execute_signal. Gated by the feature flag.
             if not config.INTRADAY_PAPER_BROKER_ENABLED:
                 continue
-            if setup.conviction != "high":
-                continue
+            # Tier-gate lives inside the router (uses config.ENTRY_TIER_MINIMUM
+            # so widening to "standard" later is a one-config-flip change).
+            # The router returns [] for setups below the configured tier.
             now_et = datetime.now(EASTERN)
             try:
                 broker      = PaperBroker()
