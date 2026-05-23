@@ -49,6 +49,104 @@ EXIT_SLIPPAGE        = 0.05   # per-share haircut applied against us on the fill
 _OUTCOME_EMOJI = {"win": "✅", "loss": "❌", "breakeven": "➖"}
 
 
+# ── Per-(strategy, dte_bucket) exit rules ───────────────────────────────────
+# Phase 2b-3: ExitManager dispatches to the right rule by (strategy, dte_bucket).
+# 45DTE values match the legacy globals exactly (PROFIT_TARGET_PCT=0.70,
+# DTE_CLOSE_THRESHOLD=21) — that's the byte-identical parity contract.
+
+# Map raw strategy strings (which include legacy names like "debit_spread") to
+# the canonical structure key. The codebase historically used both
+# "debit_spread" / "credit_spread" / "iron_condor" / "single_leg" in trade
+# records and "call_debit_spread" / "put_debit_spread" / "iron_condor" in the
+# new Phase-1 constants. We normalize here.
+_STRUCTURE_KEY = {
+    "call_debit_spread": "CALL",
+    "put_debit_spread":  "PUT",
+    "iron_condor":       "COND",
+    # Legacy names — direction disambiguates between CALL/PUT debit
+    "debit_spread":      "CALL",   # historical default; direction can refine if needed
+    "credit_spread":     "CALL",
+    "single_leg":        "CALL",
+}
+
+
+def _exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
+    """Return the exit-rule dict for the given (strategy, dte_bucket).
+    Untagged trades (dte_bucket=None) default to 45DTE rules — the only thing
+    the bot has historically produced.
+
+    Returns: {
+        "profit_target_pct": float,
+        "stop_pct": float | None,
+        "dte_close_threshold": int,
+        "condor_short_strike_touch": bool,
+        "forced_close_time": str | None,   # HH:MM ET for 0DTE; None otherwise
+        "forced_close_minutes_before_expiry": int | None,  # for 1-3DTE
+    }
+    """
+    structure = _STRUCTURE_KEY.get(strategy or "", "CALL")
+    bucket = dte_bucket or "45DTE"   # legacy untagged → 45DTE
+
+    if bucket == "45DTE":
+        # Look up the per-structure constant; all three currently equal 0.70.
+        pt_pct = {
+            "CALL": config.PROFIT_TARGET_PCT_45DTE_CALL,
+            "PUT":  config.PROFIT_TARGET_PCT_45DTE_PUT,
+            "COND": config.PROFIT_TARGET_PCT_45DTE_COND,
+        }[structure]
+        return {
+            "profit_target_pct":   pt_pct,
+            "stop_pct":            config.STOP_PCT_45DTE,    # None by default
+            "dte_close_threshold": config.DTE_CLOSE_THRESHOLD_45DTE,
+            "condor_short_strike_touch":          False,
+            "forced_close_time":                   None,
+            "forced_close_minutes_before_expiry":  None,
+        }
+
+    if bucket == "1-3DTE":
+        pt_pct = {
+            "CALL": config.PROFIT_TARGET_PCT_1_3DTE_CALL,
+            "PUT":  config.PROFIT_TARGET_PCT_1_3DTE_PUT,
+            "COND": config.PROFIT_TARGET_PCT_1_3DTE_COND,
+        }[structure]
+        stop_pct = (config.STOP_PCT_1_3DTE_CALL if structure == "CALL"
+                    else config.STOP_PCT_1_3DTE_PUT if structure == "PUT"
+                    else None)   # condors use strike-touch, not %-of-max-loss
+        return {
+            "profit_target_pct":   pt_pct,
+            "stop_pct":            stop_pct,
+            "dte_close_threshold": 0,    # 1-3DTE managed by forced-close, not DTE threshold
+            "condor_short_strike_touch":          (structure == "COND"
+                and config.CONDOR_SHORT_STRIKE_TOUCH_EXIT_1_3DTE),
+            "forced_close_time":                   None,
+            "forced_close_minutes_before_expiry":  config.FORCED_CLOSE_MINUTES_BEFORE_EXPIRY_1_3DTE,
+        }
+
+    if bucket == "0DTE":
+        pt_pct = {
+            "CALL": config.PROFIT_TARGET_PCT_0DTE_CALL,
+            "PUT":  config.PROFIT_TARGET_PCT_0DTE_PUT,
+            "COND": config.PROFIT_TARGET_PCT_0DTE_COND,
+        }[structure]
+        stop_pct = (config.STOP_PCT_0DTE_CALL if structure == "CALL"
+                    else config.STOP_PCT_0DTE_PUT if structure == "PUT"
+                    else None)
+        forced_time = (config.FORCED_CLOSE_TIME_0DTE_CONDOR if structure == "COND"
+                       else config.FORCED_CLOSE_TIME_0DTE_DEBIT)
+        return {
+            "profit_target_pct":   pt_pct,
+            "stop_pct":            stop_pct,
+            "dte_close_threshold": 0,
+            "condor_short_strike_touch":          (structure == "COND"
+                and config.CONDOR_SHORT_STRIKE_TOUCH_EXIT_0DTE),
+            "forced_close_time":                   forced_time,
+            "forced_close_minutes_before_expiry":  None,
+        }
+
+    # Unknown bucket — defensive default (treat as 45DTE).
+    return _exit_rule_for(strategy, "45DTE")
+
+
 # ── Black-Scholes (r = 0; VIX/100 as sigma) ──────────────────────────
 
 def _norm_cdf(x: float) -> float:
@@ -109,14 +207,21 @@ class ExitManager:
 
     def manage_open(
         self,
-        today:     date  | None = None,
-        spy_close: float | None = None,
-        vix:       float | None = None,
+        today:        date  | None = None,
+        spy_close:    float | None = None,
+        vix:          float | None = None,
+        dte_buckets:  list[str] | None = None,
     ) -> list[dict]:
         """
         Walk open [AUTO-PAPER] trades and close any that hit the profit
         target or the time stop. Returns a list of closed-trade dicts.
         Expiry-day positions are left for ExpiryResolver.
+
+        dte_buckets: if provided, only process positions whose dte_bucket
+        field matches one of the given values (e.g. ["45DTE"] for the
+        daily 16:08 cron, ["0DTE", "1-3DTE"] for the intraday cron).
+        Untagged legacy trades are treated as "45DTE" for filtering purposes.
+        If None (default), all open positions are processed (back-compat).
         """
         today = today or date.today()
         if spy_close is None:
@@ -134,6 +239,12 @@ class ExitManager:
             t for t in self.trades.get_all_trades()
             if t.get("outcome") == "open" and AUTO_TAG in (t.get("notes_entry") or "")
         ]
+        if dte_buckets is not None:
+            buckets_set = set(dte_buckets)
+            open_auto = [
+                t for t in open_auto
+                if (t.get("dte_bucket") or "45DTE") in buckets_set
+            ]
         if not open_auto:
             return []
 
@@ -173,6 +284,11 @@ class ExitManager:
         """
         Return (exit_price, reason) if the position should close today,
         else None. exit_price already includes the slippage haircut.
+
+        Phase 2b-3: dispatches the exit rule by (strategy, dte_bucket).
+        Untagged trades (legacy, no dte_bucket field) default to 45DTE rules.
+        45DTE behavior is byte-identical to the original implementation
+        (PROFIT_TARGET_PCT_45DTE_*=0.70, DTE_CLOSE_THRESHOLD_45DTE=21).
         """
         legs     = trade.get("legs") or []
         strategy = (trade.get("strategy") or trade.get("trade_type") or "single_leg").lower()
@@ -183,18 +299,27 @@ class ExitManager:
         if dte < 0:
             return None   # already expired -> ExpiryResolver's job
 
+        # Look up the per-sub-strategy rule.
+        rule = _exit_rule_for(strategy, trade.get("dte_bucket"))
+
         exit_px = self._mark_exit_price(strategy, legs, spy, vix, today, dte)
         pnl     = self._pnl_dollars(strategy, trade.get("entry_price"), exit_px,
                                     trade.get("size", 1))
         max_profit = self._numeric(trade.get("max_profit"))
+        max_loss   = self._numeric(trade.get("max_loss"))
 
-        # 1. Profit target
+        # 1. Profit target — gated by per-sub-strategy threshold.
         if max_profit and max_profit > 0 and pnl is not None:
-            if pnl / max_profit >= PROFIT_TARGET_PCT:
-                return exit_px, f"profit target {PROFIT_TARGET_PCT:.0%}"
+            if pnl / max_profit >= rule["profit_target_pct"]:
+                return exit_px, f"profit target {rule['profit_target_pct']:.0%}"
 
-        # 2. Time stop (no hard loss stop -- losers ride to expiry)
-        if dte <= DTE_CLOSE_THRESHOLD:
+        # 2. Hard stop — Phase 2b experimental for 45DTE; configured for 0DTE/1-3DTE.
+        if rule["stop_pct"] is not None and max_loss and max_loss > 0 and pnl is not None:
+            if pnl <= -rule["stop_pct"] * max_loss:
+                return exit_px, f"stop {rule['stop_pct']:.0%} of max loss"
+
+        # 3. Time stop — close N DTE before expiry.
+        if dte <= rule["dte_close_threshold"]:
             return exit_px, f"time stop {dte}DTE"
 
         return None

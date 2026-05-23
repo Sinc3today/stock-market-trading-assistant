@@ -62,12 +62,13 @@ def job_outcome_resolver(polygon_client, post_fn=None):
         logger.exception(f"learning.outcome_resolver failed: {e}")
 
 
-def job_exit_manager(polygon_client, vix_client=None, post_fn=None):
+def job_exit_manager(polygon_client, vix_client=None, post_fn=None,
+                     dte_buckets=None):
     try:
         closed = ExitManager(
             polygon_client=polygon_client, vix_client=vix_client,
-        ).manage_open()
-        logger.info(f"learning.exit_manager -> {len(closed)} closed")
+        ).manage_open(dte_buckets=dte_buckets)
+        logger.info(f"learning.exit_manager [{dte_buckets or 'all'}] -> {len(closed)} closed")
         if closed and post_fn:
             try:
                 post_fn(format_exit_message(closed))
@@ -157,9 +158,25 @@ def register_learning_jobs(
     scheduler.add_job(
         job_exit_manager,
         CronTrigger(day_of_week="mon-fri", hour=16, minute=8, timezone=eastern),
-        kwargs={"polygon_client": polygon_client, "vix_client": vix_client, "post_fn": post_fn},
+        kwargs={"polygon_client": polygon_client, "vix_client": vix_client,
+                "post_fn": post_fn, "dte_buckets": ["45DTE"]},
         id="learning_exit_manager",
-        name="Learning: exit manager",
+        name="Learning: exit manager (daily 45DTE)",
+        replace_existing=True,
+    )
+
+    # Phase 2b-3: intraday exit cron. Runs every 5 min during market hours,
+    # processes only 0DTE/1-3DTE positions. No-op today because paper_broker
+    # hardcodes 45DTE; Phase 3's intraday entry pipeline will produce trades
+    # this cron then manages.
+    scheduler.add_job(
+        job_exit_manager,
+        CronTrigger(day_of_week="mon-fri", hour="9-15", minute="*/5",
+                    timezone=eastern),
+        kwargs={"polygon_client": polygon_client, "vix_client": vix_client,
+                "post_fn": post_fn, "dte_buckets": ["0DTE", "1-3DTE"]},
+        id="learning_exit_manager_intraday",
+        name="Learning: exit manager (intraday 0DTE / 1-3DTE)",
         replace_existing=True,
     )
 
@@ -218,6 +235,8 @@ def register_learning_jobs(
     logger.info("Learning jobs registered:")
     logger.info("   09:16 ET (Mon-Fri) - paper broker")
     logger.info("   16:05 ET (Mon-Fri) - outcome resolver")
+    logger.info("   16:08 ET (Mon-Fri) - exit manager [45DTE daily]")
+    logger.info("   every 5 min 9:00-15:55 ET (Mon-Fri) - exit manager [0DTE / 1-3DTE intraday]")
     logger.info("   16:10 ET (Mon-Fri) - expiry resolver")
     logger.info("   19:01 ET (Mon-Fri) - daily reflector")
     logger.info("   Sat 10:00 ET       - hypothesis engine")
