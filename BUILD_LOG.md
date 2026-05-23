@@ -4,6 +4,78 @@
 
 ---
 
+## 2026-05-23 | Phase 2b — live-path infrastructure (parity-validated)
+
+Third major phase of the 2026-05-23 session. First phase to refactor LIVE
+DECISION-PATH code — the parity gate (byte-identical 45DTE behavior) was the
+discipline that protected this shipment.
+
+**Three tasks shipped + one reviewer-driven fix, 748 tests passing
+(+20 from Phase 2a's 728):**
+- `signals/regime_lens.py` — `RegimeLens` ABC + `DailyLens` (wraps
+  `RegimeDetector`) + `IntradayLens` (wraps `SPYOptionsEngine`) +
+  `LENS_FOR_STRATEGY` registry (9 entries: 3 strategies × 3 DTE buckets).
+  Formalization only — no production caller invokes `lens_for()` yet
+  (Phase 3 will).
+- `learning/paper_broker.py` — multi-position concurrency caps
+  (MAX_CONCURRENT_DISCIPLINED=3, _LEARNING=6), `_open_count_by_book`
+  helper, and a new event-driven `execute_signal(setup)` method for
+  Phase 3's intraday consumer. Existing 09:16 daily flow is byte-identical
+  in production (45DTE bot opens at most 1/day, well under cap).
+- `learning/exit_manager.py` — strategy-aware `_exit_rule_for(strategy,
+  dte_bucket)` dispatch. `_evaluate` now looks up per-sub-strategy rules
+  instead of hardcoded globals. **45DTE values match the legacy globals
+  exactly (PROFIT_TARGET_PCT_45DTE_* = 0.70, DTE_CLOSE_THRESHOLD_45DTE = 21)
+  — byte-identical behavior, verified by tests + by all 7 pre-existing
+  exit-manager tests still passing unchanged.**
+- `learning/scheduler.py` — daily 16:08 cron now passes `dte_buckets=
+  ["45DTE"]`; new intraday cron registered (every 5 min Mon-Fri 9:00-15:55
+  ET) passing `dte_buckets=["0DTE", "1-3DTE"]`. The intraday cron is no-op
+  today because paper_broker hardcodes 45DTE; Phase 3's intraday entry
+  pipeline will produce trades the cron then manages. 10 scheduled jobs
+  total (was 9).
+- **Reviewer follow-up fix (commit 6a1608f):** `manage_open` reordered to
+  filter open positions FIRST and only fetch SPY/VIX when there are
+  positions to mark. Without this, the new intraday cron would have leaked
+  ~156 Polygon API calls/day fetching market data for no positions.
+
+**Final reviewer (Opus, full diff):** ready to merge, **zero Critical
+issues**. The 45DTE byte-identical parity contract holds across
+`_exit_rule_for`, `_evaluate`, `manage_open`, and the legacy-untagged
+trade path. All pre-existing tests pass unchanged.
+
+**Known follow-ups for Phase 3 (deferred, not blocking):**
+1. Stale `TUNABLE_PARAMS` entries — `("learning.exit_manager",
+   "PROFIT_TARGET_PCT")` and `("learning.exit_manager",
+   "DTE_CLOSE_THRESHOLD")` still whitelisted but `_evaluate` no longer reads
+   them. Recommend retiring these entries (the Phase 1 per-sub-strategy
+   constants cover the active path).
+2. `trade_type` inconsistency between `execute()` ("debit_spread" / etc) and
+   `execute_signal()` ("option_spread"). Normalize before Phase 3 wires
+   `execute_signal` to real callers.
+3. `_STRUCTURE_KEY` maps `credit_spread` → "CALL". Currently harmless (all
+   three 45DTE structures share 0.70 target). If they ever diverge, credit
+   puts would silently use the call value — fix during Phase 3.
+
+**Tests:** 748 passing on the branch (728 Phase-2a baseline + 5 + 5 + 10
+new across regime_lens / paper_broker_concurrency / exit_manager_strategy_aware
+test files).
+
+**Phases 1 + 2a + 2b complete.** The bot now has:
+- Per-sub-strategy exit-rule constants + tunable whitelist (Phase 1)
+- Walk-forward correctness on hypothesis verdicts (Phase 1)
+- Per-strategy logging tags + shared walk-forward primitive (Phase 2a)
+- Regime-per-timeframe lens abstraction (Phase 2b)
+- Multi-position concurrency + event-driven entry path (Phase 2b)
+- Strategy-aware ExitManager with intraday cron (Phase 2b)
+
+All Phase 2b changes are byte-identical to today's production behavior on
+the 45DTE path — the bot's daily 09:15 play, 09:16 paper-broker, 16:08
+exit-manager will run identically Tuesday-Friday next week while we plan
+Phase 3 (intraday entry pipeline + dual-book wiring).
+
+---
+
 ## 2026-05-23 | Phase 2a — per-strategy tag substrate + walk-forward primitive
 
 Continuation of the 2026-05-23 strategic roadmap session. Phase 1 (foundation +
