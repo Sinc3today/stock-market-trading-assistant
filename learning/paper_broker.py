@@ -122,6 +122,9 @@ class PaperBroker:
             predicted_stop   = self._level(options, "stop")   or self._move_from_metrics(metrics, direction, -0.01),
             confidence       = confidence,
             reasons          = reasons,
+            strategy         = (play.get("options") or {}).get("strategy"),
+            dte_bucket       = "45DTE",
+            book             = "disciplined",
         )
         self.predictions.save(pred)
 
@@ -154,6 +157,8 @@ class PaperBroker:
             alert_timestamp = today_str,
             alert_score     = int(round(confidence * 100)),
             notes           = notes,
+            dte_bucket      = "45DTE",
+            book            = "disciplined",
         )
 
         self.plans.mark_executed(today_str, trade_id)

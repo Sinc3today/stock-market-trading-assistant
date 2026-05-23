@@ -58,6 +58,8 @@ class TradeRecorder:
         alert_timestamp: str  = None,
         alert_score:     int  = None,
         notes:           str  = "",
+        dte_bucket:      str | None = None,   # "0DTE" / "1-3DTE" / "45DTE"
+        book:            str | None = None,   # "disciplined" / "learning"
     ) -> str:
         """
         Log a trade entry.
@@ -139,6 +141,10 @@ class TradeRecorder:
             "notes_entry": notes,
             "notes_exit":  "",
             "lessons":     "",
+
+            # Per-strategy tags (Phase 2a)
+            "dte_bucket": dte_bucket,
+            "book":       book,
         }
 
         trades = self._load()

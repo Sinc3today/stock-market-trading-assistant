@@ -68,6 +68,11 @@ class Prediction:
     actual_close:     float | None  = None
     actual_move_pct:  float | None  = None
     outcome:          str | None    = None   # correct / wrong / partial / skip
+    # Per-strategy tags (Phase 2a) — populated by paper_broker, read by
+    # downstream Phase 3+ analytics.
+    strategy:         str | None    = None   # e.g. "iron_condor", "bull_debit", "put_debit_spread"
+    dte_bucket:       str | None    = None   # "0DTE" / "1-3DTE" / "45DTE"
+    book:             str | None    = None   # "disciplined" / "learning"
 
 
 class PredictionLog:
