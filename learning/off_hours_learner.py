@@ -34,7 +34,7 @@ from learning.knowledge_base import KnowledgeBase, KBEntry
 
 
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
-CLAUDE_MODEL   = "claude-sonnet-4-5-20250929"
+CLAUDE_MODEL   = "claude-sonnet-4-6"
 
 LEARNER_SYSTEM = """You are the trading assistant's off-hours learning module.
 

@@ -32,7 +32,7 @@ from learning.paper_broker   import AUTO_TAG
 
 
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
-CLAUDE_MODEL   = "claude-sonnet-4-5-20250929"
+CLAUDE_MODEL   = "claude-sonnet-4-6"
 
 REFLECTOR_SYSTEM = """You are the trading assistant's self-reflection module.
 

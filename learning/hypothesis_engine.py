@@ -43,7 +43,7 @@ from journal.plan_logger     import PlanLogger
 
 
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
-CLAUDE_MODEL   = "claude-sonnet-4-5-20250929"
+CLAUDE_MODEL   = "claude-sonnet-4-6"
 
 # Whitelist of (module_path, var_name) pairs the engine may target.
 # Add to this list as you make more thresholds first-class tunables.
