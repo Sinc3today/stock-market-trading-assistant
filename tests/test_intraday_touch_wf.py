@@ -2,6 +2,7 @@ import os, sys
 import pandas as pd
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from backtests.intraday_touch_wf import compare_runs, split_oos
+from backtests.intraday_touch_wf import PRESETS, evaluate_preset
 
 
 def _trades_off():
@@ -49,3 +50,62 @@ def test_compare_runs_computes_deltas_attribution_and_per_regime():
     rmap = result["per_regime"]
     assert "trending_up_calm" in rmap
     assert rmap["trending_up_calm"]["n"] == 3
+
+
+def _measured(dollar, baseline_dollar, attrib, is_delta):
+    """Build a `measured` dict shaped like compare_runs() output."""
+    return {
+        "oos_delta_per_trade":    dollar,
+        "oos_baseline_per_trade": baseline_dollar,
+        "oos_attribution":        attrib,
+        "is_delta_per_trade":     is_delta,
+        "n_oos": 230,
+    }
+
+
+def test_evaluate_preset_strict_passes_only_on_large_signal():
+    strict = next(p for p in PRESETS if p["name"] == "strict-3σ")
+    weak   = _measured(dollar=30.0, baseline_dollar=100.0, attrib=0.30, is_delta=20.0)
+    strong = _measured(dollar=50.0, baseline_dollar=100.0, attrib=0.40, is_delta=30.0)
+    assert evaluate_preset(weak,   strict)["ship"] is False  # below $40 stat floor
+    assert evaluate_preset(strong, strict)["ship"] is True
+
+
+def test_evaluate_preset_default_uses_config_constants():
+    """default-2σ floors come from config.INTRADAY_TOUCH_SHIP_MIN_* so they're tunable."""
+    import config
+    default = next(p for p in PRESETS if p["name"] == "default-2σ")
+    assert default["stat_floor"]   == config.INTRADAY_TOUCH_SHIP_MIN_DOLLAR
+    assert default["scale_floor"]  == config.INTRADAY_TOUCH_SHIP_MIN_FRAC
+    assert default["attrib_floor"] == config.INTRADAY_TOUCH_SHIP_MIN_ATTRIB
+
+
+def test_evaluate_preset_blocks_when_is_sanity_fails():
+    """If is_sanity is on and IS delta is non-positive, the preset must NOT ship
+    even if all dollar/scale/attribution floors pass."""
+    default = next(p for p in PRESETS if p["name"] == "default-2σ")
+    passes_others = _measured(dollar=50.0, baseline_dollar=100.0, attrib=0.40, is_delta=-5.0)
+    out = evaluate_preset(passes_others, default)
+    assert out["ship"] is False
+    assert out["floors_met"]["is_sanity"] is False
+
+
+def test_evaluate_preset_oos_only_ignores_is_direction():
+    """oos-only preset has is_sanity=off; a negative IS delta must not block ship."""
+    oos_only = next(p for p in PRESETS if p["name"] == "oos-only")
+    m = _measured(dollar=50.0, baseline_dollar=100.0, attrib=0.40, is_delta=-5.0)
+    assert evaluate_preset(m, oos_only)["ship"] is True
+
+
+def test_evaluate_preset_attribution_strict_requires_30pct_attrib():
+    attrib_strict = next(p for p in PRESETS if p["name"] == "attribution-strict")
+    low_attrib  = _measured(dollar=30.0, baseline_dollar=100.0, attrib=0.20, is_delta=10.0)
+    high_attrib = _measured(dollar=30.0, baseline_dollar=100.0, attrib=0.35, is_delta=10.0)
+    assert evaluate_preset(low_attrib,  attrib_strict)["ship"] is False
+    assert evaluate_preset(high_attrib, attrib_strict)["ship"] is True
+
+
+def test_presets_table_has_exactly_six_entries():
+    names = {p["name"] for p in PRESETS}
+    assert names == {"strict-3σ", "default-2σ", "lenient-1.5σ",
+                     "research-1σ", "attribution-strict", "oos-only"}

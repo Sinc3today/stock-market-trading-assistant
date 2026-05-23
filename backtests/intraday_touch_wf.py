@@ -20,6 +20,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import pandas as pd
 from loguru import logger
 
+import config
+
 
 def split_oos(trades: pd.DataFrame, fraction: float = 0.6) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split trades chronologically: first `fraction` = in-sample, rest = OOS."""
@@ -61,6 +63,83 @@ def compare_runs(trades_off: pd.DataFrame, trades_on: pd.DataFrame,
         "oos_attribution":        attribution,
         "per_regime":             per_regime,
     }
+
+
+PRESETS = [
+    {"name": "strict-3σ",          "stat_floor": 40.0, "scale_floor": 0.15, "attrib_floor": 0.25, "is_sanity": True},
+    {"name": "default-2σ",         "stat_floor": config.INTRADAY_TOUCH_SHIP_MIN_DOLLAR,
+                                   "scale_floor": config.INTRADAY_TOUCH_SHIP_MIN_FRAC,
+                                   "attrib_floor": config.INTRADAY_TOUCH_SHIP_MIN_ATTRIB,
+                                   "is_sanity": True},
+    {"name": "lenient-1.5σ",       "stat_floor": 15.0, "scale_floor": 0.05, "attrib_floor": 0.10, "is_sanity": True},
+    {"name": "research-1σ",        "stat_floor": 10.0, "scale_floor": 0.05, "attrib_floor": 0.05, "is_sanity": False},
+    {"name": "attribution-strict", "stat_floor": 20.0, "scale_floor": 0.10, "attrib_floor": 0.30, "is_sanity": True},
+    {"name": "oos-only",           "stat_floor": config.INTRADAY_TOUCH_SHIP_MIN_DOLLAR,
+                                   "scale_floor": config.INTRADAY_TOUCH_SHIP_MIN_FRAC,
+                                   "attrib_floor": config.INTRADAY_TOUCH_SHIP_MIN_ATTRIB,
+                                   "is_sanity": False},
+]
+
+
+def evaluate_preset(measured: dict, preset: dict) -> dict:
+    """Check a measured-result dict against one preset's four floors.
+
+    Returns {"ship": bool, "floors_met": {dollar, scale, attrib, is_sanity: bool}}.
+    The scale floor is computed as a fraction of |baseline| so a near-zero
+    baseline doesn't make the floor vacuous; if baseline is effectively zero
+    we treat the scale gate as met (the dollar floor is the meaningful gate).
+    """
+    delta    = measured["oos_delta_per_trade"]
+    baseline = measured["oos_baseline_per_trade"]
+    attrib   = measured["oos_attribution"]
+    is_delta = measured["is_delta_per_trade"]
+
+    dollar_ok = delta >= preset["stat_floor"]
+    if abs(baseline) > 1e-9:
+        scale_ok = (delta / abs(baseline)) >= preset["scale_floor"]
+    else:
+        scale_ok = True   # baseline ~ 0; dollar floor is the only meaningful gate
+    attrib_ok = attrib >= preset["attrib_floor"]
+    is_ok     = (is_delta > 0) if preset["is_sanity"] else True
+
+    return {
+        "ship": dollar_ok and scale_ok and attrib_ok and is_ok,
+        "floors_met": {"dollar": dollar_ok, "scale": scale_ok,
+                       "attrib": attrib_ok, "is_sanity": is_ok},
+    }
+
+
+def print_verdict_matrix(measured: dict) -> dict:
+    """Print the measured result + verdict for each of the 6 presets.
+    Returns {preset_name: ship_bool} for callers that want the verdicts."""
+    print("\n" + "=" * 78)
+    print("  INTRADAY-TOUCH EXIT — WALK-FORWARD VERDICT")
+    print("=" * 78)
+    print(f"  n_OOS = {measured['n_oos']}   n_IS = {measured['n_is']}")
+    pct_of_baseline = (measured['oos_delta_per_trade'] / abs(measured['oos_baseline_per_trade']) * 100
+                       if abs(measured['oos_baseline_per_trade']) > 1e-9 else 0.0)
+    print(f"  measured:  IS Δ=${measured['is_delta_per_trade']:+.1f}/trade   "
+          f"OOS Δ=${measured['oos_delta_per_trade']:+.1f}/trade  "
+          f"({pct_of_baseline:+.1f}% of baseline)")
+    print(f"             attribution = {measured['oos_attribution']*100:.1f}% of OOS exits via target_intraday")
+    print(f"\n  {'preset':<20} {'dollar':>7} {'scale':>6} {'attrib':>7} {'IS':>4}   verdict")
+    print("-" * 78)
+    verdicts = {}
+    for p in PRESETS:
+        out = evaluate_preset(measured, p)
+        f   = out["floors_met"]
+        mark = lambda b: "✓" if b else "✗"
+        binding = "  <- BINDING" if p["name"] == "default-2σ" else ""
+        print(f"  {p['name']:<20} {mark(f['dollar']):>7} {mark(f['scale']):>6} "
+              f"{mark(f['attrib']):>7} {mark(f['is_sanity']):>4}   "
+              f"{'SHIP' if out['ship'] else 'no'}{binding}")
+        verdicts[p["name"]] = out["ship"]
+
+    print("\n  Per-regime Δ$/trade:")
+    for r, info in measured["per_regime"].items():
+        print(f"    {r:<22} n={info['n']:>4}   Δ=${info['delta_per_trade']:+.1f}/trade")
+    print("=" * 78 + "\n")
+    return verdicts
 
 
 def _price_population(spy_df, vix_df, regime_df, intraday_touch: bool) -> pd.DataFrame:
@@ -109,8 +188,7 @@ def run() -> dict:
 
 def main():
     result = run()
-    # Verdict-matrix printing is added in a later task. For now, print the raw metrics.
-    print(result)
+    print_verdict_matrix(result)
 
 
 if __name__ == "__main__":
