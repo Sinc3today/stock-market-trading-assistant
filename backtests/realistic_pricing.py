@@ -118,7 +118,8 @@ def simulate_trade(spy_df: pd.DataFrame, dates: list, entry_idx: int,
                    entry_dte: int = ENTRY_DTE,
                    profit_target_pct: float = PROFIT_TARGET_PCT,
                    dte_close_threshold: int = DTE_CLOSE_THRESHOLD,
-                   stop_loss_frac: float | None = None) -> dict | None:
+                   stop_loss_frac: float | None = None,
+                   intraday_touch: bool = False) -> dict | None:
     """
     Price one trade's full lifecycle realistically. Returns a dict with
     realized pnl_dollars, outcome, exit_reason, days_held -- or None if the
@@ -133,6 +134,14 @@ def simulate_trade(spy_df: pd.DataFrame, dates: list, entry_idx: int,
     of max risk). Expressed against max loss rather than credit so it stays
     meaningful regardless of how rich the credit is relative to the wing width.
     None (default) = no hard stop, preserving the live-parity exit path.
+
+    intraday_touch: if True, re-mark the spread at the day's HIGH and LOW in
+    addition to the CLOSE on each iteration. If the best intraday mark hits
+    profit_target_pct on a day where the daily-close mark did not, exit at
+    that mark with exit_reason='target_intraday'. The stop check (if enabled)
+    stays on the daily close — there is no broker-side hard stop in the live
+    system, so live-realism is intraday-touch on the profit side only.
+    Default False = byte-identical to the original daily-close behavior.
 
     vix_at: mapping date -> vix (falls back to 16.0).
     """
@@ -163,22 +172,36 @@ def simulate_trade(spy_df: pd.DataFrame, dates: list, entry_idx: int,
     for j in range(entry_idx + 1, len(dates)):
         d   = dates[j]
         dte = (expiry - d).days
-        spot = float(spy_df.loc[d, "close"])
-        vix  = vix_at.get(d, vix0)
-        long_v, short_v = _net_value(legs, spot, vix, max(dte, 0))
-        if credit:
-            cost = max(0.0, short_v - long_v) + EXIT_SLIPPAGE     # pay to close (slipped worse)
-            pnl  = (entry_px - cost) * 100
-        else:
-            proceeds = max(0.0, long_v - short_v) - EXIT_SLIPPAGE  # receive to close (slipped worse)
-            pnl      = (proceeds - entry_px) * 100
+        vix = vix_at.get(d, vix0)
 
-        hit_target = max_profit > 0 and pnl / max_profit >= profit_target_pct
-        hit_stop   = (stop_loss_frac is not None and max_loss > 0
-                      and pnl <= -stop_loss_frac * max_loss)
-        if hit_target or hit_stop or dte <= dte_close_threshold or dte <= 0:
-            net = pnl - commission
-            exit_reason = ("target" if hit_target else
+        # Mark at the close (always). Also mark at high/low when intraday_touch.
+        def _pnl_at(spot: float) -> float:
+            long_v, short_v = _net_value(legs, spot, vix, max(dte, 0))
+            if credit:
+                cost = max(0.0, short_v - long_v) + EXIT_SLIPPAGE     # pay to close (slipped worse)
+                return (entry_px - cost) * 100
+            proceeds = max(0.0, long_v - short_v) - EXIT_SLIPPAGE      # receive to close (slipped worse)
+            return (proceeds - entry_px) * 100
+
+        pnl_close = _pnl_at(float(spy_df.loc[d, "close"]))
+        pnl_best  = pnl_close
+        if intraday_touch:
+            pnl_best = max(pnl_best,
+                           _pnl_at(float(spy_df.loc[d, "high"])),
+                           _pnl_at(float(spy_df.loc[d, "low"])))
+
+        hit_target_close = max_profit > 0 and pnl_close / max_profit >= profit_target_pct
+        hit_target_intra = (intraday_touch and not hit_target_close
+                            and max_profit > 0
+                            and pnl_best / max_profit >= profit_target_pct)
+        hit_stop = (stop_loss_frac is not None and max_loss > 0
+                    and pnl_close <= -stop_loss_frac * max_loss)
+
+        if hit_target_close or hit_target_intra or hit_stop or dte <= dte_close_threshold or dte <= 0:
+            pnl_exit = pnl_best if hit_target_intra else pnl_close
+            net = pnl_exit - commission
+            exit_reason = ("target_intraday" if hit_target_intra else
+                           "target" if hit_target_close else
                            "stop"   if hit_stop else
                            "expiry" if dte <= 0 else "time_stop")
             return {

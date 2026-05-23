@@ -112,3 +112,62 @@ def test_concurrency_cap_limits_overlap():
     # With ~24-day holds, a single-position account opens roughly
     # n_days / hold trades — far fewer than one-per-day.
     assert len(one) <= len(df) / 10
+
+
+# ── intraday-touch tests ───────────────────────────────────────────────────────
+
+
+def _intraday_df(n: int, closes: list[float], highs: list[float], lows: list[float]):
+    """Build an OHLC frame for intraday-touch tests."""
+    d0 = date(2025, 1, 1)
+    dates = [pd.Timestamp(d0 + timedelta(days=i)) for i in range(n)]
+    return pd.DataFrame({"close": closes, "high": highs, "low": lows}, index=dates)
+
+
+def test_intraday_touch_exits_via_high_when_close_does_not_hit_target():
+    """Flat SPY at 500 except day 20 has a 12% intraday spike up that fades
+    back to close=500. A bull debit at entry 500 hits its profit target at
+    day 20's high but not at any daily close — touch mode should exit with
+    target_intraday on day 20; daily-close mode should ride to time_stop.
+
+    Day 20 is chosen so the spike arrives before the DTE_CLOSE_THRESHOLD
+    time-stop (which fires at day 24 for a 45-DTE entry with threshold=21).
+    """
+    n = 60
+    closes = [500.0] * n
+    highs  = [500.0] * n
+    lows   = [500.0] * n
+    highs[20] = 560.0   # 12% intraday spike, faded back; arrives before time_stop
+    df = _intraday_df(n, closes, highs, lows)
+    dates = list(df.index)
+
+    held  = simulate_trade(df, dates, 0, "bull_debit", {})
+    touch = simulate_trade(df, dates, 0, "bull_debit", {}, intraday_touch=True)
+
+    assert held is not None and touch is not None
+    assert held["exit_reason"]  in ("time_stop", "expiry")
+    assert touch["exit_reason"] == "target_intraday"
+    assert touch["days_held"] < held["days_held"]
+
+
+def test_intraday_touch_default_off_byte_identical_to_old_behavior():
+    """With intraday_touch=False (default), the function must produce the same
+    output as before the parameter existed. Uses the existing _ramp_df helper
+    (close-only frame) which is what every current caller passes."""
+    df = _ramp_df(n=120, start=500.0, step=2.0)
+    dates = list(df.index)
+    a = simulate_trade(df, dates, 0, "bull_debit", {})                       # default
+    b = simulate_trade(df, dates, 0, "bull_debit", {}, intraday_touch=False) # explicit
+    assert a == b
+
+
+def test_intraday_touch_pathological_no_range_matches_daily_close():
+    """If high == low == close on every bar, intraday-touch mode has nothing
+    new to discover and must produce identical output to daily-close mode."""
+    n = 60
+    closes = [500.0 + 2.0 * i for i in range(n)]
+    df = _intraday_df(n, closes, list(closes), list(closes))
+    dates = list(df.index)
+    a = simulate_trade(df, dates, 0, "bull_debit", {})                          # touch off
+    b = simulate_trade(df, dates, 0, "bull_debit", {}, intraday_touch=True)     # touch on, no range
+    assert a == b
