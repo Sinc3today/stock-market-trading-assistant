@@ -4,6 +4,88 @@
 
 ---
 
+## 2026-05-23 | Phase 3 — intraday entry pipeline LIVE (first behavior change)
+
+Fourth and final major phase of the 2026-05-23 grind. **First phase to actually
+change the bot's live behavior** — Phases 1+2a+2b were "no live change" or
+"parity-validated identical." Phase 3 wires intraday_scanner's high-conviction
+setups → paper_broker.execute_signal so they become real paper trades from
+Tuesday's open onward.
+
+**Four tasks shipped + one reviewer-driven refactor, 771 tests passing
+(+23 from Phase 2b's 748):**
+- 5 Phase 3 config constants in config.py: INTRADAY_PAPER_BROKER_ENABLED
+  (default True kill-switch), ENTRY_TIER_MINIMUM ("high"), INTRADAY_DTE_
+  MORNING_CUTOFF ("12:30"), ULTRA_CONVICTION_DOUBLE_DTE_SCORE (85),
+  INTRADAY_PER_COMBO_DAILY_CAP (2).
+- `PaperBroker._entry_count_today_by_combo` helper (ET timezone, reads from
+  TradeRecorder, restart-safe). Implementer caught a real plan bug — the
+  actual TradeRecorder field is `entry_date` not `entry_time`; added it to
+  the fallback chain.
+- `signals/intraday_entry_router.py` — pure-function router composing:
+  - Entry-tier filter (config.ENTRY_TIER_MINIMUM)
+  - H2 DTE assignment (morning→0DTE, afternoon→1-3DTE, Friday-PM safeguard
+    forces 0DTE, ultra-conv ≥85 doubles to both — except Friday PM where
+    safeguard wins)
+  - D dedup (one open per combo + ≤2/day per combo)
+  - Phase 3 PLACEHOLDER pricing baked in: entry_price=1.0, max_profit=200,
+    max_loss=100, legs=[]. Phase 4 replaces with real per-sub-strategy
+    structure builder.
+- Wired `scanners/intraday_scanner.py`: after each setup's alert, if flag
+  ON, calls the router → for each returned setup_dict, calls execute_signal.
+  Wrapped in try/except — Phase 3 failures cannot crash the scanner.
+- **Reviewer follow-up fix (73e997f):** dropped a duplicate hard-coded
+  `setup.conviction != "high"` check from the scanner that would have
+  silently defeated future tuning of `ENTRY_TIER_MINIMUM`. Router is now
+  sole tier authority.
+
+**Final reviewer (Opus, full diff):** ready to merge, zero Critical issues.
+Kill-switch correctly positioned (verified by code-reading: flag-off path
+is byte-identical to Phase 2b, no router call / no broker instantiation /
+no side effects). Error containment robust. Router is pure. Placeholder-
+pricing dishonesty is visible inline + in docstrings.
+
+**Important honesty caveat (also in spec):** P&L on intraday paper trades
+is NOT MEANINGFUL until Phase 4 wires the real structure builder. Every
+Phase 3 intraday paper position has entry_price=1.0, max_profit=200,
+max_loss=100, legs=[]. The trade RECORDS are real (dedup state, position
+counts, opens/closes), but the dollar numbers are placeholders. Filter by
+dte_bucket="45DTE" for any "did the bot make money today" claims while
+Phase 3 is in production.
+
+**What changes Tuesday morning with this shipped (flag default ON):**
+- 09:15: existing daily 45DTE play — unchanged
+- 09:16: existing paper_broker opens 45DTE position — unchanged
+- 09:30 onwards every 5 min: intraday_scanner runs as today, but NOW
+  high-conviction setups also open intraday paper positions via the
+  router + execute_signal. Up to MAX_CONCURRENT_DISCIPLINED=3 concurrent.
+  Per-combo dedup caps at 2 entries/day.
+- Every 5 min: Phase 2b's strategy-aware intraday ExitManager picks up
+  the new positions and applies per-sub-strategy exit rules from Phase 1.
+- 16:08: existing daily cron — handles 45DTE positions.
+- 19:00: existing reflector — sees the new intraday trades in journal.
+
+**Known follow-ups for Phase 4 (deferred, not blocking):**
+1. Per-sub-strategy structure builder — replace placeholder pricing
+   (entry_price=1.0, etc.) with real strikes/legs per (strategy, dte_bucket).
+   Phase 3's wiring tests don't depend on this; trade dollars will be
+   meaningful after Phase 4.
+2. Dual-book design (entry-feasibility predicate + learning_broker for
+   marginal entries). Phase 3 ships single-book (disciplined).
+3. Per-sub-strategy exit-feasibility rules (gates the disciplined book).
+4. Lift `PaperBroker()` instantiation out of the per-setup loop in scanner
+   (cosmetic micro-perf).
+
+**Tests:** 771 passing on branch (748 Phase 2b baseline + 5 + 3 + 11 + 4
+new across test_phase3_config / test_paper_broker_entry_count_today /
+test_intraday_entry_router / test_intraday_scanner_pipeline).
+
+**Kill switch:** `config.INTRADAY_PAPER_BROKER_ENABLED = True` ships ON.
+To revert in an emergency: flip to `False`, commit, push. Scanner returns
+to Phase 2b behavior immediately on next 5-min tick.
+
+---
+
 ## 2026-05-23 | Phase 2b — live-path infrastructure (parity-validated)
 
 Third major phase of the 2026-05-23 session. First phase to refactor LIVE
