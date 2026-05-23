@@ -125,23 +125,41 @@ def _write_pending_spec(iso, value=27.0):
     return spec, path
 
 
+def _make_bt(trades_is, trades_oos, sharpe_is, sharpe_oos, pnl_is, pnl_oos, win_rate=50.0):
+    """Build a backtest result dict with IS/OOS split (new shape)."""
+    return {
+        "trades":   trades_is + trades_oos,
+        "win_rate": win_rate,
+        "pnl":      pnl_is + pnl_oos,
+        "sharpe":   round((sharpe_is + sharpe_oos) / 2, 3),
+        "is":  {"trades": trades_is,  "win_rate": win_rate, "pnl": pnl_is,  "sharpe": sharpe_is},
+        "oos": {"trades": trades_oos, "win_rate": win_rate, "pnl": pnl_oos, "sharpe": sharpe_oos},
+    }
+
+
 def _bt_fn_accept(override):
-    """Baseline vs modified: modified wins on Sharpe + PnL."""
+    """Baseline vs modified: modified wins on OOS Sharpe + OOS PnL above accept thresholds."""
     if override is None:
-        return {"trades": 100, "win_rate": 50.0, "pnl": 1000, "sharpe": 1.50}
-    return     {"trades":  85, "win_rate": 55.0, "pnl": 1400, "sharpe": 1.75}
+        return _make_bt(trades_is=60, trades_oos=40, sharpe_is=1.50, sharpe_oos=1.50,
+                        pnl_is=600, pnl_oos=400, win_rate=50.0)
+    return     _make_bt(trades_is=50, trades_oos=35, sharpe_is=1.50, sharpe_oos=1.75,
+                        pnl_is=600, pnl_oos=800, win_rate=55.0)
 
 
 def _bt_fn_reject(override):
     if override is None:
-        return {"trades": 100, "win_rate": 50.0, "pnl": 1000, "sharpe": 1.50}
-    return     {"trades":  90, "win_rate": 45.0, "pnl":  500, "sharpe": 1.20}
+        return _make_bt(trades_is=60, trades_oos=40, sharpe_is=1.50, sharpe_oos=1.50,
+                        pnl_is=600, pnl_oos=400, win_rate=50.0)
+    return     _make_bt(trades_is=55, trades_oos=35, sharpe_is=1.50, sharpe_oos=1.20,
+                        pnl_is=400, pnl_oos=100, win_rate=45.0)
 
 
 def _bt_fn_inconclusive(override):
     if override is None:
-        return {"trades": 100, "win_rate": 50.0, "pnl": 1000, "sharpe": 1.50}
-    return     {"trades":  98, "win_rate": 50.5, "pnl": 1050, "sharpe": 1.53}
+        return _make_bt(trades_is=60, trades_oos=40, sharpe_is=1.50, sharpe_oos=1.50,
+                        pnl_is=600, pnl_oos=400, win_rate=50.0)
+    return     _make_bt(trades_is=58, trades_oos=40, sharpe_is=1.50, sharpe_oos=1.53,
+                        pnl_is=620, pnl_oos=450, win_rate=50.5)
 
 
 def test_runner_accepts(iso):
