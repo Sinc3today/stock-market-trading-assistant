@@ -224,17 +224,12 @@ class ExitManager:
         If None (default), all open positions are processed (back-compat).
         """
         today = today or date.today()
-        if spy_close is None:
-            spy_close = self._fetch_spy_close()
-        if spy_close is None:
-            logger.warning("ExitManager: no SPY close available, skipping")
-            return []
-        if vix is None:
-            vix = self._fetch_vix()
-        if vix is None:
-            logger.warning("ExitManager: no VIX available, skipping mid-life marks")
-            return []
 
+        # Compute the filtered open-position list FIRST so we can short-circuit
+        # before any Polygon/VIX network call when there's nothing to manage
+        # (e.g., the every-5-min intraday cron when no 0DTE/1-3DTE positions
+        # exist on the books — its 78 fires/day would otherwise leak ~156
+        # market-data calls into Polygon's quota for no reason).
         open_auto = [
             t for t in self.trades.get_all_trades()
             if t.get("outcome") == "open" and AUTO_TAG in (t.get("notes_entry") or "")
@@ -246,6 +241,18 @@ class ExitManager:
                 if (t.get("dte_bucket") or "45DTE") in buckets_set
             ]
         if not open_auto:
+            return []
+
+        # Now fetch market data — only when we actually have positions to mark.
+        if spy_close is None:
+            spy_close = self._fetch_spy_close()
+        if spy_close is None:
+            logger.warning("ExitManager: no SPY close available, skipping")
+            return []
+        if vix is None:
+            vix = self._fetch_vix()
+        if vix is None:
+            logger.warning("ExitManager: no VIX available, skipping mid-life marks")
             return []
 
         closed: list[dict] = []
