@@ -35,8 +35,21 @@ def compare_runs(trades_off: pd.DataFrame, trades_on: pd.DataFrame,
     """Compute Δ$/trade, attribution %, IS/OOS, per-regime breakdown.
 
     trades_off / trades_on each have columns: date, regime, pnl_dollars,
-    exit_reason. They share entry dates 1:1; we inner-join on date.
+    exit_reason. **Both frames must contain the exact same set of entry dates**
+    (1:1 coverage) — they describe the same population priced two different
+    ways. The function asserts this invariant rather than silently inner-joining
+    a mismatched set; a future caller that violates it (e.g. a mode that skips
+    a date the other keeps) would otherwise shrink the OOS sample and inflate
+    the attribution ratio without any signal that it had done so.
     """
+    if set(trades_off["date"]) != set(trades_on["date"]):
+        missing_in_on  = set(trades_off["date"]) - set(trades_on["date"])
+        missing_in_off = set(trades_on["date"]) - set(trades_off["date"])
+        raise ValueError(
+            f"compare_runs: trades_off and trades_on must share the same set of "
+            f"entry dates. {len(missing_in_on)} date(s) in off-but-not-on, "
+            f"{len(missing_in_off)} in on-but-not-off."
+        )
     off = trades_off.set_index("date")[["pnl_dollars", "regime", "exit_reason"]].rename(
         columns={"pnl_dollars": "pnl_off", "exit_reason": "reason_off"})
     on = trades_on.set_index("date")[["pnl_dollars", "exit_reason"]].rename(
