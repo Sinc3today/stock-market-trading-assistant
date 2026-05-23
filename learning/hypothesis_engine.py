@@ -48,6 +48,7 @@ CLAUDE_MODEL   = "claude-sonnet-4-6"
 # Whitelist of (module_path, var_name) pairs the engine may target.
 # Add to this list as you make more thresholds first-class tunables.
 TUNABLE_PARAMS = {
+    # ── Existing regime + per-day knobs (keep) ──────────────────────────────
     ("signals.regime_detector", "ADX_TREND_MIN"):            {"type": "float", "min": 15.0, "max": 35.0},
     ("signals.regime_detector", "VIX_CALM_MAX"):             {"type": "float", "min": 12.0, "max": 22.0},
     ("signals.regime_detector", "MIN_TREND_SEPARATION_PCT"): {"type": "float", "min": 0.5,  "max": 3.0},
@@ -55,10 +56,34 @@ TUNABLE_PARAMS = {
     ("signals.options_layer",   "MIN_CREDIT_SPREAD_RR"):     {"type": "float", "min": 0.20, "max": 0.75},
     ("learning.exit_manager",   "PROFIT_TARGET_PCT"):        {"type": "float", "min": 0.40, "max": 0.90},
     ("learning.exit_manager",   "DTE_CLOSE_THRESHOLD"):      {"type": "int",   "min": 7,    "max": 30},
-    ("config",                  "SCORE_ALERT_MINIMUM"):    {"type": "int",   "min": 30,   "max": 75},
-    ("config",                  "SCORE_HIGH_CONVICTION"):  {"type": "int",   "min": 55,   "max": 90},
-    ("config",                  "MIN_RISK_REWARD_RATIO"):  {"type": "float", "min": 1.0,  "max": 3.0},
-    ("config",                  "IC_RANGE_THRESHOLD_PCT"): {"type": "float", "min": 1.5,  "max": 4.0},
+    ("config",                  "SCORE_ALERT_MINIMUM"):      {"type": "int",   "min": 30,   "max": 75},
+    ("config",                  "SCORE_HIGH_CONVICTION"):    {"type": "int",   "min": 55,   "max": 90},
+    ("config",                  "MIN_RISK_REWARD_RATIO"):    {"type": "float", "min": 1.0,  "max": 3.0},
+    ("config",                  "IC_RANGE_THRESHOLD_PCT"):   {"type": "float", "min": 1.5,  "max": 4.0},
+
+    # ── Phase 1 additions: per-sub-strategy exit rules ──────────────────────
+    # 45DTE per-structure profit targets (split from the global PROFIT_TARGET_PCT)
+    ("config", "PROFIT_TARGET_PCT_45DTE_CALL"):  {"type": "float", "min": 0.40, "max": 0.90},
+    ("config", "PROFIT_TARGET_PCT_45DTE_PUT"):   {"type": "float", "min": 0.40, "max": 0.90},
+    ("config", "PROFIT_TARGET_PCT_45DTE_COND"):  {"type": "float", "min": 0.40, "max": 0.90},
+
+    # Experimental 45DTE stop. Type "float_or_none" means the engine may propose
+    # either None (disable, default) or a float in [min, max] (enable at that level).
+    ("config", "STOP_PCT_45DTE"):                {"type": "float_or_none", "min": 0.60, "max": 0.90},
+
+    # 1-3DTE
+    ("config", "PROFIT_TARGET_PCT_1_3DTE_CALL"): {"type": "float", "min": 0.30, "max": 0.80},
+    ("config", "PROFIT_TARGET_PCT_1_3DTE_PUT"):  {"type": "float", "min": 0.30, "max": 0.80},
+    ("config", "PROFIT_TARGET_PCT_1_3DTE_COND"): {"type": "float", "min": 0.30, "max": 0.80},
+    ("config", "STOP_PCT_1_3DTE_CALL"):          {"type": "float", "min": 0.40, "max": 0.80},
+    ("config", "STOP_PCT_1_3DTE_PUT"):           {"type": "float", "min": 0.40, "max": 0.80},
+
+    # 0DTE
+    ("config", "PROFIT_TARGET_PCT_0DTE_CALL"):   {"type": "float", "min": 0.20, "max": 2.00},
+    ("config", "PROFIT_TARGET_PCT_0DTE_PUT"):    {"type": "float", "min": 0.20, "max": 2.00},
+    ("config", "PROFIT_TARGET_PCT_0DTE_COND"):   {"type": "float", "min": 0.15, "max": 0.60},
+    ("config", "STOP_PCT_0DTE_CALL"):            {"type": "float", "min": 0.50, "max": 0.90},
+    ("config", "STOP_PCT_0DTE_PUT"):             {"type": "float", "min": 0.50, "max": 0.90},
 }
 
 ENGINE_SYSTEM = """You are the trading assistant's hypothesis-generation module.
