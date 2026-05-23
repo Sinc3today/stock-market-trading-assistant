@@ -62,6 +62,9 @@ class KBEntry:
     confidence: float          = 0.5
     source:     str            = "reflector"   # reflector / off_hours / hypothesis / manual
     tags:       list[str]      = field(default_factory=list)
+    strategy:   str | None     = None   # e.g. "iron_condor", "bull_debit", "put_debit_spread"
+    dte_bucket: str | None     = None   # "0DTE" / "1-3DTE" / "45DTE"
+    book:       str | None     = None   # "disciplined" / "learning"
     id:         str            = field(default_factory=lambda: uuid.uuid4().hex[:10])
 
     def __post_init__(self):
@@ -127,6 +130,28 @@ class KnowledgeBase:
     def by_category(self, category: str, days: int | None = None) -> list[dict]:
         pool = self.recent(days) if days else self.all()
         return [e for e in pool if e.get("category") == category]
+
+    def search(self, *, strategy: str | None = None,
+               dte_bucket: str | None = None,
+               book: str | None = None,
+               category: str | None = None,
+               days: int | None = None) -> list[dict]:
+        """Filter KB entries by optional tag values. Entries that lack a tag
+        are EXCLUDED from filters that specify that tag — old (untagged)
+        entries don't participate in strategy/book/dte_bucket searches.
+
+        No-filter call returns all entries.
+        """
+        rows = self.recent(days=days) if days is not None else self.all()
+        if strategy is not None:
+            rows = [r for r in rows if r.get("strategy") == strategy]
+        if dte_bucket is not None:
+            rows = [r for r in rows if r.get("dte_bucket") == dte_bucket]
+        if book is not None:
+            rows = [r for r in rows if r.get("book") == book]
+        if category is not None:
+            rows = [r for r in rows if r.get("category") == category]
+        return rows
 
     def stats(self) -> dict:
         entries = self.all()
