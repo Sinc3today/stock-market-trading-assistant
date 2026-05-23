@@ -4,6 +4,71 @@
 
 ---
 
+## 2026-05-22 | Intraday-touch exit backtest — SHELVED (model bias confirmed)
+
+User question that started this: "stocks peak and drop throughout days — are
+we only calculating on open/close? Those peaks can be the points we take
+profits, especially intraday." Diagnosed the gap (yes — live ExitManager runs
+once at 16:08 ET on daily close; realistic_pricer also walks daily closes
+only). Designed, built, and walk-forward measured the fix.
+
+**What was built (5 tasks, all green, 679 tests passing):**
+- `simulate_trade(..., intraday_touch=False)` — opt-in re-mark of the spread
+  at the day's HIGH and LOW in addition to CLOSE. Best favorable mark wins;
+  exit with new reason `target_intraday` if the close mark didn't hit target
+  but an intraday mark did. Stop check stays on close. Default off = parity.
+- `backtests/intraday_touch_wf.py` — runs realistic pricer twice on identical
+  entry days, splits 60/40 by date, computes Δ$/trade, attribution %, and
+  per-regime breakdown.
+- Six-preset ship-bar verdict matrix (strict-3σ / default-2σ / lenient-1.5σ
+  / research-1σ / attribution-strict / oos-only) so we see the shape of the
+  result, not a single yes/no. `default-2σ` is the auto-ship binding.
+
+**The verdict — every preset fails, including research-1σ:**
+- n_OOS = 230, n_IS = 345
+- IS Δ = +$0.4/trade (essentially zero in-sample)
+- OOS Δ = **+$9.0/trade** (+7.5% of baseline) — below the $10 research floor
+- Attribution = **4.3%** of OOS exits via `target_intraday` — below 5% floor
+- All six presets: NO SHIP
+
+**Per-regime breakdown — the real lesson:**
+- `choppy_low_vol` (n=386, **67% of trades — iron condors**): Δ = **$0.0/trade**
+- `trending_up_calm`   (n=161): Δ = **−$0.5/trade**
+- `trending_down_calm` (n= 28): Δ = **+$82/trade** (small sample, noisy)
+
+The +$9/trade headline is almost entirely 28 trending-down trades. Iron
+condors — two-thirds of the population — show literally **zero** improvement.
+
+**Why: the conservative-condor bias we documented in the spec, now confirmed
+quantitatively.** A condor's best intraday mark is at *minimum-deviation*
+from entry, not at the daily HIGH or LOW. The daily HIGH/LOW model can't see
+condor touches by design — and 67% of trades are condors, so we measured
+zero improvement on the population where this idea matters most.
+
+**What this means and what's next:**
+- For the **daily-bar model**, intraday-touch is shelved. Six presets, all
+  no — definitive. The live ExitManager stays unchanged.
+- The **interesting** finding is the bias itself: we built exactly the
+  measurement we expected to be conservative for condors, and the result
+  confirms the model is blind to them. So the question "is intraday-touch
+  worth doing for condors?" is genuinely unanswered.
+- The next step, if user wants to chase it, is **option B (true intraday
+  5-min bars)** — we have ~2yr cached via `data.intraday_data` (Polygon
+  paid). That would re-mark condors at every 5-min bar including the
+  minimum-deviation point, giving the honest condor-touch number.
+- 28 trending-down trades at +$82/trade is intriguing but a sample too small
+  to trust — would also benefit from re-running on richer data.
+
+**Discipline note:** the walk-forward refused to ship even the lenient
+preset, on a result that LOOKS slightly positive (+$9/trade OOS). The
+attribution floor (only 4.3% of exits use the new path) caught what would
+otherwise have been a "small but maybe real" temptation. The system worked.
+
+**Tests:** 679 passing on the worktree (671 baseline + 1 config + 3
+realistic-pricing + 8 walk-forward harness tests).
+
+---
+
 ## 2026-05-22 | Meta-labeling layer — built, validated, SHELVED (no OOS edge)
 
 Built the "honest ML" version of conditioning strategy on context: a
