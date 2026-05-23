@@ -68,6 +68,26 @@ class PaperBroker:
                 n += 1
         return n
 
+    def _entry_count_today_by_combo(self, strategy: str, dte_bucket: str) -> int:
+        """Count trades opened TODAY (in US/Eastern) for the given
+        (strategy, dte_bucket) combo. Used by the Phase 3 intraday entry
+        router to enforce INTRADAY_PER_COMBO_DAILY_CAP."""
+        from datetime import datetime
+        import pytz
+        today_et = datetime.now(pytz.timezone("US/Eastern")).date().isoformat()
+
+        n = 0
+        for t in self.trades.get_trades_by(strategy=strategy, dte_bucket=dte_bucket):
+            entry_str = (
+                t.get("entry_time")
+                or t.get("entry_date")
+                or t.get("date")
+                or ""
+            )
+            if entry_str.startswith(today_et):
+                n += 1
+        return n
+
     # ── MAIN ──────────────────────────────────────────
 
     def execute_today(self) -> dict:
