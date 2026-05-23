@@ -37,6 +37,8 @@ from signals.scorer import SignalScorer
 from signals.gates import AlertGates
 from signals.alert_builder import AlertBuilder
 from signals.spy_options_engine import SPYOptionsEngine   # ← SPY engine
+from signals.intraday_entry_router import route as _route_entry
+from learning.paper_broker import PaperBroker
 from journal.trade_logger import TradeLogger
 
 
@@ -191,6 +193,30 @@ class IntradayScanner:
                 f"{setup.conviction.upper()} | Score: {setup.score}"
             )
             alerts.append(alert)
+
+            # ── Phase 3: intraday entry pipeline ─────────────────────────
+            # Convert high-conviction setups into paper positions via the
+            # router + paper_broker.execute_signal. Gated by the feature flag.
+            if not config.INTRADAY_PAPER_BROKER_ENABLED:
+                continue
+            if setup.conviction != "high":
+                continue
+            now_et = datetime.now(EASTERN)
+            try:
+                broker      = PaperBroker()
+                setup_dicts = _route_entry(setup, now_et, broker)
+                for sd in setup_dicts:
+                    result = broker.execute_signal(sd)
+                    logger.info(
+                        f"Phase 3 entry: {sd['strategy']} @ {sd['dte_bucket']} → "
+                        f"trade_id={result.get('trade_id')} recorded={result.get('recorded')}"
+                    )
+            except Exception as e:
+                # Phase 3 wiring failure must NOT crash the scanner — it has
+                # other tickers to handle and the alert side already posted.
+                logger.exception(
+                    f"Phase 3 entry pipeline error for {setup.strategy}: {e}"
+                )
 
         return alerts
 
