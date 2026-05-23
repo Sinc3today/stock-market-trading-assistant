@@ -237,6 +237,48 @@ INTRADAY_TOUCH_SHIP_MIN_DOLLAR = 25.0    # statistical floor ($/trade, ~2σ on ~
 INTRADAY_TOUCH_SHIP_MIN_FRAC   = 0.10    # scale floor (improvement >= 10% of baseline)
 INTRADAY_TOUCH_SHIP_MIN_ATTRIB = 0.15    # >=15% of OOS exits via target_intraday
 
+
+# ─────────────────────────────────────────
+# PER-SUB-STRATEGY EXIT RULES
+# ─────────────────────────────────────────
+# Foundation for the multi-strategy expansion (Phase 2 will wire these into a
+# strategy-aware ExitManager). Three strategies × three DTE buckets = 9
+# sub-strategies; each gets its own exit-rule tuple. Naming convention:
+#   PROFIT_TARGET_PCT_{DTE_BUCKET}_{STRUCTURE}
+#   STOP_PCT_{DTE_BUCKET}_{STRUCTURE}
+#   FORCED_CLOSE_TIME_{DTE_BUCKET}_{STRUCTURE}  (HH:MM ET, for 0DTE)
+#   FORCED_CLOSE_MINUTES_BEFORE_EXPIRY_{DTE_BUCKET}  (for 1-3DTE)
+# Where STRUCTURE in {CALL (call_debit_spread), PUT (put_debit_spread), COND
+# (iron_condor)}.
+
+# 45 DTE — keep today's tuned values (no live behavior change in Phase 1).
+PROFIT_TARGET_PCT_45DTE_CALL    = 0.70
+PROFIT_TARGET_PCT_45DTE_PUT     = 0.70
+PROFIT_TARGET_PCT_45DTE_COND    = 0.70
+DTE_CLOSE_THRESHOLD_45DTE       = 21
+# Experimental: None = no stop (current behavior). Hypothesis engine may
+# propose a bounded value via TUNABLE_PARAMS to test if a hard stop helps.
+STOP_PCT_45DTE                  = None
+
+# 1-3 DTE — theta is faster, gamma is closer; smaller targets, real stops.
+PROFIT_TARGET_PCT_1_3DTE_CALL   = 0.50
+PROFIT_TARGET_PCT_1_3DTE_PUT    = 0.50
+PROFIT_TARGET_PCT_1_3DTE_COND   = 0.50
+STOP_PCT_1_3DTE_CALL            = 0.50
+STOP_PCT_1_3DTE_PUT             = 0.50
+CONDOR_SHORT_STRIKE_TOUCH_EXIT_1_3DTE       = True
+FORCED_CLOSE_MINUTES_BEFORE_EXPIRY_1_3DTE   = 30
+
+# 0 DTE — gamma is everything; never let it expire.
+PROFIT_TARGET_PCT_0DTE_CALL     = 1.00       # 100% (credit doubled) for debits
+PROFIT_TARGET_PCT_0DTE_PUT      = 1.00
+PROFIT_TARGET_PCT_0DTE_COND     = 0.30       # smaller + faster for condors
+STOP_PCT_0DTE_CALL              = 0.75
+STOP_PCT_0DTE_PUT               = 0.75
+CONDOR_SHORT_STRIKE_TOUCH_EXIT_0DTE = True
+FORCED_CLOSE_TIME_0DTE_DEBIT    = "15:30"    # ET, HH:MM
+FORCED_CLOSE_TIME_0DTE_CONDOR   = "15:00"    # ET — gamma into the bell
+
 # ─────────────────────────────────────────
 # ENVIRONMENT
 # ─────────────────────────────────────────
