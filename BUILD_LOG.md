@@ -4,6 +4,59 @@
 
 ---
 
+## 2026-05-23 | Phase 1 foundation + correctness fix (multi-strategy prep)
+
+End of a long strategic session that mapped the bot's full daily/weekly
+lifecycle, identified gaps, and produced a phased plan (Phases 1-5) for the
+multi-strategy / 9-sub-strategy / dual-book expansion. Phase 1 is foundation
+only — no live trading behavior changes; lays the groundwork Phases 2-5 sit on,
+plus fixes one real correctness bug.
+
+**Seven tasks shipped, 708 tests passing (+29 from 679 baseline):**
+- Sonnet pin bumped to 4.6 across reflector / hypothesis_engine /
+  off_hours_learner / morning_briefer.
+- Per-sub-strategy exit-rule constants in config.py — 19 module-level constants
+  for the 9-sub-strategy expansion (3 strategies × 3 DTE buckets). Pure data;
+  no live consumers yet.
+- TUNABLE_PARAMS extended with 14 new entries + bounded experimental
+  `STOP_PCT_45DTE` (special "float_or_none" type).
+- `KBEntry` extended with optional `strategy` / `dte_bucket` / `book` tags
+  + `KnowledgeBase.search()` filter API. Backward-compatible: old JSONL
+  entries deserialize unchanged.
+- **Correctness fix:** `hypothesis_runner` now evaluates verdicts on the
+  out-of-sample slice (last 40% of dates by date) with a 30-OOS-trade
+  sample-size floor. Every accepted hypothesis to date was evaluated on
+  in-sample-tuned data; this is the real bug. Back-compat preserved:
+  aggregate sharpe_delta / pnl_delta keys still in the deltas dict.
+- Pending-promotion count + ≥5-pending alert line in hypothesis-runner
+  Discord/Pushover notification.
+- All-time daily history refresh script (`backtests/refresh_all_history.py`)
+  — yfinance + CBOE + FRED. **SPY 8,386 daily rows (1993-2026)** vs prior
+  ~1,260 rows. 6× sample-size unlock for any daily-bar backtest that wants
+  to validate across 2000 / 2008 / COVID regimes. Generated CSVs gitignored.
+
+**Known latent gap (deferred to Phase 2):** the `float_or_none` type marker
+on `STOP_PCT_45DTE` in TUNABLE_PARAMS is declared but the hypothesis engine
+can't yet propose `None` — the prompt schema says `"proposed_value": number`
+and `_validate()` does `float(parsed["proposed_value"])` unconditionally. Net
+effect: the engine can propose tuning the value within [0.60, 0.90] once a
+human enables the stop, but can't auto-toggle it None → enabled or back.
+Phase 1 isn't broken by this because nothing currently reads STOP_PCT_45DTE
+live; Phase 2's ExitManager refactor is when this matters and should be
+fixed (extend the prompt + validator to accept null, or change the type
+back to "float" with manual None-flip).
+
+**Final reviewer verdict (Opus over the full diff):** ready to merge, no
+Critical issues. Live decision paths verified unchanged by grep + by reading
+the consumer modules — bot's 09:15/09:16/16:08/19:00 paths are identical to
+main. Three minor nits noted (yfinance install-hint mismatch, `SPY_LIKE_TICKERS`
+misnomer, dead `Iterable` import) — all deferrable.
+
+**Phases 2-5 (multi-strategy lifecycle, dual book, reflector refactor,
+meta-labeler revival) remain.** Phase 1 just laid the foundation they need.
+
+---
+
 ## 2026-05-22 | Intraday-touch exit backtest — SHELVED (model bias confirmed)
 
 User question that started this: "stocks peak and drop throughout days — are
