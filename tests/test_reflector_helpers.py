@@ -101,7 +101,8 @@ def test_validator_metrics_surfaces_in_return_dict():
     })
 
     from datetime import date
-    with patch.object(r, "_call_claude", return_value=reply_json):
+    # _call_claude now returns (text, route_label) tuple
+    with patch.object(r, "_call_claude", return_value=(reply_json, "phi4")):
         result = r.reflect_today(today=date(2026, 5, 23))
 
     assert "validator_metrics" in result

@@ -24,11 +24,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import config
 from loguru import logger
 
-from learning.knowledge_base import KnowledgeBase, KBEntry
-from learning.predictions    import PredictionLog
-from journal.plan_logger     import PlanLogger
-from journal.trade_recorder  import TradeRecorder
-from learning.paper_broker   import AUTO_TAG
+from learning.knowledge_base    import KnowledgeBase, KBEntry
+from learning.predictions       import PredictionLog
+from journal.plan_logger        import PlanLogger
+from journal.trade_recorder     import TradeRecorder
+from learning.paper_broker      import AUTO_TAG
+from data.llm_client            import call_llm
+from learning.anomaly_detector  import is_anomalous_day
 
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
@@ -93,10 +95,12 @@ class Reflector:
         context   = self._build_context(today_str)
         prompt    = self._build_prompt(context)
 
-        reply = self._call_claude(prompt)
+        # Phase 4a item 5: gather anomaly facts and route to phi4 or Sonnet
+        facts = self._gather_anomaly_facts(context)
+        reply, route = self._call_claude(prompt, facts)
         parsed, parse_err = self._parse_reply(reply)
 
-        # Phase 4a items 3+4: validate KB entries
+        # Phase 4a items 3+4: validate KB entries (Task 5 wiring — preserved)
         if parsed:
             from learning.kb_validator import validate_kb_entries
             today_numbers = self._extract_today_numbers(context)
@@ -134,7 +138,7 @@ class Reflector:
                 self.post(
                     f"🪞 **Daily Reflection {today_str}**\n"
                     f"{parsed['summary']}\n"
-                    f"_+{len(kb_ids)} KB entries -- see {md_path}_"
+                    f"_+{len(kb_ids)} KB entries (route: {route}) -- see {md_path}_"
                 )
             except Exception as e:
                 logger.warning(f"Reflector: post_fn failed: {e}")
@@ -146,6 +150,7 @@ class Reflector:
             "parsed":            bool(parsed),
             "parse_err":         parse_err,
             "validator_metrics": parsed.get("_validator_metrics", {}) if parsed else {},
+            "route":             route,   # Phase 4a item 5 telemetry
         }
 
     # ── CONTEXT ───────────────────────────────────────
@@ -183,18 +188,42 @@ class Reflector:
 
     # ── CLAUDE ────────────────────────────────────────
 
-    def _call_claude(self, prompt: str) -> str:
-        # Anthropic first, then local Ollama fallback (keeps the learning
-        # loop producing KB entries when the hosted API is capped).
-        from data.llm_client import call_llm
-        return call_llm(
-            system               = REFLECTOR_SYSTEM,
-            user                 = prompt,
-            anthropic_model      = CLAUDE_MODEL,
-            api_key              = self.api_key,
-            max_tokens           = 1500,
-            cache_static_system  = True,
-        )
+    def _call_claude(self, prompt: str, facts: dict) -> tuple[str, str]:
+        """Route based on anomaly detection. Returns (reply_text, route_label).
+
+        Normal days  → phi4 (local Ollama); call_llm escalates to Sonnet on failure.
+        Anomalous days → Sonnet directly for deeper reasoning capacity.
+        """
+        anomalous = is_anomalous_day(facts)
+        if anomalous:
+            logger.info("Reflector: anomalous day → Sonnet")
+            try:
+                text = call_llm(
+                    system               = REFLECTOR_SYSTEM,
+                    user                 = prompt,
+                    anthropic_model      = CLAUDE_MODEL,
+                    api_key              = self.api_key,
+                    max_tokens           = 1500,
+                    cache_static_system  = True,
+                    model_preference     = "sonnet_first",
+                )
+                return text, "sonnet_anomaly"
+            except Exception as e:
+                logger.error(f"Sonnet anomaly call failed: {e}")
+                return "", "sonnet_anomaly_error"
+        else:
+            logger.info("Reflector: normal day → phi4")
+            text = call_llm(
+                system               = REFLECTOR_SYSTEM,
+                user                 = prompt,
+                anthropic_model      = CLAUDE_MODEL,
+                api_key              = self.api_key,
+                max_tokens           = 1500,
+                cache_static_system  = True,
+                model_preference     = "phi4_first",
+            )
+            # call_llm already escalates phi4→Sonnet on failure
+            return text, "phi4"
 
     # ── PARSING ───────────────────────────────────────
 
@@ -256,6 +285,95 @@ class Reflector:
         KBEntry.id is a bare 10-char lowercase hex (uuid4().hex[:10]).
         """
         return {e.get("id") for e in ctx.get("recent_kb", []) if e.get("id")}
+
+    # ── ANOMALY DETECTION (Phase 4a item 5) ──────────
+
+    def _gather_anomaly_facts(self, ctx: dict) -> dict:
+        """Build the facts dict the anomaly detector inspects.
+
+        Field mapping note: the Prediction dataclass (learning/predictions.py)
+        has 'entry_spy', 'predicted_target', and 'actual_move_pct' — there is
+        no 'predicted_move_pct' field. We derive the predicted move from
+        (predicted_target - entry_spy) / entry_spy * 100 when entry_spy > 0.
+
+        The 'regime' field DOES exist on Prediction (added at Phase 2a).
+
+        'new_substrategies_today' tracks sub-strategies that fired for the
+        first time in history. 'regime_changed_today' compares today's
+        predicted regime against the prior weekday's prediction.
+        """
+        pred = ctx.get("prediction") or {}
+
+        # Derive prediction miss — see predictions.py Prediction dataclass for schema.
+        entry_spy        = float(pred.get("entry_spy", 0) or 0)
+        predicted_target = float(pred.get("predicted_target", 0) or 0)
+        actual_move_pct  = float(pred.get("actual_move_pct", 0) or 0)
+        if entry_spy > 0:
+            predicted_move_pct = (predicted_target - entry_spy) / entry_spy * 100
+            miss_pct = actual_move_pct - predicted_move_pct
+        else:
+            miss_pct = 0.0
+
+        # Stops today (from open_positions with exit_reason == "stop")
+        stops = 0
+        for pos in ctx.get("open_positions", []) or []:
+            if pos.get("exit_reason") == "stop":
+                stops += 1
+
+        # New sub-strategies fired today: list of strategy:dte_bucket strings
+        new_subs: list[str] = []
+        try:
+            seen_subs = self._historical_substrategies()
+            for pos in ctx.get("open_positions", []) or []:
+                key = f"{pos.get('strategy')}:{pos.get('dte_bucket')}"
+                if key not in seen_subs:
+                    new_subs.append(key)
+        except Exception:
+            pass
+
+        # Regime change vs yesterday
+        regime_changed = self._regime_changed_vs_yesterday(pred)
+
+        return {
+            "stops_today":              stops,
+            "prediction_miss_pct":      miss_pct,
+            "new_substrategies_today":  new_subs,
+            "regime_changed_today":     regime_changed,
+        }
+
+    def _historical_substrategies(self) -> set[str]:
+        """Set of 'strategy:dte_bucket' strings that have fired in history.
+
+        Reads from TradeRecorder (real + simulated for fairness — a
+        sub-strategy that backfilled is not 'new' in the data sense).
+        """
+        all_trades = self.trades.get_trades_by(include_simulated=True)
+        return {
+            f"{t.get('strategy')}:{t.get('dte_bucket')}"
+            for t in all_trades
+            if t.get("strategy") and t.get("dte_bucket")
+        }
+
+    def _regime_changed_vs_yesterday(self, today_pred: dict) -> bool:
+        """Compare today's regime classification to the prior weekday's.
+
+        The 'regime' field is populated on the Prediction dataclass (Phase 2a).
+        If today's prediction has no regime key, returns False (safe default).
+        """
+        today_regime = today_pred.get("regime")
+        if not today_regime:
+            return False
+        try:
+            from datetime import date, timedelta
+            # Walk back up to 4 days to skip weekends / holidays
+            for delta in range(1, 5):
+                prior_str = (date.today() - timedelta(days=delta)).isoformat()
+                prior = self.preds.get(prior_str)
+                if prior:
+                    return prior.get("regime") != today_regime
+        except Exception:
+            pass
+        return False
 
     # ── MARKDOWN ──────────────────────────────────────
 

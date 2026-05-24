@@ -69,7 +69,8 @@ def test_reflect_parses_claude_reply_and_writes_kb(iso, monkeypatch):
     })
 
     r = Reflector(api_key="fake-key")
-    monkeypatch.setattr(r, "_call_claude", lambda prompt: fake_reply)
+    # _call_claude now takes (prompt, facts) and returns (text, route_label)
+    monkeypatch.setattr(r, "_call_claude", lambda prompt, facts: (fake_reply, "phi4"))
 
     result = r.reflect_today()
     assert result["parsed"] is True
@@ -88,7 +89,8 @@ def test_reflect_parses_claude_reply_and_writes_kb(iso, monkeypatch):
 def test_reflect_handles_malformed_json(iso, monkeypatch):
     _seed()
     r = Reflector(api_key="fake-key")
-    monkeypatch.setattr(r, "_call_claude", lambda prompt: "this is not JSON at all")
+    # _call_claude now takes (prompt, facts) and returns (text, route_label)
+    monkeypatch.setattr(r, "_call_claude", lambda prompt, facts: ("this is not JSON at all", "phi4"))
 
     result = r.reflect_today()
     assert result["parsed"] is False
