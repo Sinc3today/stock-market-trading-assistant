@@ -4,6 +4,69 @@
 
 ---
 
+## 2026-05-24 — Phase 4a: learning-loop hygiene
+
+**Spec:** `docs/superpowers/specs/2026-05-23-phase4a-learning-loop-hygiene-design.md`
+**Plan:** `docs/superpowers/plans/2026-05-23-phase4a-learning-loop-hygiene.md`
+**Branch:** `phase4a-learning-loop-hygiene` (8 commits)
+
+Shipped 7 hygiene items across 8 tasks. **Zero live trading-behavior change.**
+All changes are in the learning loop; Phase 3's `INTRADAY_PAPER_BROKER_ENABLED`
+kill switch remains the sole gate on live trading.
+
+  0a. **TradeRecorder simulated-flag support** (commit `529ca60`) — `get_trades_by(include_simulated=False)` default keeps P&L/dashboard paths safe; learning-loop consumers opt in.
+
+  0b. **60d backfill seed script** (commit `53f7e81`) — `scripts/seed_simulated_trades.py` ran the daily backtest over the last 90 calendar days. Seeded 13 records (iron_condor and debit_spread, all 45DTE/disciplined) into `logs/simulated_trades.json`. Foundation for items 2 and 5.
+
+  1.  **Prompt caching** (commit `219ba69`) — `call_llm` gained `cache_static_system: bool` and `model_preference: str` params. Refactored `hypothesis_engine` and `off_hours_learner` from direct `requests.post` to `call_llm`. `ai_advisor` kept its direct call (multi-turn conversation state) but applies cache_control inline. ~25-30% input-cost cut expected.
+
+  2.  **rolling_accuracy per-sub-strategy** (commit `116ac91`) — `PredictionLog.accuracy()` gained `by_substrategy: bool` returning dict-of-dicts keyed by `strategy:dte_bucket:book` with `"all"` aggregate. MIN_SAMPLES=3 floor. Consumed by `hypothesis_engine` and `reflector`. Backward compat preserved.
+
+  3+4.**KB validator** (commits `5f7d8f7` + `a94ea7b`) — `learning/kb_validator.py` runs after Sonnet/phi4 reply parses. Items 3 and 4 ship as one validator pass:
+       - Confidence on `kind="daily"` capped at 0.7 (config constant)
+       - Evidence-citation: must reference real trade_id (8-char uppercase hex), sim_id, today number (±0.1% float / exact int), or KB id from recent_kb
+       - Soft enforcement — violations logged + marked, entry kept
+       - Post-review fix `a94ea7b` corrected schema assumptions: `_extract_today_numbers` now queries real Prediction fields (entry_spy, predicted_target, predicted_stop, actual_close, actual_move_pct, confidence); `_extract_today_trade_ids` now includes closed-today trades; KB id lookup matches bare 10-char hex against `recent_kb` (not a fictional `kb_` prefix)
+
+  5.  **Local-first reflector with anomaly hybrid** (commit `752578e`) — `learning/anomaly_detector.py` pure function inspects today's facts. Four triggers (all config constants):
+       - `REFLECTOR_ANOMALY_STOPS_MIN = 2`
+       - `REFLECTOR_ANOMALY_PRED_MISS_PCT = 1.5` (absolute magnitude delta)
+       - `REFLECTOR_ANOMALY_NEW_SUBSTRATEGY = True`
+       - `REFLECTOR_ANOMALY_REGIME_CHANGE = True`
+      Normal days route to phi4 (Ollama); anomalous days route to Sonnet. Routing recorded as `result["route"]` for weekly telemetry. **First-Tuesday expected 80-100% escalation** as sub-strategies fire for the first time; steady-state target 20-40% by week 4. If observed rate stays >70% past week 2 → triggers too tight → loosen via config; <10% → too loose → tighten.
+
+  6.  **Off-hours learner pivot** (commit `3faadbf`) — replaces near-miss threshold tuning (now redundant with `hypothesis_engine`) with 60v60 regime-drift detection + feature trends. Catches meta-shifts that affect all sub-strategies. 10pt distribution shift threshold. KB entries tagged `kind=regime_drift`. **Walk-forward boundary preserved:** observation only, no parameter selection from drift findings — those still go through `hypothesis_engine`'s OOS gate.
+
+**Tests:** 815 passing (baseline 771 + ~44 net new after old near-miss tests retired). 0 failures.
+
+**Smoke tests verified (Phase 4a wrap):**
+  - Anomaly detector: normal day False, 2-stop True, big-miss True, new-substrategy True ✓
+  - TradeRecorder unioning: real-only iron_condor 45DTE = 0, include_simulated=True = 7 rows ✓
+  - Off-hours learner: end-to-end run completes without crash (skipped: insufficient history, 0 < 120 rows) ✓
+
+**Live behavior change:** None. All changes are inside the learning loop. Phase 3's `INTRADAY_PAPER_BROKER_ENABLED` kill switch remains the sole gate on live trading behavior.
+
+**Phase 4b queue (cron reminder Sat 2026-05-30 10:03 — user has calendar backup):**
+- Path 1 full-fidelity 60d Phase 3 pipeline replay with real Polygon historical option prices
+- Per-sub-strategy structure builder — replaces Phase 3 placeholder pricing
+- Dual-book design with exit-feasibility predicate
+- Per-sub-strategy reflector summarization
+- Off-hours learner Option A (cross-sub-strategy pattern detection) — added alongside Option B
+- Tighten KB validator item 4 to hard rejection if observed violation rate <5%
+
+**Phase 4a follow-up notes carried from reviews (non-blocking):**
+- `_regime_changed_vs_yesterday` uses `date.today()` instead of caller's `today` — testability nit
+- Route label "phi4" means "phi4 was first choice" not "phi4 was final responder" — if phi4 fails and call_llm internally escalates to Sonnet, route still reads "phi4"
+- No unit test for the `"sonnet_anomaly_error"` route case
+- `off_hours_learner` module docstring step 7 still says "<60 trading days" but actual threshold is 120 (60+60)
+- `KBEntry` dataclass has no `kind` field — `regime_drift` exemption works only because off_hours_learner doesn't route through `validate_kb_entries`. Acceptable while only `reflector` calls the validator.
+- `_historical_substrategies()` loads ALL trades each call — fine at current scale, will need lookback window once dataset grows
+- Backfill seed: SPY history CSV ends 2026-04-22 (~month stale); refresh before Phase 4b's Path 1 backfill
+
+**Cost expectation:** ~25-30% Sonnet-input reduction from caching alone + additional ~60-70% reduction from phi4-first routing on normal days. Combined: ~75-85% reflector cost cut once steady-state (~week 4). Polygon ($99/mo) still dominates total project cost; Sonnet falls to rounding-error after Phase 4a.
+
+---
+
 ## 2026-05-23 | Phase 3 — intraday entry pipeline LIVE (first behavior change)
 
 Fourth and final major phase of the 2026-05-23 grind. **First phase to actually
