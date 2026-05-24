@@ -139,7 +139,7 @@ class Reflector:
         pred  = self.preds.get(today_str) or {}
         plan  = self.plans.get_plan(today_str) or {}
         recent_kb = self.kb.recent(days=14)
-        accuracy  = self.preds.accuracy(n=30)
+        accuracy  = self.preds.accuracy(n=30, by_substrategy=True)
 
         open_auto = [
             t for t in self.trades.get_all_trades()

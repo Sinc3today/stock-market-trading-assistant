@@ -138,7 +138,7 @@ class HypothesisEngine:
 
         ctx = {
             "date":             today_str,
-            "rolling_accuracy": self.preds.accuracy(n=60),
+            "rolling_accuracy": self.preds.accuracy(n=60, by_substrategy=True),
             "recent_kb":        self.kb.recent(days=30),
             "recent_plans":     self.plans.get_recent(days=30),
             "kb_stats":         self.kb.stats(),

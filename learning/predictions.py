@@ -159,17 +159,58 @@ class PredictionLog:
     def recent(self, n: int = 30) -> list[dict]:
         return sorted(self.all(), key=lambda r: r.get("date", ""), reverse=True)[:n]
 
-    def accuracy(self, n: int = 60) -> dict:
-        rows = [r for r in self.recent(n) if r.get("resolved") and r.get("outcome") in ("correct", "wrong")]
-        if not rows:
-            return {"sample": 0, "accuracy": 0.0}
-        correct = sum(1 for r in rows if r["outcome"] == "correct")
-        return {
-            "sample":   len(rows),
-            "correct":  correct,
-            "wrong":    len(rows) - correct,
-            "accuracy": round(correct / len(rows) * 100, 1),
-        }
+    # Minimum resolved samples required for a sub-strategy to appear in the
+    # by_substrategy breakdown.  Prevents tiny-sample noise from polluting
+    # the hypothesis engine's targeted tuning suggestions.
+    _MIN_SUBSTRATEGY_SAMPLES = 3
+
+    def accuracy(self, n: int = 60, by_substrategy: bool = False) -> dict:
+        """Return rolling accuracy over the last n resolved predictions.
+
+        by_substrategy=False (default): returns the aggregate accuracy dict
+            {"sample": N, "correct": N, "wrong": N, "accuracy": float}
+            Backward-compatible — existing callers are unaffected.
+
+        by_substrategy=True: returns a dict keyed by "strategy:dte_bucket:book"
+            for each sub-strategy with >= _MIN_SUBSTRATEGY_SAMPLES resolved
+            entries, plus an "all" key containing the same aggregate dict.
+            Sub-strategies below the minimum sample floor are omitted to avoid
+            noisy signals reaching the hypothesis engine.
+        """
+        rows = [
+            r for r in self.recent(n)
+            if r.get("resolved") and r.get("outcome") in ("correct", "wrong")
+        ]
+
+        def _stats(subset: list[dict]) -> dict:
+            if not subset:
+                return {"sample": 0, "correct": 0, "wrong": 0, "accuracy": 0.0}
+            correct = sum(1 for r in subset if r["outcome"] == "correct")
+            return {
+                "sample":   len(subset),
+                "correct":  correct,
+                "wrong":    len(subset) - correct,
+                "accuracy": round(correct / len(subset) * 100, 1),
+            }
+
+        if not by_substrategy:
+            return _stats(rows)
+
+        # Build per-sub-strategy groups
+        groups: dict[str, list[dict]] = {}
+        for r in rows:
+            strategy   = r.get("strategy")   or "unknown"
+            dte_bucket = r.get("dte_bucket") or "unknown"
+            book       = r.get("book")        or "unknown"
+            key = f"{strategy}:{dte_bucket}:{book}"
+            groups.setdefault(key, []).append(r)
+
+        result: dict[str, dict] = {"all": _stats(rows)}
+        for key, subset in groups.items():
+            if len(subset) >= self._MIN_SUBSTRATEGY_SAMPLES:
+                result[key] = _stats(subset)
+
+        return result
 
     def skip_quality(self, n: int = 60) -> dict:
         """
