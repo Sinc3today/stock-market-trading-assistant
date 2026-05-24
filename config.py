@@ -311,3 +311,24 @@ INTRADAY_PER_COMBO_DAILY_CAP = 2
 # ─────────────────────────────────────────
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 LOG_LEVEL   = os.getenv("LOG_LEVEL", "INFO")
+
+# ─────────────────────────────────────────────────────────────
+# Phase 4a — Learning Loop Hygiene
+# ─────────────────────────────────────────────────────────────
+
+# Item 3: KB confidence cap for single-day entries
+KB_DAILY_CONFIDENCE_CAP = 0.7
+
+# Item 4: evidence-citation tolerance for float matches (±0.1%)
+KB_EVIDENCE_FLOAT_TOLERANCE_PCT = 0.1
+
+# Item 5: anomaly triggers for reflector routing (Sonnet escalation)
+REFLECTOR_ANOMALY_STOPS_MIN          = 2     # ≥N stop-outs today
+REFLECTOR_ANOMALY_PRED_MISS_PCT      = 1.5   # |predicted - actual| as % of SPY
+REFLECTOR_ANOMALY_NEW_SUBSTRATEGY    = True  # any sub-strategy fired 1st time
+REFLECTOR_ANOMALY_REGIME_CHANGE      = True  # regime differs vs yesterday
+
+# Item 6: regime-drift threshold for off_hours_learner
+REGIME_DRIFT_THRESHOLD_PCT           = 10.0  # ≥N pts shift in 60d distribution
+REGIME_DRIFT_RECENT_DAYS             = 60    # last-N trading days
+REGIME_DRIFT_PRIOR_DAYS              = 60    # prior-N trading days for comparison

@@ -96,6 +96,18 @@ class Reflector:
         reply = self._call_claude(prompt)
         parsed, parse_err = self._parse_reply(reply)
 
+        # Phase 4a items 3+4: validate KB entries
+        if parsed:
+            from learning.kb_validator import validate_kb_entries
+            today_numbers = self._extract_today_numbers(context)
+            today_trade_ids = self._extract_today_trade_ids(context)
+            parsed, _ = validate_kb_entries(
+                parsed,
+                facts={"trade_ids": today_trade_ids,
+                       "today_numbers": today_numbers},
+                default_kind="daily",
+            )
+
         md_path = self._save_markdown(today_str, parsed, reply, context, parse_err)
 
         kb_ids: list[str] = []
@@ -194,6 +206,31 @@ class Reflector:
             return json.loads(m.group(0)), None
         except json.JSONDecodeError as e:
             return None, f"json error: {e}"
+
+    # ── CONTEXT HELPERS (Phase 4a) ────────────────────
+
+    @staticmethod
+    def _extract_today_numbers(ctx: dict) -> set:
+        """Pull all numeric facts from today's context for evidence-check."""
+        nums: set = set()
+        pred = ctx.get("prediction") or {}
+        for k in ("predicted_close", "actual_close", "vix", "adx",
+                  "ma200_dist", "spy_close", "score"):
+            v = pred.get(k)
+            if isinstance(v, (int, float)):
+                nums.add(v)
+        for pos in ctx.get("open_positions", []):
+            for k in ("entry_price", "exit_price", "pnl_dollars", "pnl_pct"):
+                v = pos.get(k)
+                if isinstance(v, (int, float)):
+                    nums.add(v)
+        return nums
+
+    @staticmethod
+    def _extract_today_trade_ids(ctx: dict) -> set:
+        """Pull trade_ids from today's open positions (real or simulated)."""
+        return {pos.get("trade_id") for pos in ctx.get("open_positions", [])
+                if pos.get("trade_id")}
 
     # ── MARKDOWN ──────────────────────────────────────
 
