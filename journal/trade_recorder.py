@@ -38,6 +38,7 @@ class TradeRecorder:
     def __init__(self):
         os.makedirs(config.LOG_DIR, exist_ok=True)
         self.trades_path = os.path.join(config.LOG_DIR, "trades.json")
+        self.simulated_path = os.path.join(config.LOG_DIR, "simulated_trades.json")
 
     # ─────────────────────────────────────────
     # ENTRY LOGGING
@@ -366,14 +367,20 @@ class TradeRecorder:
     def get_trades_by(self, *, strategy: str | None = None,
                       dte_bucket: str | None = None,
                       book: str | None = None,
-                      exit_reason: str | None = None) -> list:
+                      exit_reason: str | None = None,
+                      include_simulated: bool = False) -> list:
         """Filter trades by optional tag values. Trades that lack a tag are
         EXCLUDED from filters that specify that tag — old (untagged) trades
         don't participate in strategy/book/dte_bucket searches.
 
+        include_simulated=True unions in synthetic trades from simulated_trades.json.
+        Default False keeps P&L / dashboard callers safe.
+
         No-filter call returns all trades.
         """
         rows = self.get_all_trades()
+        if include_simulated:
+            rows = rows + self._load_simulated()
         if strategy is not None:
             rows = [t for t in rows if t.get("strategy") == strategy]
         if dte_bucket is not None:
@@ -401,6 +408,25 @@ class TradeRecorder:
                 return json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"TradeRecorder: failed to load {self.trades_path}: {e}")
+            return []
+
+    def _load_simulated(self) -> list:
+        """Load synthetic trades from simulated_trades.json. Returns [] if missing.
+
+        Simulated trades have `simulated: True` flag. Used by learning-loop
+        consumers (hypothesis_engine, off_hours_learner, rolling_accuracy)
+        that explicitly pass include_simulated=True.
+        """
+        if not os.path.exists(self.simulated_path):
+            return []
+        try:
+            with open(self.simulated_path, "r") as f:
+                rows = json.load(f)
+            for r in rows:
+                r.setdefault("simulated", True)
+            return rows
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"TradeRecorder: failed to load {self.simulated_path}: {e}")
             return []
 
     def _save(self, trades: list):
