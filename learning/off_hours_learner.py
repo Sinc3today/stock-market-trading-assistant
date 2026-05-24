@@ -33,8 +33,7 @@ from loguru import logger
 from learning.knowledge_base import KnowledgeBase, KBEntry
 
 
-CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
-CLAUDE_MODEL   = "claude-sonnet-4-6"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 
 LEARNER_SYSTEM = """You are the trading assistant's off-hours learning module.
 
@@ -253,41 +252,31 @@ class OffHoursLearner:
     # ── CLAUDE ────────────────────────────────────────
 
     def _ask_claude_for_observations(
-        self, today_str: str, near_misses: list[dict]
+        self, today_str: str, payload: list[dict]
     ) -> list[str]:
         if not self.api_key:
             logger.info("OffHoursLearner: no API key -- skipping Claude pass")
             return []
-        import requests
+        from data.llm_client import call_llm
+        user_content = (
+            f"NEAR-MISSES ({len(payload)} days):\n"
+            f"{json.dumps(payload, indent=2)}\n\n"
+            f"Produce JSON now."
+        )
         try:
-            resp = requests.post(
-                CLAUDE_API_URL,
-                headers = {
-                    "Content-Type":      "application/json",
-                    "x-api-key":         self.api_key,
-                    "anthropic-version": "2023-06-01",
-                },
-                json = {
-                    "model":      CLAUDE_MODEL,
-                    "max_tokens": 1000,
-                    "system":     LEARNER_SYSTEM,
-                    "messages":   [{
-                        "role": "user",
-                        "content": (
-                            f"NEAR-MISSES ({len(near_misses)} days):\n"
-                            f"{json.dumps(near_misses, indent=2)}\n\n"
-                            f"Produce JSON now."
-                        ),
-                    }],
-                },
-                timeout = 60,
-            )
-            resp.raise_for_status()
-            text = "".join(
-                b.get("text", "") for b in resp.json().get("content", []) if b.get("type") == "text"
+            text = call_llm(
+                system              = LEARNER_SYSTEM,
+                user                = user_content,
+                anthropic_model     = CLAUDE_MODEL,
+                api_key             = self.api_key,
+                max_tokens          = 1000,
+                cache_static_system = True,
             )
         except Exception as e:
             logger.error(f"OffHoursLearner Claude failed: {e}")
+            return []
+
+        if not text:
             return []
 
         m = re.search(r"\{.*\}", text, re.DOTALL)

@@ -75,27 +75,22 @@ def test_find_near_misses_returns_empty_when_csv_missing(learner, monkeypatch):
 
 
 def test_ask_claude_parses_kb_entries(iso_dirs, monkeypatch):
-    """With a stubbed requests.post returning valid JSON, KB rows are appended."""
+    """With a stubbed call_llm returning valid JSON, KB rows are appended."""
     learner = OffHoursLearner(api_key="sk-test-key")
     near = [{"date": "2026-05-15", "regime": "trending_up_calm",
              "adx": 25.0, "vix_used": 16.0, "move_pct": -0.4,
              "adx_near_threshold": True, "vix_near_threshold": False}]
 
-    class FakeResp:
-        def raise_for_status(self):  # noqa: D401
-            return None
-        def json(self):
-            return {"content": [{"type": "text", "text": json.dumps({
-                "kb_entries": [
-                    {"category": "edge_case",
-                     "claim":    "ADX just over 25 with negative next-day move",
-                     "evidence": "2026-05-15 ADX=25.0 move=-0.4%",
-                     "confidence": 0.6,
-                     "tags": ["adx-boundary"]},
-                ]
-            })}]}
-
-    monkeypatch.setattr("requests.post", lambda *a, **kw: FakeResp())
+    fake_reply = json.dumps({
+        "kb_entries": [
+            {"category": "edge_case",
+             "claim":    "ADX just over 25 with negative next-day move",
+             "evidence": "2026-05-15 ADX=25.0 move=-0.4%",
+             "confidence": 0.6,
+             "tags": ["adx-boundary"]},
+        ]
+    })
+    monkeypatch.setattr("data.llm_client.call_llm", lambda **kw: fake_reply)
     ids = learner._ask_claude_for_observations("2026-05-17", near)
 
     assert len(ids) == 1
@@ -110,13 +105,8 @@ def test_ask_claude_handles_malformed_json(iso_dirs, monkeypatch):
              "adx": 25.0, "vix_used": 16.0, "move_pct": -0.4,
              "adx_near_threshold": True, "vix_near_threshold": False}]
 
-    class FakeResp:
-        def raise_for_status(self): return None
-        def json(self):
-            return {"content": [{"type": "text",
-                                 "text": "I'm sorry, I cannot help with that."}]}
-
-    monkeypatch.setattr("requests.post", lambda *a, **kw: FakeResp())
+    monkeypatch.setattr("data.llm_client.call_llm",
+                        lambda **kw: "I'm sorry, I cannot help with that.")
     ids = learner._ask_claude_for_observations("2026-05-17", near)
 
     assert ids == []
@@ -156,9 +146,9 @@ def test_vix_for_uses_fallback_when_all_dates_after(iso_dirs):
 def test_ask_claude_swallows_http_errors(iso_dirs, monkeypatch):
     """Network error during Claude call returns [] and logs, doesn't crash."""
     learner = OffHoursLearner(api_key="sk-test-key")
-    def boom(*a, **kw):
+    def boom(**kw):
         raise RuntimeError("connection refused")
-    monkeypatch.setattr("requests.post", boom)
+    monkeypatch.setattr("data.llm_client.call_llm", boom)
 
     ids = learner._ask_claude_for_observations("2026-05-17", [{"date": "x"}])
     assert ids == []

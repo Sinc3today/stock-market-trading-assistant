@@ -231,12 +231,20 @@ class AIAdvisor:
             "Content-Type":      "application/json",
             "x-api-key":         self.api_key,
             "anthropic-version": "2023-06-01",
+            "anthropic-beta":    "prompt-caching-2024-07-31",
         }
+
+        # Wrap the static system prompt in Anthropic's ephemeral cache format.
+        # The system prompt never changes within a session, so this cuts costs
+        # by ~25-30% when the same advisor is called multiple times.
+        cached_system = [
+            {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
+        ]
 
         payload = {
             "model":      CLAUDE_MODEL,
             "max_tokens": 1000,
-            "system":     SYSTEM_PROMPT,
+            "system":     cached_system,
             "messages":   messages_to_send,
         }
 

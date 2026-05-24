@@ -31,8 +31,7 @@ from journal.trade_recorder  import TradeRecorder
 from learning.paper_broker   import AUTO_TAG
 
 
-CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
-CLAUDE_MODEL   = "claude-sonnet-4-6"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 
 REFLECTOR_SYSTEM = """You are the trading assistant's self-reflection module.
 
@@ -174,11 +173,12 @@ class Reflector:
         # loop producing KB entries when the hosted API is capped).
         from data.llm_client import call_llm
         return call_llm(
-            system          = REFLECTOR_SYSTEM,
-            user            = prompt,
-            anthropic_model = CLAUDE_MODEL,
-            api_key         = self.api_key,
-            max_tokens      = 1500,
+            system               = REFLECTOR_SYSTEM,
+            user                 = prompt,
+            anthropic_model      = CLAUDE_MODEL,
+            api_key              = self.api_key,
+            max_tokens           = 1500,
+            cache_static_system  = True,
         )
 
     # ── PARSING ───────────────────────────────────────

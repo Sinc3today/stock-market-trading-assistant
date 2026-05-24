@@ -42,8 +42,7 @@ from learning.predictions    import PredictionLog
 from journal.plan_logger     import PlanLogger
 
 
-CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
-CLAUDE_MODEL   = "claude-sonnet-4-6"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # Whitelist of (module_path, var_name) pairs the engine may target.
 # Add to this list as you make more thresholds first-class tunables.
@@ -220,31 +219,15 @@ class HypothesisEngine:
         if not self.api_key:
             logger.warning("HypothesisEngine: ANTHROPIC_API_KEY missing -- skipping")
             return ""
-        import requests
-        try:
-            resp = requests.post(
-                CLAUDE_API_URL,
-                headers = {
-                    "Content-Type":      "application/json",
-                    "x-api-key":         self.api_key,
-                    "anthropic-version": "2023-06-01",
-                },
-                json = {
-                    "model":      CLAUDE_MODEL,
-                    "max_tokens": 1200,
-                    "system":     ENGINE_SYSTEM,
-                    "messages":   [{"role": "user", "content": prompt}],
-                },
-                timeout = 60,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return "".join(
-                b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"
-            )
-        except Exception as e:
-            logger.error(f"HypothesisEngine Claude call failed: {e}")
-            return ""
+        from data.llm_client import call_llm
+        return call_llm(
+            system              = ENGINE_SYSTEM,
+            user                = prompt,
+            anthropic_model     = CLAUDE_MODEL,
+            api_key             = self.api_key,
+            max_tokens          = 1200,
+            cache_static_system = True,
+        )
 
     @staticmethod
     def _parse_reply(text: str) -> tuple[dict | None, str | None]:
