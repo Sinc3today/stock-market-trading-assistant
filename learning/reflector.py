@@ -101,10 +101,12 @@ class Reflector:
             from learning.kb_validator import validate_kb_entries
             today_numbers = self._extract_today_numbers(context)
             today_trade_ids = self._extract_today_trade_ids(context)
+            today_kb_ids = self._extract_recent_kb_ids(context)
             parsed, _ = validate_kb_entries(
                 parsed,
                 facts={"trade_ids": today_trade_ids,
-                       "today_numbers": today_numbers},
+                       "today_numbers": today_numbers,
+                       "kb_ids": today_kb_ids},
                 default_kind="daily",
             )
 
@@ -138,11 +140,12 @@ class Reflector:
                 logger.warning(f"Reflector: post_fn failed: {e}")
 
         return {
-            "date":       today_str,
-            "markdown":   md_path,
-            "kb_ids":     kb_ids,
-            "parsed":     bool(parsed),
-            "parse_err":  parse_err,
+            "date":              today_str,
+            "markdown":          md_path,
+            "kb_ids":            kb_ids,
+            "parsed":            bool(parsed),
+            "parse_err":         parse_err,
+            "validator_metrics": parsed.get("_validator_metrics", {}) if parsed else {},
         }
 
     # ── CONTEXT ───────────────────────────────────────
@@ -211,11 +214,15 @@ class Reflector:
 
     @staticmethod
     def _extract_today_numbers(ctx: dict) -> set:
-        """Pull all numeric facts from today's context for evidence-check."""
+        """Pull all numeric facts from today's context for evidence-check.
+
+        Field names must match the Prediction dataclass in learning/predictions.py.
+        """
         nums: set = set()
         pred = ctx.get("prediction") or {}
-        for k in ("predicted_close", "actual_close", "vix", "adx",
-                  "ma200_dist", "spy_close", "score"):
+        # Source of truth: Prediction dataclass (learning/predictions.py lines 60-69)
+        for k in ("entry_spy", "predicted_target", "predicted_stop",
+                  "actual_close", "actual_move_pct", "confidence"):
             v = pred.get(k)
             if isinstance(v, (int, float)):
                 nums.add(v)
@@ -226,11 +233,29 @@ class Reflector:
                     nums.add(v)
         return nums
 
+    def _extract_today_trade_ids(self, ctx: dict) -> set:
+        """Pull trade_ids from today's open positions + today's closed trades.
+
+        Today = the date string in ctx['date']. Closed-today trades are
+        included so Claude can cite them as evidence without false violations.
+        """
+        ids = {pos.get("trade_id") for pos in ctx.get("open_positions", [])
+               if pos.get("trade_id")}
+        today_str = ctx.get("date", "")
+        if today_str:
+            for t in self.trades.get_all_trades():
+                exit_date = t.get("exit_date") or ""
+                if exit_date.startswith(today_str) and t.get("trade_id"):
+                    ids.add(t["trade_id"])
+        return ids
+
     @staticmethod
-    def _extract_today_trade_ids(ctx: dict) -> set:
-        """Pull trade_ids from today's open positions (real or simulated)."""
-        return {pos.get("trade_id") for pos in ctx.get("open_positions", [])
-                if pos.get("trade_id")}
+    def _extract_recent_kb_ids(ctx: dict) -> set:
+        """Pull KB entry IDs from the recent_kb context.
+
+        KBEntry.id is a bare 10-char lowercase hex (uuid4().hex[:10]).
+        """
+        return {e.get("id") for e in ctx.get("recent_kb", []) if e.get("id")}
 
     # ── MARKDOWN ──────────────────────────────────────
 

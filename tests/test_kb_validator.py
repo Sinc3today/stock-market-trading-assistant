@@ -118,3 +118,27 @@ def test_validate_caps_daily_and_logs_violations():
     # Violating entry gets marked but kept (soft enforcement)
     assert out["kb_entries"][1].get("evidence_violation") is True
     assert len(out["kb_entries"]) == 2
+
+
+# ── KB ID evidence checks (post-review fix) ─────────────────
+
+def test_evidence_with_kb_id_from_recent_kb_passes():
+    """KB IDs are bare 10-char hex from KnowledgeBase. Validator must
+    look them up against the actual KB IDs provided in facts."""
+    entry = {"evidence": "see kb entry abc123def4 for prior pattern"}
+    kb_ids = {"abc123def4"}
+    assert has_valid_evidence(entry, set(), set(), kb_ids) is True
+
+
+def test_evidence_with_kb_id_not_in_facts_fails():
+    """A 10-char hex that doesn't match any current KB id is treated as
+    a generic number candidate, NOT a kb reference."""
+    entry = {"evidence": "see kb entry abc123def4 for prior pattern"}
+    kb_ids = {"different01"}  # 10-char hex but different
+    assert has_valid_evidence(entry, set(), set(), kb_ids) is False
+
+
+def test_has_valid_evidence_kb_ids_param_optional():
+    """Default (no kb_ids arg) must not crash; falls through to other checks."""
+    entry = {"evidence": "trade AAAA0001 went well"}
+    assert has_valid_evidence(entry, {"AAAA0001"}, set()) is True

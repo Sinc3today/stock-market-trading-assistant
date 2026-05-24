@@ -49,13 +49,17 @@ def cap_daily_confidence(entry: dict, kind: str) -> tuple[dict, bool]:
     return entry, False
 
 
-def has_valid_evidence(entry: dict, trade_ids: set, today_numbers: set) -> bool:
+def has_valid_evidence(entry: dict, trade_ids: set, today_numbers: set,
+                       kb_ids: set | None = None) -> bool:
     """Item 4: does the entry's `evidence` string reference concrete data?
 
     Returns True iff `evidence` contains:
       - a trade_id matching today's trades (real or sim_), OR
       - a number matching today's facts (±0.1% for floats, exact for ints), OR
-      - a kb_<id> reference to a previous KB entry
+      - a bare 10-char hex KB entry ID from ctx['recent_kb']
+
+    Note: KBEntry.id is uuid4().hex[:10] — bare lowercase hex, no 'kb_' prefix.
+    The kb_ids set must be provided from ctx['recent_kb'] for this check to fire.
 
     Pure narrative without specifics → False.
     """
@@ -71,9 +75,12 @@ def has_valid_evidence(entry: dict, trade_ids: set, today_numbers: set) -> bool:
         if m in trade_ids:
             return True
 
-    # KB entry reference
-    if re.search(r"\bkb_[a-z0-9_]+\b", ev):
-        return True
+    # KB entry reference — bare 10-char hex IDs from recent KB
+    # (KBEntry.id = uuid4().hex[:10], no 'kb_' prefix)
+    if kb_ids:
+        for token in re.findall(r"\b[a-f0-9]{10}\b", ev):
+            if token in kb_ids:
+                return True
 
     # Number matches
     tol_pct = float(config.KB_EVIDENCE_FLOAT_TOLERANCE_PCT) / 100.0
@@ -113,6 +120,7 @@ def validate_kb_entries(parsed: dict, facts: dict,
     metrics = {"caps_applied": 0, "evidence_violations": 0}
     trade_ids     = facts.get("trade_ids", set())
     today_numbers = facts.get("today_numbers", set())
+    kb_ids        = facts.get("kb_ids", set())
 
     for entry in parsed.get("kb_entries", []):
         kind = entry.get("kind", default_kind)
@@ -122,7 +130,7 @@ def validate_kb_entries(parsed: dict, facts: dict,
             logger.info(
                 f"kb_validator: capped confidence on '{entry.get('claim','')[:60]}'"
             )
-        if not has_valid_evidence(entry, trade_ids, today_numbers):
+        if not has_valid_evidence(entry, trade_ids, today_numbers, kb_ids):
             metrics["evidence_violations"] += 1
             entry["evidence_violation"] = True
             logger.warning(
