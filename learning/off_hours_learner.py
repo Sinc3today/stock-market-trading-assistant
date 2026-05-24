@@ -1,22 +1,23 @@
+"""learning/off_hours_learner.py — Phase 4a item 6.
+
+Weekend learning. Pivot from "near-miss threshold tuning" → "regime-drift
+detection". Runs Sunday 10:00 ET.
+
+Pivot rationale: with Phase 3 paper trading live, near-miss tuning is
+redundant with hypothesis_engine (Saturday). Regime drift catches the
+highest-leverage signal — meta-shifts in market structure that affect
+ALL sub-strategies at once — and has always-available data regardless
+of trade volume.
+
+Algorithm:
+  1. Load 120 trading days of SPY regime classifications.
+  2. Split into recent-60d vs prior-60d windows.
+  3. Compute regime distribution (% of days per regime) for each window.
+  4. Identify shifts ≥REGIME_DRIFT_THRESHOLD_PCT (default 10pts).
+  5. Compute feature trends (VIX/ADX/MA200_dist means) for narrative.
+  6. Send shifts + trends to Sonnet; persist KB entry as kind=regime_drift.
+  7. If <60 trading days available, skip the Claude call.
 """
-learning/off_hours_learner.py -- Weekend learning when market is closed.
-
-Runs Sunday 10:00 ET. The goal is to keep the assistant *learning* even
-when there are no live trades to score. It does two things:
-
-  1. Replays the last 60 days of SPY history through the *current* regime
-     detector and identifies "near-miss" days: days where the regime call
-     was confirmed wrong by the next-day move but the prediction was close
-     to a boundary (e.g. ADX just barely above the threshold, VIX just
-     below).
-  2. Asks Claude to look at the near-misses + recent KB and propose
-     1-3 *observation* KB entries (NOT hypotheses -- the hypothesis_engine
-     handles those). Observations might become hypotheses later.
-
-If Claude isn't available the replay still runs and writes a structured
-report so the next session can use it.
-"""
-
 from __future__ import annotations
 
 import json
@@ -25,63 +26,116 @@ import re
 import sys
 from datetime import date, timedelta
 
+from loguru import logger
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import config
-from loguru import logger
-
 from learning.knowledge_base import KnowledgeBase, KBEntry
+from data.llm_client          import call_llm
 
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
-LEARNER_SYSTEM = """You are the trading assistant's off-hours learning module.
+LEARNER_SYSTEM = """You are the trading assistant's off-hours regime-drift module.
 
-You will receive a list of 'near-miss' days from the recent SPY history --
-days where the regime classifier was on the edge of a threshold and the
-next-day move went against the call. Look for patterns across them.
+You receive:
+  - A list of regime distribution SHIFTS between a recent-60d window and a
+    prior-60d window (each shift = {regime, recent_pct, prior_pct, delta_pct}).
+  - Feature trends (VIX/ADX/MA200_dist means for each window).
 
-Produce 1-3 KB entries (category 'edge_case' or 'market_context') that
-describe what these near-misses have in common. Do NOT propose parameter
-changes -- those go through the hypothesis_engine.
+Your job: interpret the shifts in terms of trading implications. Are we
+moving toward more trending regimes? More volatility? Which strategies'
+typical conditions are becoming more/less common?
 
 Return ONLY a single JSON object:
 
 {
   "kb_entries": [
     {
-      "category":   "edge_case | market_context",
+      "category":   "market_context",
+      "kind":       "regime_drift",
       "claim":      "<= 200 chars",
-      "evidence":   "specific dates / numbers",
+      "evidence":   "specific deltas and feature trends",
       "confidence": 0.0 to 1.0,
-      "tags":       ["..."]
+      "tags":       ["regime_drift", ...]
     }
   ]
 }"""
 
 
-REPLAY_DAYS = 60
+# ────────────────────────────────────────────────────────────
+#  Pure helpers (importable for tests + reuse)
+# ────────────────────────────────────────────────────────────
 
-# Buffers that define "near the threshold"
-ADX_NEAR_PCT = 0.10   # within 10% of ADX_TREND_MIN
-VIX_NEAR_PCT = 0.10   # within 10% of VIX_CALM_MAX
+def compute_distribution(rows: list[dict]) -> dict[str, float]:
+    """Return {regime: pct} from a list of {regime: ...} rows."""
+    if not rows:
+        return {}
+    counts: dict[str, int] = {}
+    for r in rows:
+        rg = r.get("regime")
+        if not rg:
+            continue
+        counts[rg] = counts.get(rg, 0) + 1
+    total = sum(counts.values())
+    if total == 0:
+        return {}
+    return {k: round(v / total * 100, 2) for k, v in counts.items()}
 
+
+def detect_shifts(prior: dict[str, float], recent: dict[str, float],
+                  threshold_pct: float) -> list[dict]:
+    """Return list of regime shifts whose abs(delta_pct) >= threshold_pct.
+
+    Each shift: {regime, recent_pct, prior_pct, delta_pct}.
+    """
+    all_regimes = set(prior) | set(recent)
+    shifts = []
+    for rg in all_regimes:
+        p = prior.get(rg, 0.0)
+        r = recent.get(rg, 0.0)
+        delta = r - p
+        if abs(delta) >= threshold_pct:
+            shifts.append({
+                "regime":     rg,
+                "recent_pct": r,
+                "prior_pct":  p,
+                "delta_pct":  round(delta, 1),
+            })
+    return shifts
+
+
+def compute_feature_trends(rows: list[dict]) -> dict[str, float]:
+    """Compute mean VIX/ADX/MA200_dist over the rows."""
+    if not rows:
+        return {}
+
+    def mean(field):
+        vals = [r.get(field) for r in rows if isinstance(r.get(field), (int, float))]
+        return round(sum(vals) / len(vals), 2) if vals else None
+
+    return {
+        "vix_mean":          mean("vix"),
+        "adx_mean":          mean("adx"),
+        "ma200_dist_mean":   mean("ma200_dist"),
+    }
+
+
+# ────────────────────────────────────────────────────────────
+#  Learner
+# ────────────────────────────────────────────────────────────
 
 class OffHoursLearner:
-    """Weekend replay + Claude pattern-finding."""
+    """Weekend regime-drift detector + Claude pattern-finding."""
 
     def __init__(
         self,
         knowledge_base: KnowledgeBase | None = None,
         api_key:        str | None    = None,
-        vix_history             = None,   # injectable for tests: dict[date, float]
     ):
-        self.kb           = knowledge_base or KnowledgeBase()
-        self.api_key      = api_key or os.getenv("ANTHROPIC_API_KEY")
-        # vix_history is None -> load from CBOE CSV on first replay.
-        # Test fixtures can inject a {date: vix_close} dict to avoid
-        # hitting the network.
-        self._vix_history = vix_history
+        self.kb      = knowledge_base or KnowledgeBase()
+        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
 
     # ── MAIN ──────────────────────────────────────────
 
@@ -89,13 +143,43 @@ class OffHoursLearner:
         today     = today or date.today()
         today_str = today.isoformat()
 
-        near_misses = self._find_near_misses()
+        rows = self._load_regime_classifications(today)
+        recent_days = int(config.REGIME_DRIFT_RECENT_DAYS)
+        prior_days  = int(config.REGIME_DRIFT_PRIOR_DAYS)
+        need_total  = recent_days + prior_days
+
+        if len(rows) < need_total:
+            logger.info(
+                f"OffHoursLearner: insufficient history "
+                f"({len(rows)} < {need_total}) — skipping"
+            )
+            return {"date": today_str, "skipped": True, "rows_available": len(rows)}
+
+        rows = sorted(rows, key=lambda r: r["date"])[-need_total:]
+        prior  = rows[:prior_days]
+        recent = rows[prior_days:]
+
+        prior_dist  = compute_distribution(prior)
+        recent_dist = compute_distribution(recent)
+        shifts = detect_shifts(prior_dist, recent_dist,
+                               threshold_pct=float(config.REGIME_DRIFT_THRESHOLD_PCT))
+        trends_prior  = compute_feature_trends(prior)
+        trends_recent = compute_feature_trends(recent)
+
         report = {
-            "date":            today_str,
-            "replay_days":     REPLAY_DAYS,
-            "near_miss_count": len(near_misses),
-            "near_misses":     near_misses,
+            "date":         today_str,
+            "window_recent": f"{recent[0]['date']} to {recent[-1]['date']}",
+            "window_prior":  f"{prior[0]['date']} to {prior[-1]['date']}",
+            "prior_dist":    prior_dist,
+            "recent_dist":   recent_dist,
+            "shifts":        shifts,
+            "feature_trends": {
+                "prior":  trends_prior,
+                "recent": trends_recent,
+            },
+            "shift_count":   len(shifts),
         }
+
         report_path = os.path.join(
             config.LOG_DIR, "learning", "off_hours", f"{today_str}.json"
         )
@@ -103,180 +187,109 @@ class OffHoursLearner:
         with open(report_path, "w") as f:
             json.dump(report, f, indent=2, default=str)
 
-        if not near_misses:
-            logger.info("OffHoursLearner: no near-misses in replay -- KB unchanged")
-            return {"date": today_str, "near_miss_count": 0, "kb_appended": 0}
-
-        kb_ids = self._ask_claude_for_observations(today_str, near_misses)
-        logger.info(
-            f"OffHoursLearner: {len(near_misses)} near-misses analysed, "
-            f"{len(kb_ids)} KB entries appended"
-        )
+        kb_ids = self._ask_claude_for_interpretation(today_str, report)
         return {
-            "date":            today_str,
-            "near_miss_count": len(near_misses),
-            "kb_appended":     len(kb_ids),
-            "kb_ids":          kb_ids,
-            "report_path":     report_path,
+            "date":        today_str,
+            "shift_count": len(shifts),
+            "kb_appended": len(kb_ids),
+            "kb_ids":      kb_ids,
+            "report_path": report_path,
         }
 
-    # ── REPLAY ────────────────────────────────────────
+    # ── REGIME CLASSIFICATION LOAD ────────────────────
 
-    def _find_near_misses(self) -> list[dict]:
-        """
-        Walk the local SPY CSV, classify each day with current detector,
-        check next-day move, return days where prediction was near a
-        threshold AND the next-day move went against the directional call.
+    def _load_regime_classifications(self, today: date) -> list[dict]:
+        """Load ~170 calendar days of SPY rows and classify each.
+
+        Returns list of dicts {date, regime, vix, adx, ma200_dist} sorted by date.
         """
         try:
             import pandas as pd
-            import signals.regime_detector as rd
-            from signals.regime_detector import RegimeDetector, Regime
+            from signals.regime_detector import RegimeDetector
         except Exception as e:
-            logger.warning(f"OffHoursLearner: replay deps missing -- {e}")
+            logger.warning(f"OffHoursLearner: deps missing -- {e}")
             return []
 
         csv_path = os.path.join("backtests", "spy_history.csv")
         if not os.path.exists(csv_path):
             logger.warning("OffHoursLearner: backtests/spy_history.csv missing")
             return []
-
         df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
         df.columns = [c.lower() for c in df.columns]
         df.index   = pd.to_datetime(df.index).date
-        df         = df.sort_index()
+        df = df.sort_index()
 
-        cutoff = date.today() - timedelta(days=REPLAY_DAYS + 30)
-        df     = df[df.index >= cutoff]
-        if len(df) < 50:
+        # Look back 170 calendar days to get ~120 trading days
+        cutoff = today - timedelta(days=170)
+        df = df[df.index >= cutoff]
+        if len(df) < 60:
             return []
 
-        adx_min = rd.ADX_TREND_MIN
-        vix_max = rd.VIX_CALM_MAX
+        # Load VIX history (best-effort)
+        vix_lookup: dict = {}
+        try:
+            from data.vix_client import VIXClient
+            vdf = VIXClient().get_history(days=180)
+            if vdf is not None and len(vdf) > 0:
+                vix_lookup = {d: float(c) for d, c in vdf["close"].items()}
+        except Exception:
+            pass
+
         detector = RegimeDetector()
-        dates    = sorted(df.index)
-
-        # Load VIX history once (CBOE CSV via VIXClient). Falls back to
-        # an empty dict if the fetch fails — replay still runs with a
-        # 16.0 default per-day, same as the old behaviour.
-        vix_lookup = self._load_vix_history()
-
-        near: list[dict] = []
-        for i, today in enumerate(dates[-REPLAY_DAYS:]):
-            idx = dates.index(today)
-            if idx < 210 or idx + 1 >= len(dates):
+        rows: list[dict] = []
+        dates = sorted(df.index)
+        for i, d in enumerate(dates):
+            if i < 210:    # need lookback for indicators
                 continue
-            hist = df.loc[dates[max(0, idx-250):idx]].copy()
+            hist = df.loc[dates[max(0, i-250):i]].copy()
             hist.index = pd.to_datetime(hist.index)
-
-            # Use real historical VIX when we have it, else fall back
-            # to the same 16.0 default the production backtest uses.
-            vix_today = self._vix_for(vix_lookup, today, fallback=16.0)
-            ivr_today = 30.0   # IVR history is per-ticker; out of scope for now
+            vix_today = vix_lookup.get(d, 16.0)
             try:
                 r = detector.classify(
-                    spy_daily_df = hist,
-                    vix_current  = vix_today,
-                    ivr_current  = ivr_today,
-                    today        = today,
+                    spy_daily_df=hist,
+                    vix_current=vix_today,
+                    ivr_current=30.0,
+                    today=d,
                 )
             except Exception:
                 continue
-
-            adx = r.metrics.get("adx", 0.0)
-            adx_near = abs(adx - adx_min) / max(adx_min, 1) < ADX_NEAR_PCT
-            vix_near = abs(vix_today - vix_max) / max(vix_max, 1) < VIX_NEAR_PCT
-            if not (adx_near or vix_near):
-                continue
-
-            today_close = float(df.loc[today, "close"])
-            tomorrow    = dates[idx + 1]
-            tomorrow_close = float(df.loc[tomorrow, "close"])
-            move_pct = (tomorrow_close - today_close) / today_close * 100
-
-            # "wrong" call: bullish regime with negative next-day move, or vice versa
-            wrong = False
-            if r.regime == Regime.TRENDING_UP_CALM   and move_pct < -0.10: wrong = True
-            if r.regime == Regime.TRENDING_DOWN_CALM and move_pct > +0.10: wrong = True
-            if r.regime == Regime.CHOPPY_LOW_VOL     and abs(move_pct) > 0.50: wrong = True
-
-            if not wrong:
-                continue
-            near.append({
-                "date":     today.isoformat(),
-                "regime":   r.regime.value,
-                "adx":      adx,
-                "vix_used": vix_today,
-                "move_pct": round(move_pct, 3),
-                "adx_near_threshold": adx_near,
-                "vix_near_threshold": vix_near,
+            rows.append({
+                "date":       d,
+                "regime":     r.regime.value,
+                "vix":        vix_today,
+                "adx":        r.metrics.get("adx", 0.0),
+                "ma200_dist": r.metrics.get("ma200_dist_%", 0.0),
             })
-
-        return near
-
-    # ── VIX HISTORY ───────────────────────────────────
-
-    def _load_vix_history(self) -> dict:
-        """
-        Return {date: close} for the VIX. Uses the injected dict if the
-        test fixture provided one, otherwise pulls from VIXClient.get_history.
-        On any failure returns {} so the replay still runs with the fallback.
-        """
-        if self._vix_history is not None:
-            return self._vix_history
-        try:
-            from data.vix_client import VIXClient
-            df = VIXClient().get_history(days=REPLAY_DAYS + 60)
-            if df is None or len(df) == 0:
-                return {}
-            return {d: float(c) for d, c in df["close"].items()}
-        except Exception as e:
-            logger.warning(f"OffHoursLearner: VIX history load failed -- {e}")
-            return {}
-
-    @staticmethod
-    def _vix_for(lookup: dict, target: date, fallback: float) -> float:
-        """
-        Return VIX for target date, or the nearest preceding day, else
-        the fallback. Keeps weekends/holidays from punching a hole.
-        """
-        if not lookup:
-            return fallback
-        if target in lookup:
-            return lookup[target]
-        prior = [d for d in lookup if d <= target]
-        if not prior:
-            return fallback
-        return lookup[max(prior)]
+        return rows
 
     # ── CLAUDE ────────────────────────────────────────
 
-    def _ask_claude_for_observations(
-        self, today_str: str, payload: list[dict]
+    def _ask_claude_for_interpretation(
+        self, today_str: str, report: dict
     ) -> list[str]:
         if not self.api_key:
             logger.info("OffHoursLearner: no API key -- skipping Claude pass")
             return []
-        from data.llm_client import call_llm
-        user_content = (
-            f"NEAR-MISSES ({len(payload)} days):\n"
-            f"{json.dumps(payload, indent=2)}\n\n"
-            f"Produce JSON now."
-        )
         try:
             text = call_llm(
-                system              = LEARNER_SYSTEM,
-                user                = user_content,
-                anthropic_model     = CLAUDE_MODEL,
-                api_key             = self.api_key,
-                max_tokens          = 1000,
-                cache_static_system = True,
+                system               = LEARNER_SYSTEM,
+                user                 = (
+                    f"WINDOWS: {report['window_prior']} (prior) vs "
+                    f"{report['window_recent']} (recent)\n\n"
+                    f"PRIOR DISTRIBUTION:\n{json.dumps(report['prior_dist'], indent=2)}\n\n"
+                    f"RECENT DISTRIBUTION:\n{json.dumps(report['recent_dist'], indent=2)}\n\n"
+                    f"SHIFTS (|delta| >= {config.REGIME_DRIFT_THRESHOLD_PCT}%):\n"
+                    f"{json.dumps(report['shifts'], indent=2)}\n\n"
+                    f"FEATURE TRENDS:\n{json.dumps(report['feature_trends'], indent=2)}\n\n"
+                    f"Produce JSON now."
+                ),
+                anthropic_model      = CLAUDE_MODEL,
+                api_key              = self.api_key,
+                max_tokens           = 1000,
+                cache_static_system  = True,
             )
         except Exception as e:
             logger.error(f"OffHoursLearner Claude failed: {e}")
-            return []
-
-        if not text:
             return []
 
         m = re.search(r"\{.*\}", text, re.DOTALL)
@@ -292,12 +305,12 @@ class OffHoursLearner:
             try:
                 ids.append(self.kb.append(KBEntry(
                     date       = today_str,
-                    category   = raw.get("category", "edge_case"),
+                    category   = raw.get("category", "market_context"),
                     claim      = raw.get("claim", "")[:500],
                     evidence   = raw.get("evidence", "")[:1000],
-                    confidence = float(raw.get("confidence", 0.4)),
+                    confidence = float(raw.get("confidence", 0.65)),
                     source     = "off_hours_learner",
-                    tags       = list(raw.get("tags") or [])[:8],
+                    tags       = list(raw.get("tags") or [])[:8] + ["regime_drift"],
                 )))
             except Exception as e:
                 logger.warning(f"OffHoursLearner: bad entry skipped -- {e}")
