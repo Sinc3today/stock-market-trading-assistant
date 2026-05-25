@@ -36,9 +36,14 @@ class TradeLogger:
         """
         Append a fired alert to the log.
         Adds outcome fields so they can be filled in later.
+
+        Keys prefixed with '_' (e.g. _spy_setup) are stripped before
+        persisting — they are typed in-memory pass-throughs that are not
+        JSON-serializable and not needed in the log file.
         """
+        serializable = {k: v for k, v in alert.items() if not k.startswith("_")}
         entry = {
-            **alert,
+            **serializable,
             "outcome":    None,    # "win", "loss", "breakeven", "open"
             "exit_price": None,
             "exit_date":  None,
