@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -30,6 +30,43 @@ import config
 
 # Ordered tiers so we can compare ">=" against ENTRY_TIER_MINIMUM.
 _TIER_RANK = {"watch": 0, "standard": 1, "high": 2}
+
+
+def _synthesize_legs(strategy: str, dte_bucket: str, now: datetime) -> list[dict]:
+    """Phase 4a hotfix: build a placeholder leg so ExitManager can dispatch.
+
+    Phase 4b's structure builder will replace this with real strikes/wings.
+    Until then, synthesize a single leg with the correct expiration date
+    derived from dte_bucket so ExitManager._nearest_expiration() returns a
+    real date instead of None — preventing Phase 3 positions from becoming
+    orphans that accumulate and consume MAX_CONCURRENT_DISCIPLINED slots.
+
+    Both 'expiry' (TradeRecorder convention) and 'expiration' (exit_manager
+    convention) are populated for compatibility. The 'synthetic' flag marks
+    these as placeholders so Phase 4b's structure builder can replace them.
+    """
+    today = now.date()
+    if dte_bucket == "0DTE":
+        exp = today
+    elif dte_bucket == "1-3DTE":
+        exp = today + timedelta(days=2)   # midpoint of the 1-3 day range
+    elif dte_bucket == "45DTE":
+        exp = today + timedelta(days=45)
+    else:
+        exp = today   # safe fallback for any future bucket
+
+    # option_type heuristic: iron_condor and debit spreads lean CALL for the
+    # synthetic placeholder; Phase 4b will set the real type per sub-strategy.
+    option_type = "PUT" if strategy == "put_debit_spread" else "CALL"
+
+    return [{
+        "action":      "BUY",
+        "option_type": option_type,
+        "strike":      0.0,          # placeholder — Phase 4b builds real strikes
+        "expiry":      exp.isoformat(),
+        "expiration":  exp.isoformat(),  # both keys for exit_manager compat
+        "synthetic":   True,             # flag so structure builder can replace
+    }]
 
 
 def _passes_entry_tier(setup) -> bool:
@@ -91,7 +128,12 @@ def _build_setup_dict(setup, dte_bucket: str, now: datetime) -> dict:
     """Construct a setup_dict in the shape PaperBroker.execute_signal expects.
 
     Phase 3 uses placeholder pricing values. Phase 4's structure builder will
-    replace these with real per-sub-strategy strikes."""
+    replace these with real per-sub-strategy strikes.
+
+    C4 hotfix: legs now contains a synthetic placeholder leg (not []) so
+    ExitManager._nearest_expiration can return a real expiration date and
+    dispatch the position. Without this, Phase 3 positions become orphans.
+    """
     return {
         "date":        now.date().isoformat(),
         "strategy":    setup.strategy,
@@ -102,7 +144,9 @@ def _build_setup_dict(setup, dte_bucket: str, now: datetime) -> dict:
         "entry_price": 1.0,
         "max_profit":  200.0,
         "max_loss":    100.0,
-        "legs":        [],
+        # C4 hotfix: synthetic placeholder legs so ExitManager can dispatch.
+        # Phase 4b's structure builder will replace these with real strikes.
+        "legs":        _synthesize_legs(setup.strategy, dte_bucket, now),
     }
 
 

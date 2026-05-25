@@ -8,9 +8,10 @@ from datetime import datetime, date, time, timedelta
 import pytz
 import pytest
 
-from signals.intraday_entry_router import route
+from signals.intraday_entry_router import route, _build_setup_dict, _synthesize_legs
 from signals.spy_options_engine import SPYSetup
 from learning.paper_broker import PaperBroker
+from learning.exit_manager import ExitManager
 from journal.trade_recorder import TradeRecorder
 
 EASTERN = pytz.timezone("US/Eastern")
@@ -185,4 +186,117 @@ def test_setup_dict_has_expected_shape(tmp_path, monkeypatch):
     assert sd["entry_price"] == 1.0
     assert sd["max_profit"]  == 200.0
     assert sd["max_loss"]    == 100.0
-    assert sd["legs"]        == []
+    # C4 hotfix: legs now has synthetic placeholder(s) so ExitManager can dispatch.
+    assert len(sd["legs"]) >= 1
+
+
+# ── C4 hotfix: synthetic leg shape + ExitManager dispatch ────────────────
+
+def test_synthesize_legs_0dte_expiration_is_today():
+    """0DTE synthetic leg must have expiration == today so ExitManager
+    can compute DTE=0 and dispatch the position on the same day."""
+    today = date(2026, 5, 27)  # Tuesday after Memorial Day
+    now = EASTERN.localize(datetime(today.year, today.month, today.day, 10, 0))
+    legs = _synthesize_legs("call_debit_spread", "0DTE", now)
+    assert len(legs) >= 1
+    leg = legs[0]
+    assert leg["expiry"] == today.isoformat()
+    assert leg["expiration"] == today.isoformat()
+    assert leg["synthetic"] is True
+
+
+def test_synthesize_legs_1_3dte_expiration_is_today_plus_2():
+    """1-3DTE synthetic leg uses today+2 (midpoint of range)."""
+    today = date(2026, 5, 27)
+    now = EASTERN.localize(datetime(today.year, today.month, today.day, 14, 0))
+    legs = _synthesize_legs("iron_condor", "1-3DTE", now)
+    assert len(legs) >= 1
+    leg = legs[0]
+    expected = (today + timedelta(days=2)).isoformat()
+    assert leg["expiry"] == expected
+    assert leg["expiration"] == expected
+    assert leg["synthetic"] is True
+
+
+def test_synthesize_legs_45dte_expiration_is_today_plus_45():
+    """45DTE synthetic leg uses today+45 calendar days."""
+    today = date(2026, 5, 27)
+    now = EASTERN.localize(datetime(today.year, today.month, today.day, 10, 0))
+    legs = _synthesize_legs("iron_condor", "45DTE", now)
+    assert len(legs) >= 1
+    leg = legs[0]
+    expected = (today + timedelta(days=45)).isoformat()
+    assert leg["expiry"] == expected
+    assert leg["expiration"] == expected
+    assert leg["synthetic"] is True
+
+
+def test_synthesize_legs_unknown_bucket_defaults_to_today():
+    """Unknown dte_bucket falls back to today (safe default)."""
+    today = date(2026, 5, 27)
+    now = EASTERN.localize(datetime(today.year, today.month, today.day, 10, 0))
+    legs = _synthesize_legs("iron_condor", "UNKNOWN_BUCKET", now)
+    assert len(legs) >= 1
+    leg = legs[0]
+    assert leg["expiry"] == today.isoformat()
+    assert leg["expiration"] == today.isoformat()
+
+
+def test_synthetic_leg_has_both_expiry_keys():
+    """Both 'expiry' (TradeRecorder convention) and 'expiration'
+    (exit_manager convention) must be present on every synthetic leg."""
+    today = date(2026, 5, 27)
+    now = EASTERN.localize(datetime(today.year, today.month, today.day, 10, 0))
+    for bucket in ("0DTE", "1-3DTE", "45DTE"):
+        legs = _synthesize_legs("iron_condor", bucket, now)
+        for leg in legs:
+            assert "expiry" in leg, f"'expiry' missing for {bucket}"
+            assert "expiration" in leg, f"'expiration' missing for {bucket}"
+            assert leg["expiry"] == leg["expiration"], (
+                f"expiry/expiration mismatch for {bucket}: "
+                f"{leg['expiry']} vs {leg['expiration']}"
+            )
+
+
+def test_synthetic_leg_has_synthetic_marker():
+    """synthetic=True flag must be present so Phase 4b structure builder
+    can identify placeholders vs real legs."""
+    today = date(2026, 5, 27)
+    now = EASTERN.localize(datetime(today.year, today.month, today.day, 10, 0))
+    legs = _synthesize_legs("call_debit_spread", "0DTE", now)
+    assert all(leg.get("synthetic") is True for leg in legs)
+
+
+def test_route_output_legs_non_empty(tmp_path, monkeypatch):
+    """Full route() must produce setup_dicts with non-empty legs list
+    (C4 hotfix — was returning legs=[] which orphaned Phase 3 positions)."""
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    broker = PaperBroker()
+    setup = _setup(strategy="iron_condor", score=78, direction="neutral")
+    result = route(setup, _now(hour=10), broker)
+    assert len(result) == 1
+    assert len(result[0]["legs"]) >= 1
+
+
+def test_exit_manager_nearest_expiration_with_synthetic_leg():
+    """Critical regression test: ExitManager._nearest_expiration must return
+    a real date (not None) when given a synthetic leg produced by the router.
+
+    The empty-legs bug caused _nearest_expiration to return None -> _evaluate
+    short-circuited -> Phase 3 positions never closed -> slot accumulation."""
+    today = date(2026, 5, 27)
+    now = EASTERN.localize(datetime(today.year, today.month, today.day, 10, 0))
+
+    for bucket, expected_days in [("0DTE", 0), ("1-3DTE", 2), ("45DTE", 45)]:
+        legs = _synthesize_legs("iron_condor", bucket, now)
+        result = ExitManager._nearest_expiration(legs)
+        assert result is not None, (
+            f"_nearest_expiration returned None for {bucket} synthetic legs — "
+            f"exit pipeline would never dispatch this position"
+        )
+        expected_date = today + timedelta(days=expected_days)
+        assert result == expected_date, (
+            f"_nearest_expiration returned {result}, expected {expected_date} "
+            f"for dte_bucket={bucket}"
+        )
