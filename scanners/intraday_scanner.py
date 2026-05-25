@@ -79,9 +79,12 @@ class IntradayScanner:
     # ─────────────────────────────────────────
 
     def is_market_hours(self) -> bool:
-        """Return True only on weekdays between 9:30 AM and 4:00 PM ET."""
+        """Return True only on trading days between 9:30 AM and 4:00 PM ET.
+
+        Weekends and US market holidays (C3 hotfix) are both excluded.
+        """
         now_est = datetime.now(self.eastern)
-        if now_est.weekday() >= 5:
+        if not config.is_trading_day(now_est):
             return False
         market_open  = time(9, 30)
         market_close = time(16, 0)

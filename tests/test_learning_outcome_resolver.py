@@ -128,7 +128,10 @@ def test_format_resolved_message_skip(iso_dirs):
     assert "skip day" in msg
 
 
-def test_scheduler_job_pings_post_fn(iso_dirs):
+def test_scheduler_job_pings_post_fn(iso_dirs, monkeypatch):
+    import config
+    # Gate must not fire during tests — mock is_trading_day to always return True
+    monkeypatch.setattr(config, "is_trading_day", lambda d: True)
     _seed_prediction("bullish", entry=720.0)
     captured = []
     job_outcome_resolver(

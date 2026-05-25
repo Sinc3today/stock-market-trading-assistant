@@ -24,7 +24,10 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pytz
+from datetime import datetime
 from loguru import logger
+
+import config
 
 from learning.paper_broker      import PaperBroker
 from learning.outcome_resolver  import OutcomeResolver, format_resolved_message
@@ -40,6 +43,9 @@ from learning.exit_manager      import ExitManager, format_exit_message
 # ── JOB WRAPPERS ──────────────────────────────────────
 
 def job_paper_broker():
+    if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
+        logger.info("paper_broker: non-trading day, skipping")
+        return
     try:
         result = PaperBroker().execute_today()
         logger.info(f"learning.paper_broker -> {result}")
@@ -48,6 +54,9 @@ def job_paper_broker():
 
 
 def job_outcome_resolver(polygon_client, post_fn=None):
+    if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
+        logger.info("outcome_resolver: non-trading day, skipping")
+        return
     try:
         result = OutcomeResolver(polygon_client=polygon_client).resolve_today()
         logger.info(f"learning.outcome_resolver -> {result}")
@@ -64,6 +73,9 @@ def job_outcome_resolver(polygon_client, post_fn=None):
 
 def job_exit_manager(polygon_client, vix_client=None, post_fn=None,
                      dte_buckets=None):
+    if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
+        logger.info("exit_manager: non-trading day, skipping")
+        return
     try:
         closed = ExitManager(
             polygon_client=polygon_client, vix_client=vix_client,
@@ -79,6 +91,9 @@ def job_exit_manager(polygon_client, vix_client=None, post_fn=None,
 
 
 def job_expiry_resolver(polygon_client, post_fn=None):
+    if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
+        logger.info("expiry_resolver: non-trading day, skipping")
+        return
     try:
         closed = ExpiryResolver(polygon_client=polygon_client).resolve_expired()
         logger.info(f"learning.expiry_resolver -> {len(closed)} closed")
@@ -92,6 +107,9 @@ def job_expiry_resolver(polygon_client, post_fn=None):
 
 
 def job_reflector(post_fn=None):
+    if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
+        logger.info("reflector: non-trading day, skipping")
+        return
     try:
         result = Reflector(post_fn=post_fn).reflect_today()
         logger.info(

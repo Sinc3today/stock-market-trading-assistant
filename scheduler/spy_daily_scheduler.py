@@ -23,7 +23,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from datetime import date
+from datetime import date, datetime
 from loguru import logger
 import pytz
 
@@ -62,6 +62,9 @@ def job_spy_premarket(
     context and decision hints.
     """
     logger.info("▶ Morning brief job starting")
+    if not config.is_trading_day(datetime.now(ET)):
+        logger.info("spy_premarket: non-trading day, skipping")
+        return
     try:
         strategy = SPYDailyStrategy(
             polygon_client = polygon_client,
@@ -124,6 +127,9 @@ def job_spy_close_snapshot(polygon_client, post_fn=None):
     Lets you see tomorrow whether the regime call was confirmed.
     """
     logger.info("▶ SPY close snapshot")
+    if not config.is_trading_day(datetime.now(ET)):
+        logger.info("spy_close_snapshot: non-trading day, skipping")
+        return
     try:
         df = polygon_client.get_bars(
             "SPY",

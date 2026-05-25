@@ -331,4 +331,44 @@ REFLECTOR_ANOMALY_REGIME_CHANGE      = True  # regime differs vs yesterday
 # Item 6: regime-drift threshold for off_hours_learner
 REGIME_DRIFT_THRESHOLD_PCT           = 10.0  # ≥N pts shift in 60d distribution
 REGIME_DRIFT_RECENT_DAYS             = 60    # last-N trading days
+
+
+# ─────────────────────────────────────────────────────────────
+# US NYSE Market Holidays (C3 hotfix — 2026-05-25)
+# ─────────────────────────────────────────────────────────────
+# Hand-curated 2026 set. For future years, extend the set or
+# adopt pandas_market_calendars / exchange_calendars.
+
+from datetime import date as _date
+
+US_MARKET_HOLIDAYS_2026 = {
+    _date(2026, 1, 1),    # New Year's Day (Thu)
+    _date(2026, 1, 19),   # MLK Day (Mon)
+    _date(2026, 2, 16),   # Presidents' Day (Mon)
+    _date(2026, 4, 3),    # Good Friday
+    _date(2026, 5, 25),   # Memorial Day (Mon)
+    _date(2026, 6, 19),   # Juneteenth (Fri)
+    _date(2026, 7, 3),    # July 4 observed (July 4 = Sat) (Fri)
+    _date(2026, 9, 7),    # Labor Day (Mon)
+    _date(2026, 11, 26),  # Thanksgiving (Thu)
+    _date(2026, 12, 25),  # Christmas (Fri)
+}
+
+US_MARKET_HOLIDAYS = US_MARKET_HOLIDAYS_2026  # alias for future-proofing
+
+
+def is_trading_day(d) -> bool:
+    """Return True iff the given date is a US equity-market trading day.
+
+    Accepts datetime.date or datetime.datetime. Weekends and holidays
+    are excluded. Half-days (e.g. July 3 early close, Black Friday)
+    are STILL trading days — this function only gates full closures.
+    """
+    if hasattr(d, "date"):
+        d = d.date()
+    if d.weekday() >= 5:
+        return False
+    if d in US_MARKET_HOLIDAYS:
+        return False
+    return True
 REGIME_DRIFT_PRIOR_DAYS              = 60    # prior-N trading days for comparison

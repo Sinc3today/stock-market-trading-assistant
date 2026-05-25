@@ -53,10 +53,10 @@ class SwingScanner:
         self.discord_post_fn = fn
 
     def run(self) -> list[dict]:
-        """Scan watchlist for swing setups; skips weekends automatically."""
+        """Scan watchlist for swing setups; skips weekends and holidays."""
         now_et = datetime.now(pytz.timezone("US/Eastern"))
-        if now_et.weekday() >= 5:
-            logger.info("Weekend -- swing scan skipped")
+        if not config.is_trading_day(now_et):
+            logger.info("Non-trading day — swing scan skipped")
             return []
 
         watchlist = self._load_watchlist()
