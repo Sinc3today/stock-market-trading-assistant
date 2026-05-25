@@ -365,8 +365,8 @@ class Reflector:
             return False
         try:
             from datetime import date, timedelta
-            # Walk back up to 4 days to skip weekends / holidays
-            for delta in range(1, 5):
+            # Walk back up to 7 days to survive long market closures (Thanksgiving, Christmas+NYD)
+            for delta in range(1, 8):
                 prior_str = (date.today() - timedelta(days=delta)).isoformat()
                 prior = self.preds.get(prior_str)
                 if prior:

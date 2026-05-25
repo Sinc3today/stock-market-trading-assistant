@@ -66,3 +66,38 @@ def test_routing_recorded_in_result(isolated_reflector, monkeypatch):
                return_value='{"summary":"ok","narrative":"-","kb_entries":[]}'):
         result = isolated_reflector.reflect_today(today=date(2026, 5, 27))
         assert result.get("route") in ("sonnet_anomaly", "sonnet_fallback", "sonnet_anomaly_error")
+
+
+def test_regime_change_walkback_survives_thanksgiving_long_weekend(monkeypatch, tmp_path):
+    """After Thanksgiving (Thu+Fri closed), Monday's reflector must walk back
+    >=5 days to find Wednesday's prediction."""
+    monkeypatch.setattr("config.LOG_DIR", str(tmp_path))
+
+    # Set up: today is Monday after Thanksgiving 2026-11-30; Wednesday 2026-11-25 had a prediction
+    preds = MagicMock()
+
+    def _get(date_str):
+        if date_str == "2026-11-25":
+            return {"regime": "TRENDING_UP_CALM"}
+        return None  # Thu, Fri, Sat, Sun all missing
+
+    preds.get.side_effect = _get
+
+    r = Reflector(prediction_log=preds)
+
+    # Mock date.today() to return Monday after Thanksgiving
+    # The _regime_changed_vs_yesterday imports date from datetime inside the method
+    mock_today = date(2026, 11, 30)  # Monday after Thanksgiving
+
+    with patch("datetime.date") as mock_date_cls:
+        # Make the class callable to construct date objects normally
+        mock_date_cls.side_effect = lambda *a, **kw: date(*a, **kw)
+        # Override just the today() method
+        mock_date_cls.today.return_value = mock_today
+
+        # Today's prediction says regime is RANGE_HIGH_VOL (different from Wed's TRENDING_UP_CALM)
+        today_pred = {"regime": "RANGE_HIGH_VOL"}
+
+        assert r._regime_changed_vs_yesterday(today_pred) is True
+        # Verify the prediction lookup happened against 2026-11-25 (delta=5)
+        preds.get.assert_any_call("2026-11-25")
