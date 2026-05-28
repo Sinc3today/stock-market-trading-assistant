@@ -39,10 +39,13 @@ from unittest.mock import patch
 from backtests.router_setup_builder import load_intraday_window
 
 
-def _make_5min_bars(target_date):
-    """Generate synthetic 5-min bars covering 09:30 ET to 16:00 ET in UTC."""
-    # 09:30 ET in summer = 13:30 UTC. Build 78 bars (6.5 hours * 12 bars/hr).
-    start = pd.Timestamp(f"{target_date.isoformat()} 13:30:00", tz="UTC")
+def _make_5min_bars(target_date, utc_hhmm: str = "13:30:00"):
+    """Synthetic 5-min bars from utc_hhmm to +6.5h, tz-naive (matching
+    data.intraday_data.get_stock_intraday's real return shape).
+    Default utc_hhmm='13:30:00' covers EDT (summer) 09:30 ET; pass
+    '14:30:00' for EST (winter) 09:30 ET.
+    """
+    start = pd.Timestamp(f"{target_date.isoformat()} {utc_hhmm}")   # tz-naive
     idx = pd.date_range(start, periods=78, freq="5min")
     return pd.DataFrame({
         "open":   [500.0] * 78,
@@ -72,3 +75,14 @@ def test_load_intraday_window_returns_empty_when_no_data():
                return_value=pd.DataFrame()):
         df = load_intraday_window(target)
     assert df.empty
+
+
+def test_load_intraday_window_handles_EST_session():
+    """Winter date (EST) — same 3-bar slice. Validates tz_convert handles DST.
+    In EST, 09:30 ET = 14:30 UTC (vs 13:30 UTC in EDT)."""
+    target = date(2024, 1, 16)
+    with patch("backtests.router_setup_builder.get_stock_intraday",
+               return_value=_make_5min_bars(target, utc_hhmm="14:30:00")):
+        df = load_intraday_window(target)
+    assert len(df) == 3
+    assert df.index.tz is not None

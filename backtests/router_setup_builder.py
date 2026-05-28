@@ -53,6 +53,11 @@ def load_intraday_window(target_date: date) -> pd.DataFrame:
     df = get_stock_intraday("SPY", 5, "minute", target_date, target_date)
     if df.empty:
         return df
+    # get_stock_intraday returns a tz-naive UTC index (data/intraday_data.py
+    # uses pd.to_datetime(unit="ms") which is tz-naive). Localize to UTC so
+    # the slice bounds (also UTC) compare cleanly across DST.
+    if df.index.tz is None:
+        df = df.tz_localize("UTC")
     # ET 09:30-09:44:59 == UTC 13:30-13:44:59 (EDT) or 14:30-14:44:59 (EST).
     # We slice in UTC against the actual session date — Polygon returns the
     # session date's bars whichever DST half we're in.
