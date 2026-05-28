@@ -66,3 +66,22 @@ def load_intraday_window(target_date: date) -> pd.DataFrame:
     utc_open  = et_open.tz_convert("UTC")
     utc_or_end = et_or_end.tz_convert("UTC")
     return df[(df.index >= utc_open) & (df.index < utc_or_end)]
+
+
+from signals.spy_options_engine import SPYOptionsEngine, SPYSetup
+
+
+def build_historical_setup(target_date: date) -> list[SPYSetup]:
+    """Build the SPYSetup objects SPYOptionsEngine.analyze() would have
+    emitted on `target_date` at 09:45 ET. Returns [] when intraday data
+    is missing (treated as 'skip this day' by the WF runner).
+
+    The engine is pure w.r.t. the DataFrames it consumes (verified —
+    no live VIX/IVR/regime deps inside spy_options_engine), so this is a
+    full-fidelity replay.
+    """
+    df_daily = load_daily_history(target_date)
+    df_intraday = load_intraday_window(target_date)
+    if df_intraday.empty:
+        return []
+    return SPYOptionsEngine().analyze(df_daily, df_intraday)

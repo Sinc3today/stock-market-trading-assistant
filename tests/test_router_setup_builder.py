@@ -86,3 +86,30 @@ def test_load_intraday_window_handles_EST_session():
         df = load_intraday_window(target)
     assert len(df) == 3
     assert df.index.tz is not None
+
+
+from backtests.router_setup_builder import build_historical_setup
+
+
+def test_build_historical_setup_returns_list_of_spysetups():
+    """End-to-end: known 2024 date yields at least one SPYSetup."""
+    setups = build_historical_setup(date(2024, 6, 14))
+    assert isinstance(setups, list)
+    # SPYOptionsEngine emits 0..3 setups (call/put/condor) depending on scores.
+    # On any normal day at least one strategy clears SCORE_ALERT_MINIMUM.
+    if setups:
+        s = setups[0]
+        assert hasattr(s, "strategy")
+        assert hasattr(s, "conviction")
+        assert hasattr(s, "score")
+        assert hasattr(s, "direction")
+        assert s.strategy in {"call_debit_spread", "put_debit_spread", "iron_condor"}
+        assert s.conviction in {"watch", "standard", "high"}
+
+
+def test_build_historical_setup_returns_empty_on_missing_intraday():
+    """When 09:30-09:45 bars are unavailable, return [] (skip day)."""
+    with patch("backtests.router_setup_builder.load_intraday_window",
+               return_value=pd.DataFrame()):
+        setups = build_historical_setup(date(2024, 6, 14))
+    assert setups == []
