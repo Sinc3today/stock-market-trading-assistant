@@ -116,3 +116,149 @@ def generate_windows(start: date, end: date,
             return
         yield ((train_start, train_end), (test_start, test_end))
         test_start = _add_months(test_start, step_months)
+
+
+STRATEGY_NOT_SUPPORTED = object()   # sentinel — router emitted a strategy
+                                     # backtests/intraday_backtest.py can't price
+
+
+def _strategy_to_structure(strategy: str, direction: str):
+    """Map signals.intraday_entry_router setup.strategy → backtests.
+    intraday_backtest structure name. Returns STRATEGY_NOT_SUPPORTED if
+    the strategy can't be priced (out of scope for v1)."""
+    if strategy == "iron_condor":
+        return "iron_condor"
+    if strategy == "call_debit_spread":
+        return "bull_debit"
+    if strategy == "put_debit_spread":
+        return "bear_debit"
+    return STRATEGY_NOT_SUPPORTED
+
+
+def simulate_short_dte_day(day, structure: str, dte_bucket: str,
+                            spy_intraday, options_history):
+    """Wrap backtests.intraday_backtest.simulate_0dte_day to support 0DTE
+    AND 1-3DTE in the same call. The 0DTE path delegates directly; the
+    1-3DTE path picks a future-expiration contract and exits at session
+    close instead of the 0DTE EOD pin/assignment flatten.
+
+    Treatment and baseline both call this with require_confirmation=False
+    so the router IS the entry filter (OR+VWAP would double-gate otherwise).
+
+    Returns simulate_0dte_day's result dict, or None when the day can't
+    be priced.
+    """
+    from datetime import timedelta
+    from backtests.intraday_backtest import simulate_0dte_day
+
+    if dte_bucket == "0DTE":
+        return simulate_0dte_day(
+            day, structure, spy_intraday, options_history,
+            require_confirmation=False,   # router replaces OR+VWAP
+        )
+
+    if dte_bucket == "1-3DTE":
+        return _simulate_short_dte_with_expiration(
+            day, day + timedelta(days=2),
+            structure, spy_intraday, options_history,
+        )
+
+    return None   # unknown bucket — caller's bug
+
+
+def _simulate_short_dte_with_expiration(day, expiry,
+                                         structure: str,
+                                         spy_intraday, options_history):
+    """1-3DTE same-session simulator. Same opening-range entry as the 0DTE
+    simulator, but the option contract has `expiry > day`, so:
+      - There's no pin/assignment risk on `day`, hence no 15:45 flatten —
+        we exit at the regular session close (16:00) or on target/stop.
+      - This is a SAME-DAY-MARK approximation: we record entry-to-close
+        PnL on `day` for a contract that has additional days to live.
+        Full multi-day PnL is out of scope for v1 — documented in spec.
+    """
+    from datetime import datetime, timedelta, time
+    from data.options_history import option_ticker
+    from backtests.intraday_backtest import (
+        _to_et, _spread_value, build_0dte_legs, is_credit_structure,
+        MARKET_OPEN_ET, OR_MINUTES, COMMISSION_PER_LEG, SLIPPAGE,
+        PROFIT_TARGET_PCT, STOP_MULT,
+    )
+    import pandas as pd
+
+    if spy_intraday is None or spy_intraday.empty:
+        return None
+    spy = _to_et(spy_intraday)
+    SESSION_CLOSE_ET = time(16, 0)
+    rth = spy[(spy.index.time >= MARKET_OPEN_ET) & (spy.index.time <= SESSION_CLOSE_ET)]
+    if rth.empty:
+        return None
+
+    or_end = (datetime.combine(day, MARKET_OPEN_ET) + timedelta(minutes=OR_MINUTES)).time()
+    session = rth[rth.index.time >= or_end]
+    if session.empty:
+        return None
+
+    entry_ts   = session.index[0]
+    entry_spot = float(session.iloc[0]["close"])
+
+    legs = build_0dte_legs(entry_spot, structure)
+    if not legs:
+        return None
+
+    leg_closes = []
+    for leg in legs:
+        contract = option_ticker("SPY", expiry, leg["cp"], leg["strike"])
+        df = options_history.get_aggs(contract, 5, "minute", day, day)
+        if df.empty:
+            return None
+        s = _to_et(df)["close"]
+        leg_closes.append((leg, s))
+
+    def marks_at(ts):
+        out = []
+        for leg, s in leg_closes:
+            at = s[s.index <= ts]
+            if at.empty:
+                return None
+            out.append((leg, float(at.iloc[-1])))
+        return out
+
+    credit = is_credit_structure(structure)
+    entry_marks = marks_at(entry_ts)
+    if entry_marks is None:
+        return None
+    entry_px = _spread_value(entry_marks, structure)
+    entry_px = (entry_px - SLIPPAGE) if credit else (entry_px + SLIPPAGE)
+    if entry_px <= 0:
+        return None
+
+    width      = abs(legs[0]["strike"] - legs[1]["strike"]) if len(legs) >= 2 else 0
+    max_profit = entry_px * 100 if credit else (width - entry_px) * 100
+    commission = COMMISSION_PER_LEG * len(legs) * 2
+
+    exit_reason = "session_close"
+    pnl = -commission
+    for ts in session.index:
+        m = marks_at(ts)
+        if m is None:
+            continue
+        val = _spread_value(m, structure)
+        if credit:
+            cost = val + SLIPPAGE
+            pnl  = (entry_px - cost) * 100 - commission
+        else:
+            proceeds = max(0.0, val - SLIPPAGE)
+            pnl      = (proceeds - entry_px) * 100 - commission
+        if max_profit > 0 and pnl >= PROFIT_TARGET_PCT * max_profit:
+            exit_reason = "target"; break
+        if STOP_MULT is not None and pnl <= -STOP_MULT * max_profit:
+            exit_reason = "stop"; break
+
+    return {
+        "date": day.isoformat(), "structure": structure,
+        "entry_spot": round(entry_spot, 2), "entry_px": round(entry_px, 2),
+        "pnl_dollars": round(pnl, 2),
+        "outcome": "win" if pnl > 0 else "loss" if pnl < 0 else "breakeven",
+        "exit_reason": exit_reason,
+    }

@@ -91,3 +91,30 @@ def test_generate_windows_stops_when_test_would_overshoot_end():
                                  train_months=6, test_months=3, step_months=1))
     for _, (_, test_end) in wins:
         assert test_end <= end
+
+
+from backtests.intraday_router_wf import (
+    _strategy_to_structure,
+    STRATEGY_NOT_SUPPORTED,
+)
+
+
+def test_strategy_to_structure_iron_condor():
+    assert _strategy_to_structure("iron_condor", "neutral") == "iron_condor"
+
+
+def test_strategy_to_structure_call_debit_spread_bullish():
+    assert _strategy_to_structure("call_debit_spread", "bullish") == "bull_debit"
+
+
+def test_strategy_to_structure_put_debit_spread_bearish():
+    assert _strategy_to_structure("put_debit_spread", "bearish") == "bear_debit"
+
+
+def test_strategy_to_structure_unknown_returns_sentinel():
+    assert _strategy_to_structure("rotational_diagonal", "bullish") is STRATEGY_NOT_SUPPORTED
+
+
+# simulate_short_dte_day is tested via the integration test in Task 12 —
+# unit-testing it would re-test simulate_0dte_day, which already has tests
+# in backtests/intraday_backtest.py's own suite.
