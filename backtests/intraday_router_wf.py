@@ -46,3 +46,28 @@ class _MockBroker:
             "dte_bucket": dte_bucket,
             "outcome":    "open",
         })
+
+
+from contextlib import contextmanager
+
+import config
+
+
+@contextmanager
+def _bypass_tier_gate():
+    """Temporarily set config.ENTRY_TIER_MINIMUM = 'watch' (the lowest rank
+    in signals.intraday_entry_router._TIER_RANK) so route()'s tier gate
+    admits everything. Used to compute the BASELINE side of the WF
+    comparison — DTE assignment and dedup remain identical to treatment,
+    so the only delta is the tier filter.
+
+    Restoration is guaranteed: the original value is captured at __enter__,
+    not read from config at __exit__, so caller mutations inside the
+    block don't break restoration.
+    """
+    original = config.ENTRY_TIER_MINIMUM
+    config.ENTRY_TIER_MINIMUM = "watch"
+    try:
+        yield
+    finally:
+        config.ENTRY_TIER_MINIMUM = original
