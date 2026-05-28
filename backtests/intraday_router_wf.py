@@ -262,3 +262,66 @@ def _simulate_short_dte_with_expiration(day, expiry,
         "outcome": "win" if pnl > 0 else "loss" if pnl < 0 else "breakeven",
         "exit_reason": exit_reason,
     }
+
+
+import math
+import statistics
+from collections import Counter
+
+
+def _sharpe(pnls: list[float]) -> float:
+    """Per-trade Sharpe: mean / stdev. Returns 0.0 when n<2 (undefined stdev)."""
+    if len(pnls) < 2:
+        return 0.0
+    sd = statistics.stdev(pnls)
+    if sd == 0:
+        return 0.0
+    return statistics.mean(pnls) / sd
+
+
+def window_stats(trades_T: list[dict], trades_B: list[dict]) -> dict:
+    """Aggregate per-window stats. Trades are dicts from simulate_short_dte_day
+    with at least 'pnl_dollars', 'strategy', 'dte_bucket'. Either side may
+    be empty (e.g. baseline returns no trades for a window — unlikely but
+    possible if all setups failed the engine's score floor)."""
+
+    def _aggregate(trades):
+        n = len(trades)
+        pnls = [t["pnl_dollars"] for t in trades]
+        return {
+            "n":      n,
+            "pnl":    sum(pnls) if pnls else 0.0,
+            "mean":   (sum(pnls) / n) if n else 0.0,
+            "sharpe": _sharpe(pnls),
+            "wins":   sum(1 for p in pnls if p > 0),
+        }
+
+    T = _aggregate(trades_T)
+    B = _aggregate(trades_B)
+
+    # Per-bucket breakdown (0DTE / 1-3DTE).
+    buckets = sorted({t["dte_bucket"] for t in trades_T} |
+                     {t["dte_bucket"] for t in trades_B})
+    by_bucket = {}
+    for b in buckets:
+        bT = _aggregate([t for t in trades_T if t["dte_bucket"] == b])
+        bB = _aggregate([t for t in trades_B if t["dte_bucket"] == b])
+        by_bucket[b] = {
+            "n_trades_T": bT["n"], "n_trades_B": bB["n"],
+            "pnl_T":      bT["pnl"], "pnl_B":      bB["pnl"],
+            "sharpe_T":   bT["sharpe"], "sharpe_B": bB["sharpe"],
+        }
+
+    return {
+        "n_trades_T":           T["n"],
+        "n_trades_B":           B["n"],
+        "pnl_T":                T["pnl"],
+        "pnl_B":                B["pnl"],
+        "sharpe_T":             T["sharpe"],
+        "sharpe_B":             B["sharpe"],
+        "win_rate_T":           (T["wins"] / T["n"]) if T["n"] else 0.0,
+        "win_rate_B":           (B["wins"] / B["n"]) if B["n"] else 0.0,
+        "delta_pnl_per_trade":  (T["mean"] - B["mean"]) if (T["n"] and B["n"]) else float("nan"),
+        "delta_sharpe":         T["sharpe"] - B["sharpe"],
+        "by_bucket":            by_bucket,
+    }

@@ -118,3 +118,41 @@ def test_strategy_to_structure_unknown_returns_sentinel():
 # simulate_short_dte_day is tested via the integration test in Task 12 —
 # unit-testing it would re-test simulate_0dte_day, which already has tests
 # in backtests/intraday_backtest.py's own suite.
+
+
+import math
+from backtests.intraday_router_wf import window_stats
+
+
+def _trade(pnl, strategy="iron_condor", bucket="0DTE"):
+    return {"pnl_dollars": pnl, "strategy": strategy, "dte_bucket": bucket}
+
+
+def test_window_stats_empty_treatment_returns_zero_n():
+    s = window_stats([], [_trade(50), _trade(-30)])
+    assert s["n_trades_T"] == 0
+    assert s["n_trades_B"] == 2
+    assert s["pnl_T"] == 0.0
+    assert math.isnan(s["delta_pnl_per_trade"]) or s["delta_pnl_per_trade"] == 0.0
+
+
+def test_window_stats_computes_deltas():
+    t = [_trade(100), _trade(-50), _trade(80)]
+    b = [_trade(40),  _trade(-80), _trade(20)]
+    s = window_stats(t, b)
+    assert s["n_trades_T"] == 3
+    assert s["n_trades_B"] == 3
+    assert s["pnl_T"] == 130.0
+    assert s["pnl_B"] == -20.0
+    assert s["delta_pnl_per_trade"] == pytest.approx((130.0/3) - (-20.0/3))
+    assert s["win_rate_T"] == pytest.approx(2/3)
+    assert s["win_rate_B"] == pytest.approx(2/3)
+
+
+def test_window_stats_includes_per_bucket_breakdown():
+    t = [_trade(100, bucket="0DTE"), _trade(-50, bucket="1-3DTE")]
+    b = [_trade(40,  bucket="0DTE"), _trade(20,  bucket="1-3DTE")]
+    s = window_stats(t, b)
+    assert "by_bucket" in s
+    assert s["by_bucket"]["0DTE"]["n_trades_T"] == 1
+    assert s["by_bucket"]["1-3DTE"]["n_trades_T"] == 1
