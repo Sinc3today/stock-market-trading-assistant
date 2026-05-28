@@ -59,3 +59,35 @@ def test_bypass_tier_gate_restores_even_after_nested_change():
     with _bypass_tier_gate():
         config.ENTRY_TIER_MINIMUM = "something_else"  # nasty caller
     assert config.ENTRY_TIER_MINIMUM == original
+
+
+from backtests.intraday_router_wf import generate_windows
+
+
+def test_generate_windows_full_2024_2025_monthly_step():
+    """6mo train / 3mo test / 1mo step over 2024-01-02 to 2025-12-31."""
+    wins = list(generate_windows(date(2024, 1, 2), date(2025, 12, 31),
+                                 train_months=6, test_months=3, step_months=1))
+    # First test window: months 7-9 of 2024 (after the 6mo train).
+    # Last possible test: months 10-12 of 2025 (ends on/before 2025-12-31).
+    assert len(wins) == 16, f"expected 16 windows, got {len(wins)}"
+    # Train always precedes test, no overlap inside a single window.
+    for train_range, test_range in wins:
+        assert train_range[1] < test_range[0], \
+            f"train must end before test starts: {train_range} vs {test_range}"
+
+
+def test_generate_windows_monotonic_test_starts():
+    """Sliding window: each window's test_start is monotonically increasing."""
+    wins = list(generate_windows(date(2024, 1, 2), date(2025, 12, 31)))
+    test_starts = [test_range[0] for _, test_range in wins]
+    assert test_starts == sorted(test_starts)
+
+
+def test_generate_windows_stops_when_test_would_overshoot_end():
+    """No window whose test_range extends past `end`."""
+    end = date(2024, 12, 31)
+    wins = list(generate_windows(date(2024, 1, 2), end,
+                                 train_months=6, test_months=3, step_months=1))
+    for _, (_, test_end) in wins:
+        assert test_end <= end

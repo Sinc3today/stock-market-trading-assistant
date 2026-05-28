@@ -71,3 +71,48 @@ def _bypass_tier_gate():
         yield
     finally:
         config.ENTRY_TIER_MINIMUM = original
+
+
+from datetime import date, timedelta
+from typing import Iterator
+
+
+def _add_months(d: date, n: int) -> date:
+    """Add n calendar months to date d, clipping the day to the new month's
+    last day if necessary. Used for window boundary math."""
+    month = d.month + n
+    year  = d.year + (month - 1) // 12
+    month = (month - 1) % 12 + 1
+    # Clip day to month's last day to avoid 31->Feb errors.
+    import calendar
+    last_day = calendar.monthrange(year, month)[1]
+    return date(year, month, min(d.day, last_day))
+
+
+def generate_windows(start: date, end: date,
+                     train_months: int = 6, test_months: int = 3,
+                     step_months: int = 1
+                     ) -> Iterator[tuple[tuple[date, date], tuple[date, date]]]:
+    """Yield (train_range, test_range) tuples where each range is
+    (start_date_inclusive, end_date_inclusive).
+
+    Sliding walk-forward: train covers `train_months` calendar months
+    immediately preceding test; test covers the next `test_months`. Each
+    iteration advances the test_start by `step_months`. Stops when the test
+    range would overshoot `end`.
+
+    Train window has no learning role in this spec — it's a contextual
+    placeholder for a future learning step.
+    """
+    # Anchor test_start to first-of-month so windows align to calendar
+    # months regardless of the input `start` day-of-month.
+    anchored = _add_months(start, train_months)
+    test_start = date(anchored.year, anchored.month, 1)
+    while True:
+        train_start = _add_months(test_start, -train_months)
+        train_end   = test_start - timedelta(days=1)
+        test_end    = _add_months(test_start, test_months) - timedelta(days=1)
+        if test_end > end:
+            return
+        yield ((train_start, train_end), (test_start, test_end))
+        test_start = _add_months(test_start, step_months)
