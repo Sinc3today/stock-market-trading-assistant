@@ -500,3 +500,85 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
         "skip_reasons": dict(skip_reasons),
         "verdict":      window_verdict(stats),
     }
+
+
+import json
+from data.options_history import OptionsHistory
+
+
+def _build_get_pnl(spy_intraday_cache: dict, options_history):
+    """Closure factory: returns a get_pnl(day, setup, structure, dte_bucket)
+    that consults a per-day cached spy_intraday DataFrame and the shared
+    options_history client."""
+    from data.intraday_data import get_stock_intraday
+
+    def get_pnl(day, setup, structure, dte_bucket):
+        spy = spy_intraday_cache.get(day)
+        if spy is None:
+            spy = get_stock_intraday("SPY", 5, "minute", day, day)
+            spy_intraday_cache[day] = spy
+        return simulate_short_dte_day(day, structure, dte_bucket,
+                                       spy, options_history)
+    return get_pnl
+
+
+def run_walk_forward(start: date, end: date,
+                     train_months: int = 6,
+                     test_months: int = 3,
+                     step_months: int = 1) -> dict:
+    """Run all windows in [start, end] and return the aggregate report."""
+    from backtests.router_setup_builder import build_historical_setup
+
+    options_history = OptionsHistory()
+    spy_cache: dict = {}
+    get_pnl = _build_get_pnl(spy_cache, options_history)
+
+    windows = list(generate_windows(start, end,
+                                    train_months=train_months,
+                                    test_months=test_months,
+                                    step_months=step_months))
+    logger.info(f"router_wf: running {len(windows)} windows from {start} to {end}")
+    results = []
+    for i, (train_range, test_range) in enumerate(windows, 1):
+        logger.info(f"router_wf: window {i}/{len(windows)} test={test_range}")
+        r = run_window(train_range=train_range, test_range=test_range,
+                       get_setup=build_historical_setup, get_pnl=get_pnl)
+        s = r["stats"]
+        logger.info(
+            f"router_wf: window {i} n_T={s['n_trades_T']} n_B={s['n_trades_B']} "
+            f"ΔPnL/trade={s['delta_pnl_per_trade']:.2f} "
+            f"ΔSharpe={s['delta_sharpe']:.2f} verdict={r['verdict']}"
+        )
+        results.append(r)
+
+    agg = aggregate_verdict(results)
+    return {"windows": results, "aggregate": agg}
+
+
+if __name__ == "__main__":
+    import argparse
+    from datetime import datetime as _dt
+
+    parser = argparse.ArgumentParser(description="Phase 3 entry-router WF backtest")
+    parser.add_argument("--start", default="2024-01-02", help="ISO date")
+    parser.add_argument("--end",   default="2025-12-31", help="ISO date")
+    parser.add_argument("--out",   default="logs/router_wf_report.json")
+    args = parser.parse_args()
+
+    start_d = _dt.fromisoformat(args.start).date()
+    end_d   = _dt.fromisoformat(args.end).date()
+
+    report = run_walk_forward(start_d, end_d)
+
+    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    # Serialize: convert date tuples to ISO strings, Counters already dict.
+    def _ser(obj):
+        if isinstance(obj, date):
+            return obj.isoformat()
+        if isinstance(obj, tuple):
+            return [_ser(x) for x in obj]
+        return obj
+    with open(args.out, "w") as f:
+        json.dump(report, f, indent=2, default=_ser)
+    logger.info(f"router_wf: wrote report to {args.out}")
+    logger.info(f"router_wf: aggregate = {report['aggregate']}")
