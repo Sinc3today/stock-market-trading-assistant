@@ -381,3 +381,114 @@ def aggregate_verdict(window_results: list[dict]) -> dict:
         "n_raw":          n_raw,
         "pass_rate":      (n_pass / determinative) if determinative else None,
     }
+
+
+import pytz
+from datetime import datetime
+from loguru import logger
+from signals.intraday_entry_router import route as _route_entry
+
+
+_ET = pytz.timezone("US/Eastern")
+
+
+def _iter_trading_days(start: date, end: date) -> Iterator[date]:
+    """Yield weekdays in [start, end] inclusive. Holiday handling deferred —
+    setup builder returning [] for a holiday day is the natural skip path."""
+    d = start
+    while d <= end:
+        if d.weekday() < 5:
+            yield d
+        d = d + timedelta(days=1)
+
+
+def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
+    """Run one walk-forward window and return its results.
+
+    Parameters
+    ----------
+    train_range : (date, date) — contextual, no learning role this spec
+    test_range  : (date, date) — OOS evaluation period
+    get_setup   : Callable[[date], list[SPYSetup]] — usually
+                  router_setup_builder.build_historical_setup
+    get_pnl     : Callable[[date, setup, strategy, dte_bucket], dict|None]
+                  — usually a closure around simulate_short_dte_day +
+                  OptionsHistory + cached spy_intraday
+
+    Dependency injection lets the unit tests substitute pure-function stubs.
+    """
+    trades_T: list[dict] = []
+    trades_B: list[dict] = []
+    skip_reasons: Counter = Counter()
+
+    for day in _iter_trading_days(*test_range):
+        try:
+            setups = get_setup(day)
+        except Exception as e:
+            logger.debug(f"router_wf: skip {day} setup_error={e!r}")
+            skip_reasons["setup_error"] += 1
+            continue
+
+        if not setups:
+            skip_reasons["empty_setup"] += 1
+            continue
+
+        # Apples-to-apples scope: a day is either evaluated on BOTH sides
+        # or skipped on BOTH. We build the bucket lists FIRST (both sides),
+        # then simulate. If any simulation step fails, we discard the day's
+        # contribution to both sides.
+        ts_945 = _ET.localize(datetime.combine(day, datetime.min.time())
+                              .replace(hour=9, minute=45))
+
+        day_T: list[dict] = []
+        day_B: list[dict] = []
+        day_failed = False
+
+        for setup in setups:
+            structure = _strategy_to_structure(setup.strategy, setup.direction)
+            if structure is STRATEGY_NOT_SUPPORTED:
+                skip_reasons["strategy_not_supported"] += 1
+                continue
+
+            # Treatment: router with tier gate.
+            buckets_T = _route_entry(setup, ts_945, _MockBroker())
+            # Baseline: router with tier gate disabled.
+            with _bypass_tier_gate():
+                buckets_B = _route_entry(setup, ts_945, _MockBroker())
+
+            for sd in buckets_T:
+                outcome = get_pnl(day, setup, structure, sd["dte_bucket"])
+                if outcome is None:
+                    day_failed = True; break
+                # Tag the trade dict for downstream window_stats.
+                outcome.setdefault("strategy", setup.strategy)
+                outcome.setdefault("dte_bucket", sd["dte_bucket"])
+                day_T.append(outcome)
+            if day_failed:
+                break
+
+            for sd in buckets_B:
+                outcome = get_pnl(day, setup, structure, sd["dte_bucket"])
+                if outcome is None:
+                    day_failed = True; break
+                outcome.setdefault("strategy", setup.strategy)
+                outcome.setdefault("dte_bucket", sd["dte_bucket"])
+                day_B.append(outcome)
+            if day_failed:
+                break
+
+        if day_failed:
+            skip_reasons["sim_failure"] += 1
+            continue   # invariant: drop from BOTH sides
+
+        trades_T.extend(day_T)
+        trades_B.extend(day_B)
+
+    stats = window_stats(trades_T, trades_B)
+    return {
+        "train_range":  train_range,
+        "test_range":   test_range,
+        "stats":        stats,
+        "skip_reasons": dict(skip_reasons),
+        "verdict":      window_verdict(stats),
+    }

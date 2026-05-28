@@ -195,3 +195,64 @@ def test_aggregate_verdict_all_raw_when_thresholds_unset():
     agg = aggregate_verdict(results)
     assert agg["pass_rate"] is None
     assert agg["n_raw"] == 2
+
+
+from datetime import date as _date
+from unittest.mock import MagicMock, patch
+from backtests.intraday_router_wf import run_window
+
+
+def _fake_setup(strategy="iron_condor", conviction="high", score=100,
+                direction="neutral"):
+    s = MagicMock()
+    s.strategy = strategy
+    s.conviction = conviction
+    s.score = score
+    s.direction = direction
+    return s
+
+
+def test_run_window_apples_to_apples_skipped_day():
+    """A day that raises in setup-building drops from BOTH treatment and baseline."""
+
+    def get_setup(d):
+        if d == _date(2024, 6, 17):
+            raise RuntimeError("simulated data failure")
+        return [_fake_setup()]
+
+    pnl_log: list = []
+    def get_pnl(day, setup, strategy, dte_bucket):
+        pnl_log.append((day, strategy, dte_bucket))
+        return {"pnl_dollars": 50.0, "strategy": strategy, "dte_bucket": dte_bucket}
+
+    result = run_window(
+        train_range=(_date(2024, 1, 1), _date(2024, 6, 14)),
+        test_range=(_date(2024, 6, 17), _date(2024, 6, 18)),
+        get_setup=get_setup,
+        get_pnl=get_pnl,
+    )
+
+    # 2024-06-17 was skipped on the T side → it must also drop from B.
+    # Apples-to-apples: equal trades on both sides for the remaining day.
+    assert result["stats"]["n_trades_T"] == result["stats"]["n_trades_B"]
+    # 06-17 skipped + 06-18 traded → only one day contributes per side.
+    # IC score 100 hits ULTRA_CONVICTION_DOUBLE_DTE_SCORE → 2 buckets per day.
+    assert result["stats"]["n_trades_T"] == 2
+
+
+def test_run_window_returns_skip_reasons():
+    def get_setup(d):
+        return []   # every day yields no setups → all skipped on both sides
+
+    def get_pnl(*a, **kw):
+        return {"pnl_dollars": 0.0}
+
+    result = run_window(
+        train_range=(_date(2024, 1, 1), _date(2024, 6, 14)),
+        test_range=(_date(2024, 6, 17), _date(2024, 6, 18)),
+        get_setup=get_setup,
+        get_pnl=get_pnl,
+    )
+    assert result["stats"]["n_trades_T"] == 0
+    assert "skip_reasons" in result
+    assert result["skip_reasons"]["empty_setup"] >= 2
