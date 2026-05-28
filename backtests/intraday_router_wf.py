@@ -444,6 +444,12 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
         day_B: list[dict] = []
         day_failed = False
 
+        # Per-day brokers — persist dedup state across setups, fresh each day.
+        # Treatment and baseline brokers remain SEPARATE so T's opens don't
+        # pollute B's dedup state (apples-to-apples is preserved).
+        broker_T = _MockBroker()
+        broker_B = _MockBroker()
+
         for setup in setups:
             structure = _strategy_to_structure(setup.strategy, setup.direction)
             if structure is STRATEGY_NOT_SUPPORTED:
@@ -451,10 +457,10 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
                 continue
 
             # Treatment: router with tier gate.
-            buckets_T = _route_entry(setup, ts_945, _MockBroker())
+            buckets_T = _route_entry(setup, ts_945, broker_T)
             # Baseline: router with tier gate disabled.
             with _bypass_tier_gate():
-                buckets_B = _route_entry(setup, ts_945, _MockBroker())
+                buckets_B = _route_entry(setup, ts_945, broker_B)
 
             for sd in buckets_T:
                 outcome = get_pnl(day, setup, structure, sd["dte_bucket"])
@@ -464,6 +470,7 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
                 outcome.setdefault("strategy", setup.strategy)
                 outcome.setdefault("dte_bucket", sd["dte_bucket"])
                 day_T.append(outcome)
+                broker_T.record_open(strategy=setup.strategy, dte_bucket=sd["dte_bucket"])
             if day_failed:
                 break
 
@@ -474,6 +481,7 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
                 outcome.setdefault("strategy", setup.strategy)
                 outcome.setdefault("dte_bucket", sd["dte_bucket"])
                 day_B.append(outcome)
+                broker_B.record_open(strategy=setup.strategy, dte_bucket=sd["dte_bucket"])
             if day_failed:
                 break
 
