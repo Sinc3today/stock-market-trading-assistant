@@ -325,3 +325,59 @@ def window_stats(trades_T: list[dict], trades_B: list[dict]) -> dict:
         "delta_sharpe":         T["sharpe"] - B["sharpe"],
         "by_bucket":            by_bucket,
     }
+
+
+# ─────────────────────────────────────────────────────────────
+# Verdict thresholds — TBD via separate calibration exercise.
+# When ALL of these are None, window_verdict returns 'raw'.
+# ─────────────────────────────────────────────────────────────
+MIN_DELTA_PNL_PER_TRADE: float | None = None
+MIN_OOS_PNL:             float | None = None
+MIN_OOS_SHARPE:          float | None = None
+MIN_OOS_WIN_RATE:        float | None = None
+
+
+def window_verdict(stats: dict, min_n: int = 10) -> str:
+    """Returns one of 'raw', 'inconclusive', 'pass', 'fail'.
+
+      'raw'          — thresholds not yet calibrated; stats emitted only
+      'inconclusive' — n_trades_T < min_n
+      'pass'         — all thresholds met
+      'fail'         — at least one threshold missed
+    """
+    thresholds = (MIN_DELTA_PNL_PER_TRADE, MIN_OOS_PNL,
+                  MIN_OOS_SHARPE, MIN_OOS_WIN_RATE)
+    if stats.get("n_trades_T", 0) < min_n:
+        return "inconclusive"
+    if all(t is None for t in thresholds):
+        return "raw"
+    if (MIN_DELTA_PNL_PER_TRADE is not None
+            and stats["delta_pnl_per_trade"] < MIN_DELTA_PNL_PER_TRADE):
+        return "fail"
+    if MIN_OOS_PNL is not None and stats["pnl_T"] < MIN_OOS_PNL:
+        return "fail"
+    if MIN_OOS_SHARPE is not None and stats["sharpe_T"] < MIN_OOS_SHARPE:
+        return "fail"
+    if MIN_OOS_WIN_RATE is not None and stats["win_rate_T"] < MIN_OOS_WIN_RATE:
+        return "fail"
+    return "pass"
+
+
+def aggregate_verdict(window_results: list[dict]) -> dict:
+    """Aggregate per-window verdicts into headline pass-rate. 'inconclusive'
+    is excluded from the pass-rate denominator. 'raw' windows mean
+    thresholds aren't set yet — pass_rate is None in that case."""
+    counts = Counter(r["verdict"] for r in window_results)
+    n_pass         = counts.get("pass", 0)
+    n_fail         = counts.get("fail", 0)
+    n_inconclusive = counts.get("inconclusive", 0)
+    n_raw          = counts.get("raw", 0)
+    determinative  = n_pass + n_fail
+    return {
+        "n_windows":      len(window_results),
+        "n_pass":         n_pass,
+        "n_fail":         n_fail,
+        "n_inconclusive": n_inconclusive,
+        "n_raw":          n_raw,
+        "pass_rate":      (n_pass / determinative) if determinative else None,
+    }

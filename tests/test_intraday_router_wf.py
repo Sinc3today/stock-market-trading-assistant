@@ -156,3 +156,42 @@ def test_window_stats_includes_per_bucket_breakdown():
     assert "by_bucket" in s
     assert s["by_bucket"]["0DTE"]["n_trades_T"] == 1
     assert s["by_bucket"]["1-3DTE"]["n_trades_T"] == 1
+
+
+from backtests.intraday_router_wf import window_verdict, aggregate_verdict
+
+
+def test_window_verdict_returns_raw_when_thresholds_unset():
+    """All thresholds None → verdict 'raw' regardless of stats."""
+    stats = {"n_trades_T": 50, "pnl_T": 1000.0, "sharpe_T": 1.5, "win_rate_T": 0.7,
+             "delta_pnl_per_trade": 10.0}
+    assert window_verdict(stats) == "raw"
+
+
+def test_window_verdict_inconclusive_when_too_few_trades():
+    stats = {"n_trades_T": 5, "pnl_T": 1000.0, "sharpe_T": 1.5, "win_rate_T": 0.7,
+             "delta_pnl_per_trade": 10.0}
+    # Inconclusive even with great stats when n < MIN_N_FOR_VERDICT.
+    assert window_verdict(stats, min_n=10) == "inconclusive"
+
+
+def test_aggregate_verdict_pass_rate():
+    """Pass rate excludes 'inconclusive' from the denominator."""
+    results = [
+        {"verdict": "pass"}, {"verdict": "pass"}, {"verdict": "pass"},
+        {"verdict": "fail"},
+        {"verdict": "inconclusive"},
+    ]
+    agg = aggregate_verdict(results)
+    assert agg["n_windows"] == 5
+    assert agg["n_pass"] == 3
+    assert agg["n_fail"] == 1
+    assert agg["n_inconclusive"] == 1
+    assert agg["pass_rate"] == pytest.approx(3 / 4)   # 3 pass / (3 pass + 1 fail)
+
+
+def test_aggregate_verdict_all_raw_when_thresholds_unset():
+    results = [{"verdict": "raw"}, {"verdict": "raw"}]
+    agg = aggregate_verdict(results)
+    assert agg["pass_rate"] is None
+    assert agg["n_raw"] == 2
