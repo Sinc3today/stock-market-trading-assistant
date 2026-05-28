@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-05-27 — Alert-dup root cause + singleton lock + Phase 3 entry audit
+
+**Commit:** `e52697d` (`fix: singleton lock prevents dual main.py from posting alerts twice`)
+
+User noticed every Discord alert posting twice today (6 unique alerts → 12 rows in `logs/alerts.json`). Investigation found two `python main.py` processes running concurrently since 2026-05-26 22:52 — `smta.service` (PID 3603) and a stray manual launch (PID 2349), started 6 seconds apart. Each had its own APScheduler ticking the same 5-min boundaries.
+
+**Evidence:** `app.log` shows scan-start lines arriving in pairs at identical millisecond timestamps (only possible with two schedulers). Killed PID 2349; next tick (23:30) confirmed singleton.
+
+**Singleton lock added (this commit):**
+- `runtime/singleton.py` — `acquire_or_die()` uses `fcntl.flock(LOCK_EX|LOCK_NB)` on `logs/main.lock`. Uses `os.open(O_RDWR|O_CREAT)` so a failing acquire can still surface the holder's PID.
+- `main.py` calls it at the top of `__main__` before any work; bails with `SingletonLockError` if held.
+- `tests/test_runtime_singleton.py` — 4 tests passing.
+- **Verified live:** Restarted `smta.service` to activate the lock (PID 18343). Second `python main.py` attempt bails: `Refusing to start: another instance is already running (lock=logs/main.lock, pid=18343)`. Only the service PID remains.
+
+**Phase 3 intraday-entry audit (no code change needed):**
+- Two ICs opened at 09:30 with synthetic-strike-0 placeholder legs → **intentional Phase 3 stubs**. Today's IC score of 100 hit `ULTRA_CONVICTION_DOUBLE_DTE_SCORE=85`, so `signals.intraday_entry_router.route()` routed both 0DTE and 1-3DTE buckets.
+- 0DTE routing despite 5/21 shelving → **intentional** — the shelving memo explicitly directs the next attempt to be ENTRY-level retune, which is what `intraday_entry_router` IS.
+- 09:40 CDS + 11:45 PDS alerts didn't open trades → `MAX_CONCURRENT_DISCIPLINED=3` cap. 5/18 swing bull put + 2 09:30 ICs = 3/3, rest skipped. Logged: `disciplined cap reached (3/3) — skipped`.
+
+**Live performance snapshot:**
+- LIVE journal: 3 open trades (`DB8869CD` 5/18 swing bull put 739/734 — now $11.39 OTM, healthy; `F1A205B7` + `200A9567` today's Phase 3 ICs). 0 closed. **Phase 3 PnL is not honest until Phase 4b structure builder ships** — the journal's $1 entry / $200 max profit / $100 max loss are stub values.
+- Predictions: 6 logged, 5 SKIP, 1 tradeable (5/18 → "wrong", N=1 not meaningful). Extension-gate skips correctly fired 9 consecutive days during the 10%+ over-200MA grind.
+
+**Tests:** 4 new (singleton lock), all passing. Full suite not re-run — change is isolated.
+
+**Open questions for next session:**
+- `MAX_CONCURRENT_DISCIPLINED=3` is shared across swing + intraday books; one open swing eats a third of the daily intraday slot budget. Is that the intended interaction, or should swing and intraday have independent caps?
+- 5-min-bar intraday backtest (the warranted next step from 5/22 shelving) — still queued, best done in a fresh session.
+
+---
+
 ## 2026-05-24 — Phase 4a: learning-loop hygiene
 
 **Spec:** `docs/superpowers/specs/2026-05-23-phase4a-learning-loop-hygiene-design.md`
