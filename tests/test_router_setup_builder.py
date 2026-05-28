@@ -92,13 +92,18 @@ from backtests.router_setup_builder import build_historical_setup
 
 
 def test_build_historical_setup_returns_list_of_spysetups():
-    """End-to-end: known 2024 date yields at least one SPYSetup."""
+    """End-to-end: a normal 2024 trading day yields at least one SPYSetup
+    with the expected shape. Hard assertion that the engine actually emits
+    setups — guards against future indicator changes that would silently
+    zero this path."""
     setups = build_historical_setup(date(2024, 6, 14))
     assert isinstance(setups, list)
-    # SPYOptionsEngine emits 0..3 setups (call/put/condor) depending on scores.
-    # On any normal day at least one strategy clears SCORE_ALERT_MINIMUM.
-    if setups:
-        s = setups[0]
+    assert len(setups) >= 1, (
+        "expected SPYOptionsEngine to emit at least one setup on 2024-06-14; "
+        "got 0 — likely an indicator threshold or scoring regression"
+    )
+    # Validate the shape of every emitted setup (not just setups[0]).
+    for s in setups:
         assert hasattr(s, "strategy")
         assert hasattr(s, "conviction")
         assert hasattr(s, "score")
