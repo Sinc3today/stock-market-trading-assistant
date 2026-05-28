@@ -371,6 +371,13 @@ def _bind_to_job_object(proc: subprocess.Popen) -> None:
 # ─────────────────────────────────────────
 
 if __name__ == "__main__":
+    from runtime.singleton import acquire_or_die, SingletonLockError
+    try:
+        acquire_or_die(os.path.join(config.LOG_DIR, "main.lock"))
+    except SingletonLockError as e:
+        logger.error(f"Refusing to start: {e}")
+        sys.exit(1)
+
     logger.info("=" * 52)
     logger.info("   Trading Assistant Starting Up")
     logger.info("=" * 52)
