@@ -37,3 +37,27 @@ def load_daily_history(through_date: date) -> pd.DataFrame:
             f"{len(df)} bars, need >= {_MIN_DAILY_BARS}"
         )
     return df
+
+
+from data.intraday_data import get_stock_intraday
+
+
+def load_intraday_window(target_date: date) -> pd.DataFrame:
+    """5-min SPY bars for `target_date`, sliced to 09:30-09:45 ET (opening
+    range). Returns an empty DataFrame when no data is available — the caller
+    treats that as 'skip this day, no signal.'
+
+    Polygon list_aggs returns bars indexed in UTC; we keep them UTC here and
+    let downstream tz conversion happen at the engine boundary.
+    """
+    df = get_stock_intraday("SPY", 5, "minute", target_date, target_date)
+    if df.empty:
+        return df
+    # ET 09:30-09:44:59 == UTC 13:30-13:44:59 (EDT) or 14:30-14:44:59 (EST).
+    # We slice in UTC against the actual session date — Polygon returns the
+    # session date's bars whichever DST half we're in.
+    et_open  = pd.Timestamp(f"{target_date.isoformat()} 09:30:00", tz="US/Eastern")
+    et_or_end = pd.Timestamp(f"{target_date.isoformat()} 09:45:00", tz="US/Eastern")
+    utc_open  = et_open.tz_convert("UTC")
+    utc_or_end = et_or_end.tz_convert("UTC")
+    return df[(df.index >= utc_open) & (df.index < utc_or_end)]
