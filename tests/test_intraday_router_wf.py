@@ -256,3 +256,30 @@ def test_run_window_returns_skip_reasons():
     assert result["stats"]["n_trades_T"] == 0
     assert "skip_reasons" in result
     assert result["skip_reasons"]["empty_setup"] >= 2
+
+
+@pytest.mark.integration
+def test_run_walk_forward_smoke_one_window_completes():
+    """Smoke-run one short window end-to-end. Confirms the pipeline does
+    not crash, produces non-empty stats, and emits a verdict (likely 'raw'
+    until thresholds are calibrated).
+
+    Skipped in the default `pytest -m 'not integration'` invocation. Run
+    explicitly with `pytest -m integration tests/test_intraday_router_wf.py`.
+    """
+    from backtests.intraday_router_wf import run_walk_forward
+
+    # Range must cover train + test (3mo + 3mo = 6mo). With train_months=3,
+    # test_start anchors to Oct 1, so end must be >= Dec 31 for the window
+    # to fit. step_months=3 ensures only one window (next test_start would
+    # require Jan-Mar 2025 data, overshooting end).
+    report = run_walk_forward(
+        date(2024, 7, 1), date(2024, 12, 31),
+        train_months=3, test_months=3, step_months=3,
+    )
+    assert report["aggregate"]["n_windows"] >= 1
+    w = report["windows"][0]
+    assert "stats" in w
+    assert "n_trades_T" in w["stats"]
+    assert "n_trades_B" in w["stats"]
+    assert w["verdict"] in {"raw", "pass", "fail", "inconclusive"}
