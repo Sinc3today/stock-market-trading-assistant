@@ -20,22 +20,39 @@ This spec adds a **decision tracking surface** in two phases: a non-mutating `ro
 
 This is sequencing step 1 of the locked plan: **tracking surface now → calibration (spec 2026-05-29) → multi-tick replay only if needed** (per commit a921503; see calibration spec §"If Calibration Says 'Shelve' — Investigate Multi-Tick First").
 
-### Critical pre-existing fact (verified this session)
+### Pre-existing live wiring (verified this session)
 
-**`route()` is NOT wired into the live path.** The only live module importing it is `scanners/intraday_scanner.py:40` (`from signals.intraday_entry_router import route as _route_entry`), and that import is **dangling** — `_route_entry` is never called. `scanners/intraday_scanner.py:170` carries the comment *"Phase 3 router (`_route_entry`) will gate here once live"*, and the `_scan_spy_intraday` docstring names this "the pending live-activation step." `learning/paper_broker.py` does not import or call the router. So the only code that actually executes `route()` today is the backtest (`intraday_router_wf.py`).
+**`route()` IS wired into the live path — behind a feature flag that is off by default.** The live seam is `scanners/intraday_scanner.py::_scan_spy_intraday`, lines 200-223:
+
+```python
+# scanners/intraday_scanner.py:203-217 (existing)
+if not config.INTRADAY_PAPER_BROKER_ENABLED:        # defaults False
+    continue
+now_et = datetime.now(EASTERN)
+try:
+    broker      = PaperBroker()                      # broker already in scope
+    setup_dicts = _route_entry(setup, now_et, broker)   # ← route() called here (line 211)
+    for sd in setup_dicts:
+        result = broker.execute_signal(sd)
+        ...
+except Exception as e:                               # already isolated (Rule #10)
+    logger.exception(...)
+```
+
+`config.INTRADAY_PAPER_BROKER_ENABLED` defaults to `false` ("router live only when explicitly enabled"). So the router runs live only when an operator sets the env flag; otherwise the block is skipped. `learning/paper_broker.py` does not call the router — the scanner is the sole live caller; the backtest (`intraday_router_wf.py`) is the only other caller.
 
 Consequences:
-- **Calibration needs only the offline backfill** (historical 2024 replay). Phase 1 fully unblocks it with no live change.
-- **The live JSONL tracker has nothing to hook until the router is activated** — that activation is Phase 2 and is a real (paper-)trading behavior change.
+- **Calibration needs the offline backfill regardless** (it replays historical 2024, independent of any live flag). Phase 1 fully unblocks it.
+- **The live tracker hooks an existing, complete seam** — the broker is already constructed (line 210) and the call is already exception-isolated (line 218). Phase 2 is therefore *additive observability at line 211*, not new wiring: swap `_route_entry` → `route_explain`, write the trace, execute the same accepted set. It emits live data only while the flag is on, so by default it changes nothing.
 
 ## Phasing
 
 | Phase | Scope | Live behavior change? | Unblocks |
 |---|---|---|---|
 | **Phase 1** | `route_explain()` + offline backfill over cached 2024 + parquet rollup | No | Calibration (spec 2026-05-29) |
-| **Phase 2** | Activate `route()` in `intraday_scanner` + live JSONL tracker at that seam | **Yes** — the gate starts filtering `[AUTO-PAPER]` setups | Live gating-behavior data; nightly reflector narration |
+| **Phase 2** (deferred) | Add `route_explain` + live trace write at the existing scanner seam (line 211) | No (additive; emits data only while `INTRADAY_PAPER_BROKER_ENABLED` is on) | Live gating-behavior data; nightly reflector narration |
 
-User direction (2026-05-30): build both, Phase 1 first. **Tradeoff surfaced & accepted:** Phase 2 activates a gate the calibration has not yet validated. The existing WF spec states "promotion to a live behavior change is a separate decision after the verdict." Phase 2 therefore SHOULD land after — or be explicitly re-confirmed against — the calibration verdict. The tracker records only the routing *decision* (accept/reject + gate), not PnL, so Phase 4b's placeholder pricing does not corrupt the tracking data; the only behavior change is which setups the gate admits.
+**User direction (2026-05-30): Offline-only v1 — build Phase 1 now, defer Phase 2.** Phase 1 unblocks calibration with zero live change. Phase 2 is documented here for completeness but not built in this pass; when built, it is purely additive observability at the existing seam (the tracker records the routing *decision*, never executes differently), and produces live rows only when the operator has explicitly enabled the router flag.
 
 ## Goals
 
@@ -64,9 +81,8 @@ User direction (2026-05-30): build both, Phase 1 first. **Tradeoff surfaced & ac
 | Rollup parquet location | `backtests/.cache/router_track/router_track.parquet` | Alongside the cached bars the analysis reads |
 | Phase 1 backfill source | `backtests/router_setup_builder.build_historical_setup` → `route_explain` over a date range | Reuses the WF's full-fidelity historical SPYSetup factory |
 | Phase 1 backfill eval time | 09:45 ET post-OR (matches the WF's tick-of-day) | Apples-to-apples with `intraday_router_wf` |
-| Phase 2 live seam | `scanners/intraday_scanner.py::_scan_spy_intraday`, the setup loop (~line 169) where the code comments "router will gate here once live" | Only live importer of `route()`; import currently dangling |
-| Phase 2 live cadence | Every 5 min during market hours (the scanner's existing cadence) | Standing Rules #1/#2 already enforced by the scanner |
-| Phase 2 broker dependency | Thread the live `PaperBroker` (dedup-state source) into `_scan_spy_intraday` | `route_explain`'s dedup gate requires `broker.trades.get_trades_by` + `_entry_count_today_by_combo` |
+| Phase 2 live seam (deferred) | `scanners/intraday_scanner.py:211` — swap `_route_entry` → `route_explain`, write trace, execute accepted | Existing live seam; broker already at line 210, call already exception-isolated at line 218 |
+| Phase 2 live cadence | Every 5 min during market hours, only while `INTRADAY_PAPER_BROKER_ENABLED` is on | Scanner's existing cadence + existing feature flag (default off) |
 | Rollup trigger | On-demand CLI (no auto-schedule in v1) | Honest-ML discipline: analysis is a deliberate step |
 | Regime in record | Omitted; store `trend` proxy | `SPYSetup` has no regime field |
 | DRY for dedup reasons | Extract `_dedup_partition()`; `_dedup_filter()` becomes a thin wrapper over it | One dedup implementation; `route()` output identical |
@@ -96,9 +112,9 @@ backtests/router_track_rollup.py        (NEW — Phase 1)
     ├── rollup_to_parquet(records, out_path) → str
     └── if __name__ == "__main__": CLI
 
-scanners/intraday_scanner.py            (MODIFY — Phase 2)
-    └── _scan_spy_intraday(): activate route_explain at the setup loop,
-        write live trace, emit alerts only for accepted setups
+scanners/intraday_scanner.py            (MODIFY — Phase 2, DEFERRED)
+    └── _scan_spy_intraday():211 swap _route_entry → route_explain in the
+        existing flag-gated block; write live trace; execute the same accepted set
 
 tests/test_route_explain.py             (NEW — Phase 1)
 tests/test_router_tracker.py            (NEW — Phase 1)
@@ -299,33 +315,34 @@ def rollup_to_parquet(records: list[dict], out_path: str) -> str:
     return out_path
 ```
 
-## Phase 2 — Live wiring (intraday scanner)
+## Phase 2 — Live tracker at the existing seam (DEFERRED per user)
 
-Activate the router at the documented seam in `_scan_spy_intraday`. Today (lines 167-173) the loop emits an alert for **every** setup. After Phase 2 it routes each setup, writes the trace, and emits alerts only for **accepted** setups:
+> Not built in this pass. Documented so the follow-up is unambiguous. The alert path (`_scan_spy_intraday` lines 174-198) is untouched — Phase 2 only augments the flag-gated paper-broker block (lines 200-223).
+
+The seam already exists and is complete. The change is to route via `route_explain` (which returns the same accept set, by the tested invariant), write the trace, then build and execute the accepted `setup_dict`s exactly as today:
 
 ```python
-# scanners/intraday_scanner.py, inside _scan_spy_intraday, replacing the loop:
-from signals.intraday_entry_router import route_explain
+# scanners/intraday_scanner.py:209-217 — Phase 2 edit (flag-gated block only)
+from signals.intraday_entry_router import route_explain, _build_setup_dict
 from learning.router_tracker import build_trace_record, write_trace
-
-alerts = []
 now_et = datetime.now(EASTERN)
-for setup in setups:
-    trace = route_explain(setup, now_et, self._broker)   # self._broker: live PaperBroker
+try:
+    broker = PaperBroker()                               # unchanged (line 210)
+    trace  = route_explain(setup, now_et, broker)        # was: _route_entry(...)
     try:
         write_trace(build_trace_record(setup, trace, now_et, source="live"))
-    except Exception as e:                                # Standing Rule #10
+    except Exception as e:                               # Standing Rule #10
         logger.warning(f"router_tracker: live trace write failed: {e}")
-    if trace["accepted"]:                                 # gate: alert only on accepted
-        alert = setup.to_alert_dict()
-        alert["dte_buckets"] = [a["dte_bucket"] for a in trace["accepted"]]
-        alerts.append(alert)
-return alerts
+    for a in trace["accepted"]:                          # same accepted set as route()
+        sd = _build_setup_dict(setup, a["dte_bucket"], now_et)
+        result = broker.execute_signal(sd)
+        logger.info(f"Phase 3 entry: {sd['strategy']} @ {sd['dte_bucket']} → "
+                    f"trade_id={result.get('trade_id')} recorded={result.get('recorded')}")
+except Exception as e:                                   # existing outer guard (line 218)
+    logger.exception(f"Phase 3 entry pipeline error for {setup.strategy}: {e}")
 ```
 
-**Phase 2 dependency — the broker.** `route_explain`'s dedup gate calls `broker.trades.get_trades_by(...)` and `broker._entry_count_today_by_combo(...)`. The scanner has no broker today, so Phase 2 must give `IntradayScanner` a reference to the live `PaperBroker` (constructor-injected `self._broker`, set in `main.py` wiring). Until that is wired, `route_explain` cannot run live. This injection — not `route_explain` itself — is the bulk of Phase 2's work and its behavior-change blast radius (the gate now suppresses non-accepted alerts).
-
-**Behavior change being accepted:** previously every qualifying setup produced an alert; after Phase 2 only routed (accepted) setups do, and the rest are recorded as rejected. Land this after the calibration verdict, or re-confirm with the user before flipping it on.
+**No new dependency, no behavior change.** The broker is already constructed (line 210); the accepted set executed is identical to today's `_route_entry` output (accept-set invariant); the only addition is the trace write, itself wrapped in try/except. Live rows are produced only while `INTRADAY_PAPER_BROKER_ENABLED` is on (default off), so enabling the tracker by default changes nothing. `_build_setup_dict` is already defined in `intraday_entry_router.py`; expose it for reuse.
 
 ## Data Flow
 
@@ -333,7 +350,7 @@ return alerts
 
 **Phase 1 rollup (offline, on-demand):** `load_jsonl_dir("logs/learning/router_track/") → rollup_to_parquet → backtests/.cache/router_track/router_track.parquet`.
 
-**Phase 2 live (every 5 min, market hours):** `scanner builds setups → route_explain per setup against live PaperBroker → write JSONL(source=live) → emit alerts for accepted only`.
+**Phase 2 live (every 5 min, market hours; only while `INTRADAY_PAPER_BROKER_ENABLED` is on):** alert path unchanged → flag-gated block: `route_explain(setup, now, broker) → write JSONL(source=live) → execute accepted via broker.execute_signal` (same accepted set as today's `_route_entry`).
 
 All datetimes `pytz.timezone("US/Eastern")`.
 
@@ -341,8 +358,8 @@ All datetimes `pytz.timezone("US/Eastern")`.
 
 | Failure | Where | Behavior |
 |---|---|---|
-| Live trace write fails (disk, serialization) | `_scan_spy_intraday` | Caught; `logger.warning`; scan + alerts proceed. Standing Rule #10. |
-| `route_explain` raises live | `_scan_spy_intraday` | NOT swallowed — a routing bug should surface (the try/except wraps only the *write*). |
+| Live trace write fails (disk, serialization) | `_scan_spy_intraday` line ~213 | Inner try/except: `logger.warning`; routing + execution proceed. Standing Rule #10. |
+| `route_explain` raises live | `_scan_spy_intraday` | Caught by the existing outer guard (line 218, `logger.exception`); scanner continues to other tickers — identical to today's `_route_entry` failure handling. |
 | JSONL dir missing on rollup | `load_jsonl_dir` | Empty list → schema-only parquet; logged. |
 | Corrupt JSONL line | `load_jsonl_dir` | Skip line, `logger.warning` with line no.; never abort the rollup. |
 | Backfill day has no intraday data | `build_historical_setup` returns `[]` | Zero rows that day; not an error. |
@@ -382,11 +399,11 @@ tests/test_router_track_rollup.py                (Phase 1)
   ✓ reject_gates is sorted-distinct comma-joined (e.g. "dedup,dte")
   ✓ empty dir → schema-only parquet, no crash
 
-tests/test_intraday_scanner_routing.py           (Phase 2)
-  ✓ with an injected stub broker, _scan_spy_intraday emits alerts only for accepted setups
-  ✓ a rejected setup produces NO alert but DOES write a trace (source="live")
-  ✓ a trace-write exception is swallowed; the scan still returns alerts (Rule #10)
-  ✓ accepted alert carries dte_buckets metadata
+tests/test_intraday_scanner_routing.py           (Phase 2 — DEFERRED)
+  ✓ flag off → flag-gated block skipped, no trace written, alert path unchanged
+  ✓ flag on + stub broker → route_explain trace written (source="live") for the setup
+  ✓ flag on → accepted buckets executed via broker.execute_signal (same set as route())
+  ✓ a trace-write exception is swallowed; execution still proceeds (Rule #10)
 ```
 
 **Integration test** (`@pytest.mark.integration`, excluded from default run): `backfill("2024-04-01", "2024-04-05")` against real cached parquet → non-empty JSONL → rollup → parquet with ≥1 row. Confirms the end-to-end offline path on real data.
