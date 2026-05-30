@@ -16,83 +16,98 @@
 
 The companion walk-forward (`backtests/intraday_router_wf.py`, 2026-05-28) and its threshold calibration (`backtests/calibrate_router_wf.py`, spec 2026-05-29) measure the **PnL** of accepted trades. Neither records the *gating behavior* — the rejected side of the ledger. That gating distribution is exactly what we need to (a) sanity-check the calibration verdict, (b) feed the nightly reflector with observability the autonomous loop can narrate, and (c) make the deferred **multi-tick replay** investigation cheap when/if it's warranted.
 
-This spec adds a **decision tracking surface**: a non-mutating `route_explain()` that exposes the full per-candidate decision trace, a live tracker that records the bot's real daily routing decision, an offline backfill over cached 2024 history, and a parquet rollup the calibration/analysis tooling can read.
+This spec adds a **decision tracking surface** in two phases: a non-mutating `route_explain()` plus an offline backfill/rollup that feeds calibration (Phase 1, zero live behavior change), then live activation of the router in the intraday scanner with a live JSONL tracker at that seam (Phase 2).
 
 This is sequencing step 1 of the locked plan: **tracking surface now → calibration (spec 2026-05-29) → multi-tick replay only if needed** (per commit a921503; see calibration spec §"If Calibration Says 'Shelve' — Investigate Multi-Tick First").
+
+### Critical pre-existing fact (verified this session)
+
+**`route()` is NOT wired into the live path.** The only live module importing it is `scanners/intraday_scanner.py:40` (`from signals.intraday_entry_router import route as _route_entry`), and that import is **dangling** — `_route_entry` is never called. `scanners/intraday_scanner.py:170` carries the comment *"Phase 3 router (`_route_entry`) will gate here once live"*, and the `_scan_spy_intraday` docstring names this "the pending live-activation step." `learning/paper_broker.py` does not import or call the router. So the only code that actually executes `route()` today is the backtest (`intraday_router_wf.py`).
+
+Consequences:
+- **Calibration needs only the offline backfill** (historical 2024 replay). Phase 1 fully unblocks it with no live change.
+- **The live JSONL tracker has nothing to hook until the router is activated** — that activation is Phase 2 and is a real (paper-)trading behavior change.
+
+## Phasing
+
+| Phase | Scope | Live behavior change? | Unblocks |
+|---|---|---|---|
+| **Phase 1** | `route_explain()` + offline backfill over cached 2024 + parquet rollup | No | Calibration (spec 2026-05-29) |
+| **Phase 2** | Activate `route()` in `intraday_scanner` + live JSONL tracker at that seam | **Yes** — the gate starts filtering `[AUTO-PAPER]` setups | Live gating-behavior data; nightly reflector narration |
+
+User direction (2026-05-30): build both, Phase 1 first. **Tradeoff surfaced & accepted:** Phase 2 activates a gate the calibration has not yet validated. The existing WF spec states "promotion to a live behavior change is a separate decision after the verdict." Phase 2 therefore SHOULD land after — or be explicitly re-confirmed against — the calibration verdict. The tracker records only the routing *decision* (accept/reject + gate), not PnL, so Phase 4b's placeholder pricing does not corrupt the tracking data; the only behavior change is which setups the gate admits.
 
 ## Goals
 
 - Add `signals/intraday_entry_router.route_explain(setup, now, broker)` — a pure function returning the full decision trace (accepted buckets + rejected buckets with the gate that blocked each), **without changing `route()`'s observable behavior**.
-- Capture the bot's real daily routing decision live, with rejection reasons, as append-only JSONL under `logs/learning/` so the 19:00 ET reflector can read and narrate it.
-- Backfill the trace over the 252 cached 2024 trading days (offline replay through `route_explain()`), so analysis has a full year immediately.
-- Provide a rollup that compacts JSONL + backfill into a single parquet under `backtests/.cache/` for the calibration / analysis tooling.
+- Backfill the trace over the 252 cached 2024 trading days (offline replay through `route_explain()`), and roll it up to a single parquet for calibration / analysis.
+- (Phase 2) Activate the router in `scanners/intraday_scanner.py` and capture each live scan's routing decision, with rejection reasons, as append-only JSONL under `logs/learning/` so the 19:00 ET reflector can read and narrate it.
 - Stay DRY: `route_explain()` reuses the existing gate helpers; no gate logic is duplicated.
 
 ## Non-Goals (deferred)
 
-- **Multi-tick replay** — `route_explain()` is evaluated at the same single decision point the live bot uses (09:16 ET from the plan) and that the backfill mirrors (09:45 ET post-OR). Re-evaluating at every 5-min bar is the explicit *conditional* step 3, gated on the calibration verdict. The tracking surface is designed so multi-tick becomes a loop over timestamps later, but v1 does not add it.
-- **Regime in the trace record** — `SPYSetup` carries no `regime` field (confirmed: it has `trend`, `score`, `conviction`, `direction`, not regime). The record stores `trend` as a lightweight proxy. Regime-conditional analysis is deferred, consistent with the calibration spec's deferral of regime-conditional thresholds (needs `regime_breakdown` in `window_stats` first).
-- **Changing what the router accepts** — this is pure observability. `route()`'s accept/reject decisions are unchanged; we only expose the reasons.
-- **New scheduler cadence** — the live tracker piggybacks the existing paper-broker job (09:16 ET, already part of the learning loop). No new APScheduler interval.
-- **Live wiring of any behavior change** — recording decisions changes no trading behavior.
-- **Web-app surfacing of the trace** — the dashboard can read the parquet later; not in this spec.
+- **Multi-tick replay** — `route_explain()` is evaluated at a single decision point per scan. Re-evaluating an entire day's 5-min bars in the *backtest* is the explicit *conditional* step 3, gated on the calibration verdict. The surface is designed so multi-tick becomes a loop over timestamps later; v1 does not add it.
+- **Regime in the trace record** — `SPYSetup` carries no `regime` field (confirmed: it has `trend`, `score`, `conviction`, `direction`, not regime). The record stores `trend` as a lightweight proxy. Regime-conditional analysis is deferred, matching the calibration spec's deferral of regime-conditional thresholds.
+- **Changing what the router accepts** — pure observability of the reasons; `route()`'s accept/reject logic is unchanged.
+- **Phase 4b structure builder / real pricing** — the live router still emits placeholder pricing. Out of scope; does not affect the tracking decision data.
+- **Reflector wiring** — Phase 2 produces the JSONL; teaching `reflector.py` to summarize it is a small follow-up, not this spec.
+- **Web-app surfacing** — the dashboard reading the parquet is later.
+- **Promoting/raising any cap** — `MAX_CONCURRENT_DISCIPLINED` etc. unchanged.
 
 ## Locked Decisions
 
 | Decision | Choice | Source |
 |---|---|---|
-| How rejection reasons get out | New sibling `route_explain()`; `route()` behaviorally untouched | Brainstorm: user chose "Sibling explain() function" |
-| Where the record is written | JSONL live + parquet rollup | Brainstorm: user chose "Both — JSONL now, parquet rollup" |
-| Live JSONL location | `logs/learning/router_track/YYYY-MM-DD.jsonl` (append-only) | `logs/learning/` is the reflector's read root |
+| How rejection reasons get out | New sibling `route_explain()`; `route()` behaviorally untouched | Brainstorm: "Sibling explain() function" |
+| Record written as | JSONL (append-only) + parquet rollup | Brainstorm: "Both — JSONL now, parquet rollup" |
+| Live JSONL location | `logs/learning/router_track/YYYY-MM-DD.jsonl` | `logs/learning/` is the reflector's read root |
 | Rollup parquet location | `backtests/.cache/router_track/router_track.parquet` | Alongside the cached bars the analysis reads |
-| Live integration point | `learning/paper_broker.py::_phase3_route_impl` — the existing single seam | Confirmed only live `route()` call site; designed as a monkeypatch seam |
-| Live cadence | Once/day at 09:16 ET via existing paper-broker job (learning loop) | The bot makes one real routing decision/day from the plan |
-| Backfill source | `backtests/router_setup_builder.build_historical_setup` → `route_explain` over a date range | Reuses the WF's full-fidelity historical SPYSetup factory |
-| Backfill evaluation time | 09:45 ET post-OR (matches the WF's tick-of-day) | Apples-to-apples with `intraday_router_wf` |
+| Phase 1 backfill source | `backtests/router_setup_builder.build_historical_setup` → `route_explain` over a date range | Reuses the WF's full-fidelity historical SPYSetup factory |
+| Phase 1 backfill eval time | 09:45 ET post-OR (matches the WF's tick-of-day) | Apples-to-apples with `intraday_router_wf` |
+| Phase 2 live seam | `scanners/intraday_scanner.py::_scan_spy_intraday`, the setup loop (~line 169) where the code comments "router will gate here once live" | Only live importer of `route()`; import currently dangling |
+| Phase 2 live cadence | Every 5 min during market hours (the scanner's existing cadence) | Standing Rules #1/#2 already enforced by the scanner |
+| Phase 2 broker dependency | Thread the live `PaperBroker` (dedup-state source) into `_scan_spy_intraday` | `route_explain`'s dedup gate requires `broker.trades.get_trades_by` + `_entry_count_today_by_combo` |
 | Rollup trigger | On-demand CLI (no auto-schedule in v1) | Honest-ML discipline: analysis is a deliberate step |
 | Regime in record | Omitted; store `trend` proxy | `SPYSetup` has no regime field |
-| DRY for dedup reasons | Extract `_dedup_partition()`; `_dedup_filter()` becomes a thin wrapper over it | Keeps one dedup implementation; `route()` output identical |
-| Failure isolation | Tracker write wrapped in try/except at the seam | Standing Rule #10 — a tracker failure must never block paper execution |
+| DRY for dedup reasons | Extract `_dedup_partition()`; `_dedup_filter()` becomes a thin wrapper over it | One dedup implementation; `route()` output identical |
+| Failure isolation | Tracker write wrapped in try/except at the live seam | Standing Rule #10 — a tracker failure must never break scanning |
 
 ## Architecture
 
 ```
-signals/intraday_entry_router.py        (MODIFY — additive)
+signals/intraday_entry_router.py        (MODIFY — additive, Phase 1)
     ├── _dedup_partition(strategy, buckets, broker)
     │       → (allowed: list[str], rejected: list[tuple[str, str]])   # NEW shared primitive
     ├── _dedup_filter(strategy, buckets, broker)                       # REFACTOR → wrapper over _dedup_partition
-    │       → [b for b, _ in _dedup_partition(...)allowed]             # behavior identical, route() untouched
+    ├── _dte_reject_detail(setup, now, bucket) → str                  # NEW reason helper
     ├── route(setup, now, broker)                                      # UNCHANGED
     └── route_explain(setup, now, broker) → DecisionTrace (dict)       # NEW pure function
 
-learning/router_tracker.py              (NEW)
+learning/router_tracker.py              (NEW — Phase 1)
     ├── build_trace_record(setup, trace, now, source) → dict          # flatten DecisionTrace → JSONL row
-    ├── write_trace(record, day=None) → str                           # append to logs/learning/router_track/<day>.jsonl
-    └── (no scheduler here; invoked from the paper_broker seam)
+    └── write_trace(record, day=None) → str                           # append logs/learning/router_track/<day>.jsonl
 
-learning/paper_broker.py                (MODIFY — 1 seam)
-    └── _phase3_route_impl(setup, now, broker)                         # call route_explain, write trace, return accepted
-
-backtests/router_track_backfill.py      (NEW)
-    └── backfill(start, end, out_jsonl=None) → int                    # replay build_historical_setup → route_explain
+backtests/router_track_backfill.py      (NEW — Phase 1)
+    └── backfill(start, end) → int                                    # replay build_historical_setup → route_explain
         if __name__ == "__main__": CLI
 
-backtests/router_track_rollup.py        (NEW)
+backtests/router_track_rollup.py        (NEW — Phase 1)
     ├── load_jsonl_dir(dir) → list[dict]
     ├── rollup_to_parquet(records, out_path) → str
-    └── if __name__ == "__main__": CLI (reads logs/learning/router_track/*.jsonl + backfill jsonl → parquet)
+    └── if __name__ == "__main__": CLI
 
-tests/test_route_explain.py             (NEW)
-tests/test_router_tracker.py            (NEW)
-tests/test_router_track_backfill.py     (NEW)
-tests/test_router_track_rollup.py       (NEW)
+scanners/intraday_scanner.py            (MODIFY — Phase 2)
+    └── _scan_spy_intraday(): activate route_explain at the setup loop,
+        write live trace, emit alerts only for accepted setups
+
+tests/test_route_explain.py             (NEW — Phase 1)
+tests/test_router_tracker.py            (NEW — Phase 1)
+tests/test_router_track_backfill.py     (NEW — Phase 1)
+tests/test_router_track_rollup.py       (NEW — Phase 1)
+tests/test_intraday_scanner_routing.py  (NEW — Phase 2)
 ```
 
-**Reused without modification:**
-- `backtests/router_setup_builder.py` — `build_historical_setup(date)` produces the historical `SPYSetup` list (full-fidelity replay; already used by the WF).
-- `data/intraday_data.py` — parquet-cached 5-min bars (full-year 2024 already on disk).
-- `signals/intraday_entry_router.py::_passes_entry_tier`, `_assign_dte_buckets` — reused as-is by `route_explain`.
-- `backtests/intraday_router_wf.py::_MockBroker` — the backfill uses a fresh per-day mock broker for dedup state, exactly as the WF does.
+**Reused without modification:** `backtests/router_setup_builder.py` (`build_historical_setup`), `data/intraday_data.py` (cached 5-min bars), `intraday_entry_router._passes_entry_tier`/`_assign_dte_buckets`, `backtests/intraday_router_wf.py::_MockBroker` (backfill's per-day dedup broker).
 
 ## Trace Record Schema
 
@@ -102,51 +117,44 @@ tests/test_router_track_rollup.py       (NEW)
 {
     "passed_tier": bool,                     # _passes_entry_tier(setup)
     "candidate_buckets": ["0DTE", ...],      # _assign_dte_buckets output (post tier, pre dedup)
-    "accepted": [                            # buckets that survived dedup → would be traded
-        {"dte_bucket": "0DTE"},
-    ],
+    "accepted": [{"dte_bucket": "0DTE"}],    # buckets that survived dedup → would be traded
     "rejected": [                            # every blocked candidate + the gate that killed it
-        {"dte_bucket": None,      "gate": "tier",  "detail": "conviction=standard < minimum=high"},
-        {"dte_bucket": "1-3DTE",  "gate": "dte",   "detail": "Friday-PM safeguard: 1-3DTE dropped"},
-        {"dte_bucket": "0DTE",    "gate": "dedup", "detail": "open position already in (iron_condor, 0DTE)"},
+        {"dte_bucket": None,     "gate": "tier",  "detail": "conviction=standard < minimum=high"},
+        {"dte_bucket": "1-3DTE", "gate": "dte",   "detail": "Friday-PM safeguard: 1-3DTE dropped"},
+        {"dte_bucket": "0DTE",   "gate": "dedup", "detail": "open position already in (iron_condor, 0DTE)"},
     ],
 }
 ```
 
-The flattened JSONL row (`build_trace_record`), one object per `(setup, evaluation)`:
+Flattened JSONL row (`build_trace_record`), one object per `(setup, evaluation)`:
 
 ```python
 {
-    "ts":         "2026-05-30T09:16:00-04:00",   # ISO8601, tz-aware US/Eastern
-    "date":       "2026-05-30",
-    "source":     "live",                         # "live" | "backfill"
-    "strategy":   "iron_condor",
-    "conviction": "high",
-    "score":      72,
-    "direction":  "neutral",                      # may be None
-    "trend":      "range-bound",                  # SPYSetup.trend proxy; may be None
+    "ts":          "2026-05-30T10:35:00-04:00",  # ISO8601, tz-aware US/Eastern
+    "date":        "2026-05-30",
+    "source":      "live",                        # "live" | "backfill"
+    "strategy":    "iron_condor",
+    "conviction":  "high",
+    "score":       72,
+    "direction":   "neutral",                     # may be None
+    "trend":       "range-bound",                 # SPYSetup.trend proxy; may be None
     "passed_tier": True,
-    "accepted":   ["0DTE"],                        # list[str] of dte_buckets
-    "rejected":   [                                # list of {dte_bucket, gate, detail}
-        {"dte_bucket": "1-3DTE", "gate": "dedup", "detail": "..."},
-    ],
+    "accepted":    ["0DTE"],                       # list[str] of dte_buckets
+    "rejected":    [{"dte_bucket": "1-3DTE", "gate": "dedup", "detail": "..."}],
 }
 ```
 
-**Gate vocabulary (closed set):** `"tier"`, `"dte"`, `"dedup"` — exactly the three gates in `route()`'s pipeline.
+**Gate vocabulary (closed set):** `"tier"`, `"dte"`, `"dedup"`.
 
-**Parquet columns** (rollup): `ts, date, source, strategy, conviction, score, direction, trend, passed_tier, n_accepted, n_rejected, reject_gates`. The nested `accepted`/`rejected` lists are flattened to counts plus `reject_gates` (a sorted, comma-joined string of the distinct gates that fired, e.g. `"dedup,dte"`) so the parquet stays columnar; the full JSONL remains the lossless source of truth.
+**Parquet columns** (rollup): `ts, date, source, strategy, conviction, score, direction, trend, passed_tier, n_accepted, n_rejected, reject_gates`. Nested lists flatten to counts plus `reject_gates` (sorted, comma-joined distinct gates, e.g. `"dedup,dte"`); the JSONL remains the lossless source of truth.
 
-## `route_explain()` Reference Implementation
+## `route_explain()` Reference Implementation (Phase 1)
 
 ```python
 def route_explain(setup, now: datetime, broker) -> dict:
-    """Non-mutating decision trace for `route()`'s three-gate pipeline.
-
-    Returns {passed_tier, candidate_buckets, accepted, rejected}. Reuses the
-    same gate helpers route() uses, so the accept set is guaranteed identical
-    to route()'s output (verified by test).
-    """
+    """Non-mutating decision trace for route()'s three-gate pipeline.
+    Reuses the same gate helpers route() uses, so the accept set is identical
+    to route()'s output (verified by test)."""
     rejected: list[dict] = []
 
     # Gate 1: entry tier.
@@ -166,11 +174,8 @@ def route_explain(setup, now: datetime, broker) -> dict:
     candidate_buckets = _assign_dte_buckets(setup, now)
     universe = {"0DTE", "1-3DTE"}
     for b in sorted(universe - set(candidate_buckets)):
-        rejected.append({
-            "dte_bucket": b,
-            "gate": "dte",
-            "detail": _dte_reject_detail(setup, now, b),
-        })
+        rejected.append({"dte_bucket": b, "gate": "dte",
+                         "detail": _dte_reject_detail(setup, now, b)})
 
     # Gate 3: dedup. Shared primitive returns allowed + reasons.
     allowed, dedup_rejects = _dedup_partition(setup.strategy, candidate_buckets, broker)
@@ -185,7 +190,7 @@ def route_explain(setup, now: datetime, broker) -> dict:
     }
 ```
 
-Supporting helpers (new, in the same module):
+Supporting helpers (new, same module):
 
 ```python
 def _dedup_partition(strategy: str, buckets: list[str], broker
@@ -230,114 +235,168 @@ def _dte_reject_detail(setup, now: datetime, bucket: str) -> str:
     return "morning → 0DTE assigned, 1-3DTE not selected"
 ```
 
-**Critical invariant (tested):** `[a["dte_bucket"] for a in route_explain(s, now, b)["accepted"]] == [d["dte_bucket"] for d in route(s, now, b)]` for the same inputs. `route_explain` must never disagree with `route` on the accept set.
+**Critical invariant (tested):** for the same inputs,
+`[a["dte_bucket"] for a in route_explain(s, now, b)["accepted"]] == [d["dte_bucket"] for d in route(s, now, b)]`.
+`route_explain` must never disagree with `route` on the accept set.
 
-## Live Integration (paper_broker seam)
+## Phase 1 — Offline backfill + rollup
 
-`learning/paper_broker.py::_phase3_route_impl` is the single live `route()` call site. Modify it to route via `route_explain`, write the trace, and return the accepted `setup_dict`s — preserving the existing return contract:
+**Backfill** (`backtests/router_track_backfill.py`) replays cached history through `route_explain`, mirroring the WF's per-day, fresh-`_MockBroker`, 09:45-ET model:
 
 ```python
-def _phase3_route_impl(self, setup, now, broker):
-    """Route via route_explain so the decision (incl. rejections) is tracked,
-    then return the accepted setup_dicts route() would have returned."""
-    from signals.intraday_entry_router import route_explain, _build_setup_dict
-    trace = route_explain(setup, now, broker)
-    try:
-        from learning.router_tracker import build_trace_record, write_trace
-        write_trace(build_trace_record(setup, trace, now, source="live"))
-    except Exception as e:           # Standing Rule #10 — never block execution
-        logger.warning(f"router_tracker: trace write failed: {e}")
-    return [_build_setup_dict(setup, a["dte_bucket"], now) for a in trace["accepted"]]
+def backfill(start: date, end: date) -> int:
+    """Replay [start, end] through route_explain; append trace rows
+    (source='backfill') to logs/learning/router_track/<day>.jsonl. Returns
+    the number of rows written."""
+    from backtests.router_setup_builder import build_historical_setup
+    from backtests.intraday_router_wf import _MockBroker
+    from learning.router_tracker import build_trace_record, write_trace
+    from signals.intraday_entry_router import route_explain
+    import pytz
+    et = pytz.timezone("US/Eastern")
+
+    n = 0
+    d = start
+    while d <= end:
+        if d.weekday() < 5:                       # Standing Rule #1: weekdays only
+            try:
+                setups = build_historical_setup(d)
+            except ValueError as e:               # insufficient daily history at range start
+                logger.debug(f"backfill: skip {d}: {e}")
+                setups = []
+            broker = _MockBroker()                 # fresh per day — no cross-day leak
+            ts = et.localize(datetime.combine(d, time(9, 45)))
+            for setup in setups:
+                trace = route_explain(setup, ts, broker)
+                write_trace(build_trace_record(setup, trace, ts, "backfill"), day=d)
+                n += 1
+                for a in trace["accepted"]:        # mirror dedup state forward within the day
+                    broker.record_open(strategy=setup.strategy, dte_bucket=a["dte_bucket"])
+        d += timedelta(days=1)
+    logger.info(f"backfill: {n} trace rows over {start}..{end}")
+    return n
 ```
 
-`_build_setup_dict` is already defined in `intraday_entry_router.py` (used by `route()`); exposing it for reuse keeps the accepted-path construction DRY. The accepted list is built from the trace, so the live behavior is identical to calling `route()`.
+**Rollup** (`backtests/router_track_rollup.py`) compacts all JSONL → parquet:
+
+```python
+def rollup_to_parquet(records: list[dict], out_path: str) -> str:
+    import pandas as pd, os
+    rows = [{
+        "ts": r["ts"], "date": r["date"], "source": r["source"],
+        "strategy": r["strategy"], "conviction": r["conviction"],
+        "score": r["score"], "direction": r.get("direction"),
+        "trend": r.get("trend"), "passed_tier": r["passed_tier"],
+        "n_accepted": len(r["accepted"]),
+        "n_rejected": len(r["rejected"]),
+        "reject_gates": ",".join(sorted({x["gate"] for x in r["rejected"]})),
+    } for r in records]
+    df = pd.DataFrame(rows, columns=[
+        "ts", "date", "source", "strategy", "conviction", "score",
+        "direction", "trend", "passed_tier", "n_accepted", "n_rejected", "reject_gates"])
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    df.to_parquet(out_path)
+    return out_path
+```
+
+## Phase 2 — Live wiring (intraday scanner)
+
+Activate the router at the documented seam in `_scan_spy_intraday`. Today (lines 167-173) the loop emits an alert for **every** setup. After Phase 2 it routes each setup, writes the trace, and emits alerts only for **accepted** setups:
+
+```python
+# scanners/intraday_scanner.py, inside _scan_spy_intraday, replacing the loop:
+from signals.intraday_entry_router import route_explain
+from learning.router_tracker import build_trace_record, write_trace
+
+alerts = []
+now_et = datetime.now(EASTERN)
+for setup in setups:
+    trace = route_explain(setup, now_et, self._broker)   # self._broker: live PaperBroker
+    try:
+        write_trace(build_trace_record(setup, trace, now_et, source="live"))
+    except Exception as e:                                # Standing Rule #10
+        logger.warning(f"router_tracker: live trace write failed: {e}")
+    if trace["accepted"]:                                 # gate: alert only on accepted
+        alert = setup.to_alert_dict()
+        alert["dte_buckets"] = [a["dte_bucket"] for a in trace["accepted"]]
+        alerts.append(alert)
+return alerts
+```
+
+**Phase 2 dependency — the broker.** `route_explain`'s dedup gate calls `broker.trades.get_trades_by(...)` and `broker._entry_count_today_by_combo(...)`. The scanner has no broker today, so Phase 2 must give `IntradayScanner` a reference to the live `PaperBroker` (constructor-injected `self._broker`, set in `main.py` wiring). Until that is wired, `route_explain` cannot run live. This injection — not `route_explain` itself — is the bulk of Phase 2's work and its behavior-change blast radius (the gate now suppresses non-accepted alerts).
+
+**Behavior change being accepted:** previously every qualifying setup produced an alert; after Phase 2 only routed (accepted) setups do, and the rest are recorded as rejected. Land this after the calibration verdict, or re-confirm with the user before flipping it on.
 
 ## Data Flow
 
-**Live (per trading day, 09:16 ET, inside the paper-broker job):**
-```
-plan → _build_setups_from_plan → for each setup:
-    trace = route_explain(setup, 09:16_ET, self)
-    write_trace(build_trace_record(setup, trace, now, "live"))   # append JSONL
-    accepted setup_dicts → execute_signal (unchanged)
-```
+**Phase 1 backfill (offline, one-shot):** `for each weekday in range → build_historical_setup (09:45 ET window) → fresh _MockBroker → route_explain per setup → write JSONL(source=backfill) → record_open accepted forward`.
 
-**Backfill (offline, one-shot):**
-```
-for day in trading_days(start, end):
-    setups = build_historical_setup(day)            # router_setup_builder (09:45 ET window)
-    broker = _MockBroker()                           # fresh per day
-    ts = 09:45 ET on `day`
-    for setup in setups:
-        trace = route_explain(setup, ts, broker)
-        write_trace(build_trace_record(setup, trace, ts, "backfill"), day=day)
-        for a in trace["accepted"]:                  # mirror dedup state forward
-            broker.record_open(strategy=setup.strategy, dte_bucket=a["dte_bucket"])
-```
+**Phase 1 rollup (offline, on-demand):** `load_jsonl_dir("logs/learning/router_track/") → rollup_to_parquet → backtests/.cache/router_track/router_track.parquet`.
 
-**Rollup (offline, on-demand before analysis):**
-```
-records = load_jsonl_dir("logs/learning/router_track/")
-rollup_to_parquet(records, "backtests/.cache/router_track/router_track.parquet")
-```
+**Phase 2 live (every 5 min, market hours):** `scanner builds setups → route_explain per setup against live PaperBroker → write JSONL(source=live) → emit alerts for accepted only`.
 
-All datetimes are `pytz.timezone("US/Eastern")`, matching every other module.
+All datetimes `pytz.timezone("US/Eastern")`.
 
 ## Error Handling
 
 | Failure | Where | Behavior |
 |---|---|---|
-| Trace write fails (disk, serialization) | `_phase3_route_impl` | Caught; `logger.warning`; paper execution proceeds with accepted setups. Standing Rule #10. |
-| `route_explain` raises | `_phase3_route_impl` | NOT caught here — a routing bug should surface, same as `route()` raising today. (The try/except wraps only the *tracking write*, not the routing.) |
-| JSONL file missing on rollup | `load_jsonl_dir` | Empty dir → empty list → rollup writes an empty (schema-only) parquet; logged. |
-| Corrupt JSONL line | `load_jsonl_dir` | Skip the line, `logger.warning` with line number; never abort the whole rollup. |
-| Backfill day has no intraday data | `build_historical_setup` returns `[]` | Day yields zero records; not an error. |
-| Backfill insufficient daily history (<30 bars) | `build_historical_setup` raises `ValueError` | Caught per-day, logged, skipped (only at the very start of the range). |
-| Cross-day dedup leak in backfill | `_MockBroker` fresh per day | Per-day instance; impossible to leak by construction. Tested. |
+| Live trace write fails (disk, serialization) | `_scan_spy_intraday` | Caught; `logger.warning`; scan + alerts proceed. Standing Rule #10. |
+| `route_explain` raises live | `_scan_spy_intraday` | NOT swallowed — a routing bug should surface (the try/except wraps only the *write*). |
+| JSONL dir missing on rollup | `load_jsonl_dir` | Empty list → schema-only parquet; logged. |
+| Corrupt JSONL line | `load_jsonl_dir` | Skip line, `logger.warning` with line no.; never abort the rollup. |
+| Backfill day has no intraday data | `build_historical_setup` returns `[]` | Zero rows that day; not an error. |
+| Backfill insufficient daily history (<30 bars) | `build_historical_setup` raises `ValueError` | Caught per-day, logged, skipped (only at range start). |
+| Cross-day dedup leak in backfill | fresh `_MockBroker` per day | Impossible by construction. Tested. |
 
-**Logging:** loguru. Live: one `DEBUG` per setup tracked. Backfill/rollup: one `INFO` summary line (n days, n records, output path).
+**Logging:** loguru. Live: one `DEBUG` per setup tracked. Backfill/rollup: one `INFO` summary (n days/rows, output path).
 
 ## Testing
 
 ```
-tests/test_route_explain.py
-  ✓ accept-set parity: route_explain accepted == route output, across (tier-fail, friday-pm,
-      ultra-conviction-double, dedup-blocked, all-pass) fixtures
+tests/test_route_explain.py                      (Phase 1)
+  ✓ accept-set parity: route_explain accepted == route output across
+      (tier-fail, friday-pm, ultra-conviction-double, dedup-blocked, all-pass) fixtures
   ✓ tier fail → single rejected{gate:"tier"}, accepted == []
   ✓ friday-pm afternoon → rejected contains {dte_bucket:"1-3DTE", gate:"dte"}
-  ✓ dedup blocked (open position in combo) → rejected{gate:"dedup"}, detail names the combo
+  ✓ dedup blocked (open position) → rejected{gate:"dedup"}, detail names the combo
   ✓ dedup blocked (daily cap) → rejected{gate:"dedup"}, detail names the cap
   ✓ all-pass ultra-conviction → accepted has both buckets, rejected == []
   ✓ _dedup_filter still returns the same list as before (wrapper-over-partition regression)
 
-tests/test_router_tracker.py
-  ✓ build_trace_record flattens DecisionTrace → expected JSONL row (keys, types, tz-aware ts)
+tests/test_router_tracker.py                     (Phase 1)
+  ✓ build_trace_record flattens DecisionTrace → expected row (keys, types, tz-aware ts)
   ✓ build_trace_record handles direction=None and trend=None without KeyError
-  ✓ write_trace appends one line per call; file path is logs/learning/router_track/<date>.jsonl
+  ✓ write_trace appends one line per call to logs/learning/router_track/<date>.jsonl
   ✓ write_trace round-trips: written line json.loads back to the input record
 
-tests/test_router_track_backfill.py
-  ✓ backfill over a 2-day stub range (monkeypatched build_historical_setup) writes N records
-  ✓ fresh MockBroker per day: a dedup-blocking open on day 1 does NOT block day 2
-  ✓ accepted opens are recorded forward so a second same-combo setup same day hits dedup
-  ✓ day with empty setups yields zero records, no crash
+tests/test_router_track_backfill.py              (Phase 1)
+  ✓ backfill over a 2-day stub range (monkeypatched build_historical_setup) writes N rows
+  ✓ fresh MockBroker per day: a day-1 dedup-blocking open does NOT block day 2
+  ✓ accepted opens recorded forward → second same-combo setup same day hits dedup
+  ✓ weekend days skipped; empty-setup day yields zero rows, no crash
 
-tests/test_router_track_rollup.py
+tests/test_router_track_rollup.py                (Phase 1)
   ✓ load_jsonl_dir reads multiple files, skips corrupt lines (logs, no abort)
   ✓ rollup_to_parquet emits expected columns incl. n_accepted, n_rejected, reject_gates
   ✓ reject_gates is sorted-distinct comma-joined (e.g. "dedup,dte")
   ✓ empty dir → schema-only parquet, no crash
+
+tests/test_intraday_scanner_routing.py           (Phase 2)
+  ✓ with an injected stub broker, _scan_spy_intraday emits alerts only for accepted setups
+  ✓ a rejected setup produces NO alert but DOES write a trace (source="live")
+  ✓ a trace-write exception is swallowed; the scan still returns alerts (Rule #10)
+  ✓ accepted alert carries dte_buckets metadata
 ```
 
-**Integration test** (`@pytest.mark.integration`, excluded from default run): `backfill("2024-04-01", "2024-04-05")` against real cached parquet → non-empty JSONL → rollup → parquet with ≥1 row. Confirms the end-to-end path on real data.
+**Integration test** (`@pytest.mark.integration`, excluded from default run): `backfill("2024-04-01", "2024-04-05")` against real cached parquet → non-empty JSONL → rollup → parquet with ≥1 row. Confirms the end-to-end offline path on real data.
 
 Per Standing Rule #4 every new module gets a test file; per Rule #5 run `pytest tests/ -v -m "not integration" --tb=short` before each commit.
 
 ## Out of Scope / Future Work
 
-- **Multi-tick replay** — the conditional step 3. `route_explain` is timestamp-parameterized, so multi-tick is a loop over intraday timestamps feeding the same backfill writer. Triggered only if calibration (spec 2026-05-29) returns "shelve" — see that spec's §"If Calibration Says 'Shelve' — Investigate Multi-Tick First".
-- **Regime enrichment** — add a real `regime` column once a regime value is available at routing time (would also unblock the calibration spec's deferred regime-conditional thresholds).
-- **Reflector consumption** — a follow-up wires `learning/reflector.py` to summarize the day's `router_track` JSONL into the nightly narrative + KB entries (the autonomous-loop payoff). This spec only produces the data; reading it is a separate, small change.
-- **Web-app surfacing** — the dashboard reading `router_track.parquet` for a gating-distribution view.
-- **Scheduled rollup** — if analysis becomes routine, promote the on-demand rollup CLI to a weekly APScheduler job (wrapped per Rule #10).
-```
+- **Multi-tick replay** — conditional step 3. `route_explain` is timestamp-parameterized, so multi-tick is a loop over intraday timestamps feeding the same backfill writer. Triggered only if calibration (spec 2026-05-29) returns "shelve" — see that spec's §"If Calibration Says 'Shelve' — Investigate Multi-Tick First".
+- **Regime enrichment** — add a real `regime` column once a regime value exists at routing time (also unblocks the calibration spec's deferred regime-conditional thresholds).
+- **Reflector consumption** — wire `learning/reflector.py` to summarize the day's `router_track` JSONL into the nightly narrative + KB entries (the autonomous-loop payoff).
+- **Web-app surfacing** — dashboard reading `router_track.parquet` for a gating-distribution view.
+- **Scheduled rollup** — promote the on-demand CLI to a weekly APScheduler job (wrapped per Rule #10) if analysis becomes routine.

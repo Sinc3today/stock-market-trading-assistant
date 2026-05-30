@@ -2,7 +2,9 @@
 
 _Status: brainstorming COMPLETE → design spec written. See `docs/superpowers/specs/2026-05-30-router-explain-tracking-surface-design.md`. Written 2026-05-30._
 
-> **Superseded by the spec.** This file is the brainstorm trail; the spec is the authoritative design. All four OPEN items below were resolved as Locked Decisions in the spec (regime omitted/`trend` proxy; live host = paper_broker `_phase3_route_impl` seam, 09:16 ET; rollup = on-demand CLI; backfill required, seeds 2024). Live `route()` call site confirmed: `learning/paper_broker.py`, not the intraday scanner.
+> **Superseded by the spec.** This file is the brainstorm trail; the spec is the authoritative design. All four OPEN items resolved there as Locked Decisions (regime omitted/`trend` proxy; rollup = on-demand CLI; backfill required, seeds 2024).
+>
+> **Correction (important):** `route()` is NOT wired into the live path. The only live importer is `scanners/intraday_scanner.py:40` and that import is *dangling* (never called); `paper_broker.py` does not touch the router. So the spec is two-phase: **Phase 1** = offline `route_explain()` + backfill + rollup (unblocks calibration, no live change); **Phase 2** = activate `route()` at the scanner seam (`_scan_spy_intraday`, ~line 169, where a code comment already says "router will gate here once live") + live JSONL tracker, which requires threading the live `PaperBroker` into the scanner for the dedup gate. Phase 2 is a real behavior change and should land after the calibration verdict. User direction 2026-05-30: build both, Phase 1 first.
 
 ## The plan we locked (sequencing)
 1. **Tracking surface now** — capture what the intraday router *would have decided*, bar-by-bar.
