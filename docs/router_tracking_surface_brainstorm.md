@@ -1,6 +1,8 @@
 # Brainstorm handoff — Intraday router tracking surface
 
-_Status: brainstorming in progress (superpowers:brainstorming). Written 2026-05-30 before context wrap._
+_Status: brainstorming COMPLETE → design spec written. See `docs/superpowers/specs/2026-05-30-router-explain-tracking-surface-design.md`. Written 2026-05-30._
+
+> **Superseded by the spec.** This file is the brainstorm trail; the spec is the authoritative design. All four OPEN items below were resolved as Locked Decisions in the spec (regime omitted/`trend` proxy; live host = paper_broker `_phase3_route_impl` seam, 09:16 ET; rollup = on-demand CLI; backfill required, seeds 2024). Live `route()` call site confirmed: `learning/paper_broker.py`, not the intraday scanner.
 
 ## The plan we locked (sequencing)
 1. **Tracking surface now** — capture what the intraday router *would have decided*, bar-by-bar.
