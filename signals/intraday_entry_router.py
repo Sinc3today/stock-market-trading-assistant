@@ -189,3 +189,45 @@ def route(setup, now: datetime, broker) -> list[dict]:
     buckets    = _assign_dte_buckets(setup, now)
     allowed    = _dedup_filter(setup.strategy, buckets, broker)
     return [_build_setup_dict(setup, b, now) for b in allowed]
+
+
+def route_explain(setup, now: datetime, broker) -> dict:
+    """Non-mutating decision trace for route()'s three-gate pipeline.
+
+    Returns {passed_tier, candidate_buckets, accepted, rejected}. Reuses the
+    same gate helpers route() uses, so the accept set is identical to route()'s
+    output (verified by test_route_explain_accept_set_matches_route_*).
+    """
+    # Gate 1: entry tier.
+    if not _passes_entry_tier(setup):
+        return {
+            "passed_tier": False,
+            "candidate_buckets": [],
+            "accepted": [],
+            "rejected": [{
+                "dte_bucket": None,
+                "gate": "tier",
+                "detail": f"conviction={setup.conviction} < minimum={config.ENTRY_TIER_MINIMUM}",
+            }],
+        }
+
+    rejected: list[dict] = []
+
+    # Gate 2: DTE assignment. Reasons inferred from the universe NOT assigned.
+    candidate_buckets = _assign_dte_buckets(setup, now)
+    universe = {"0DTE", "1-3DTE"}
+    for b in sorted(universe - set(candidate_buckets)):
+        rejected.append({"dte_bucket": b, "gate": "dte",
+                         "detail": _dte_reject_detail(setup, now, b)})
+
+    # Gate 3: dedup. Shared primitive returns allowed + reasons.
+    allowed, dedup_rejects = _dedup_partition(setup.strategy, candidate_buckets, broker)
+    for b, reason in dedup_rejects:
+        rejected.append({"dte_bucket": b, "gate": "dedup", "detail": reason})
+
+    return {
+        "passed_tier": True,
+        "candidate_buckets": candidate_buckets,
+        "accepted": [{"dte_bucket": b} for b in allowed],
+        "rejected": rejected,
+    }

@@ -63,3 +63,81 @@ def test_dte_reject_detail_afternoon_drops_0dte():
     mon_pm = ET.localize(datetime(2024, 7, 15, 13, 0))   # Monday 13:00 ET (post-cutoff)
     detail = _dte_reject_detail(_setup(), mon_pm, "0DTE")
     assert "afternoon" in detail
+
+
+from signals.intraday_entry_router import route, route_explain
+
+
+class _CapBroker:
+    """Broker whose combo has 0 OPEN trades but a today-count at the cap —
+    isolates the dedup CAP branch (the open-position branch can't fire)."""
+    def __init__(self):
+        self.trades = self
+    def get_trades_by(self, *, strategy, dte_bucket):
+        return []
+    def _entry_count_today_by_combo(self, strategy, dte_bucket):
+        return 2   # == config.INTRADAY_PER_COMBO_DAILY_CAP
+
+
+def _accepted_buckets(trace):
+    return [a["dte_bucket"] for a in trace["accepted"]]
+
+
+def test_route_explain_tier_fail():
+    s = _setup(conviction="standard")               # below ENTRY_TIER_MINIMUM="high"
+    now = ET.localize(datetime(2024, 7, 15, 10, 0))
+    trace = route_explain(s, now, _MockBroker())
+    assert trace["passed_tier"] is False
+    assert trace["accepted"] == []
+    assert len(trace["rejected"]) == 1
+    assert trace["rejected"][0]["gate"] == "tier"
+
+
+def test_route_explain_morning_high_accepts_0dte_rejects_1_3dte_on_dte():
+    s = _setup(conviction="high", score=70)
+    now = ET.localize(datetime(2024, 7, 15, 10, 0))   # Monday AM
+    trace = route_explain(s, now, _MockBroker())
+    assert _accepted_buckets(trace) == ["0DTE"]
+    assert [r for r in trace["rejected"] if r["gate"] == "dte"]
+    assert all(r["dte_bucket"] == "1-3DTE" for r in trace["rejected"] if r["gate"] == "dte")
+
+
+def test_route_explain_ultra_conviction_accepts_both_no_rejects():
+    s = _setup(conviction="high", score=90)           # >= ULTRA_CONVICTION_DOUBLE_DTE_SCORE
+    now = ET.localize(datetime(2024, 7, 15, 10, 0))   # Monday (not Friday)
+    trace = route_explain(s, now, _MockBroker())
+    assert sorted(_accepted_buckets(trace)) == ["0DTE", "1-3DTE"]
+    assert trace["rejected"] == []
+
+
+def test_route_explain_dedup_open_position_rejects():
+    s = _setup(strategy="iron_condor", conviction="high", score=70)
+    broker = _MockBroker()
+    broker.record_open(strategy="iron_condor", dte_bucket="0DTE")
+    now = ET.localize(datetime(2024, 7, 15, 10, 0))   # morning → candidate 0DTE
+    trace = route_explain(s, now, broker)
+    assert trace["accepted"] == []
+    assert any(r["gate"] == "dedup" and r["dte_bucket"] == "0DTE" for r in trace["rejected"])
+
+
+def test_route_explain_dedup_cap_rejects():
+    s = _setup(strategy="iron_condor", conviction="high", score=70)
+    now = ET.localize(datetime(2024, 7, 15, 10, 0))   # morning → candidate 0DTE
+    trace = route_explain(s, now, _CapBroker())
+    assert trace["accepted"] == []
+    assert any(r["gate"] == "dedup" and "cap" in r["detail"] for r in trace["rejected"])
+
+
+def test_route_explain_accept_set_matches_route_across_fixtures():
+    cases = [
+        (_setup(conviction="standard"),               ET.localize(datetime(2024, 7, 15, 10, 0))),
+        (_setup(conviction="high", score=70),         ET.localize(datetime(2024, 7, 15, 10, 0))),
+        (_setup(conviction="high", score=70),         ET.localize(datetime(2024, 7, 15, 13, 0))),
+        (_setup(conviction="high", score=90),         ET.localize(datetime(2024, 7, 15, 10, 0))),
+        (_setup(conviction="high", score=90),         ET.localize(datetime(2024, 7, 12, 13, 0))),  # Fri PM
+    ]
+    for s, now in cases:
+        b1, b2 = _MockBroker(), _MockBroker()
+        explain_accepted = [a["dte_bucket"] for a in route_explain(s, now, b1)["accepted"]]
+        route_accepted   = [d["dte_bucket"] for d in route(s, now, b2)]
+        assert explain_accepted == route_accepted, (s.conviction, s.score, now)
