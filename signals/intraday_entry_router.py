@@ -101,26 +101,40 @@ def _assign_dte_buckets(setup, now: datetime) -> list[str]:
     return ["1-3DTE"] if is_afternoon else ["0DTE"]
 
 
-def _dedup_filter(strategy: str, dte_buckets: list[str], broker) -> list[str]:
-    """D rule: drop a bucket if a position is already open in (strategy, bucket)
+def _dedup_partition(strategy: str, dte_buckets: list[str], broker
+                     ) -> tuple[list[str], list[tuple[str, str]]]:
+    """D rule, with reasons. Returns (allowed, [(bucket, reason), ...]).
+
+    A bucket is dropped if a position is already open in (strategy, bucket)
     OR today's entry count for the combo has reached
-    config.INTRADAY_PER_COMBO_DAILY_CAP."""
-    allowed = []
+    config.INTRADAY_PER_COMBO_DAILY_CAP. This is the single dedup
+    implementation; _dedup_filter wraps it so route() is unchanged.
+    """
+    allowed: list[str] = []
+    rejected: list[tuple[str, str]] = []
     for bucket in dte_buckets:
-        # Check 1: any position currently open in this combo?
         open_in_combo = [
             t for t in broker.trades.get_trades_by(strategy=strategy, dte_bucket=bucket)
             if t.get("outcome") == "open"
         ]
         if open_in_combo:
+            rejected.append((bucket, f"open position already in ({strategy}, {bucket})"))
             continue
-
-        # Check 2: today's entry count under the per-day cap?
         n_today = broker._entry_count_today_by_combo(strategy, bucket)
         if n_today >= config.INTRADAY_PER_COMBO_DAILY_CAP:
+            rejected.append((bucket,
+                f"per-combo daily cap reached ({n_today} >= {config.INTRADAY_PER_COMBO_DAILY_CAP})"))
             continue
-
         allowed.append(bucket)
+    return allowed, rejected
+
+
+def _dedup_filter(strategy: str, dte_buckets: list[str], broker) -> list[str]:
+    """D rule: drop a bucket if a position is already open in (strategy, bucket)
+    OR today's entry count for the combo has reached
+    config.INTRADAY_PER_COMBO_DAILY_CAP. Thin wrapper over _dedup_partition so
+    route()'s observable behavior is identical."""
+    allowed, _ = _dedup_partition(strategy, dte_buckets, broker)
     return allowed
 
 
