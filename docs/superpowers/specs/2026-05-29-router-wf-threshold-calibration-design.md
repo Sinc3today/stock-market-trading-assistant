@@ -229,3 +229,20 @@ Integration verification (manual, not automated): run Phase D against the real W
 - **Regime-conditional thresholds** — TBD; needs `regime_breakdown` in `window_stats` first (deferred from the WF spec).
 - **Re-calibration on different time windows** — once 2026 data accumulates, re-running calibration is a separate exercise.
 - **Auto-applying threshold values** — script proposes, user commits. No automated write to the module.
+
+## If Calibration Says "Shelve" — Investigate Multi-Tick First
+
+The WF backtest evaluates `route()` ONCE per day at 9:45 ET (post opening-range). Live, the router fires at every 5-min tick from 9:30-16:00 (~78 ticks/day). **The current backtest is structurally blind to any router edge that comes from intraday TIMING** rather than tier-gate filtering at the open:
+
+- A 9:45 setup scoring 60 (standard tier, blocked) might escalate to 75 (high) at 11:00 after morning chop. Live catches it; backtest misses it entirely.
+- Setups that emerge fresh from afternoon volatility (e.g., a 2:30 PM iron_condor after a sideways morning) never appear.
+- Re-entries after a target-hit early exit aren't simulated (current sim never closes mid-day, but live would re-arm after closure).
+
+**Decision branch point:** if calibration's recommendation block reads "no detectable edge" or "inconclusive":
+
+1. **Do NOT shelve Phase 3 on calibration evidence alone.** The honest verdict is "no edge under the single-tick assumption," not "no edge."
+2. **Spec the multi-tick replay** as the next investigation (separate design cycle, cost comparable to the WF backtest itself ~1000 LOC). Build a multi-tick state machine that maintains intraday position state across 5-min ticks, calls `route()` at each tick, handles dedup and per-combo daily caps the way live does, and re-arms after early exits.
+3. **Re-run calibration against the multi-tick output.** If THAT still shows no edge, then shelving with the same discipline as the 2026-05-21 0DTE work is warranted.
+4. **Only if multi-tick also shows no edge** does "shelve and revisit the entry-level retune" apply.
+
+Skipping step 2 risks repeating the 0DTE shelving pattern on incomplete evidence — the entry-level retune memo specifically warned that "different intraday confirmation" was one of the revisit candidates, and timing-of-entry IS a form of intraday confirmation we haven't tested.
