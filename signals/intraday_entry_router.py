@@ -101,6 +101,18 @@ def _assign_dte_buckets(setup, now: datetime) -> list[str]:
     return ["1-3DTE"] if is_afternoon else ["0DTE"]
 
 
+def _dte_reject_detail(setup, now: datetime, bucket: str) -> str:
+    """Human-readable reason `bucket` was not in _assign_dte_buckets's output."""
+    cutoff_h, cutoff_m = (int(x) for x in config.INTRADAY_DTE_MORNING_CUTOFF.split(":"))
+    is_friday    = now.weekday() == 4
+    is_afternoon = now.time() >= time(cutoff_h, cutoff_m)
+    if is_friday and is_afternoon and bucket == "1-3DTE":
+        return "Friday-PM safeguard: 1-3DTE dropped (no weekend exposure)"
+    if bucket == "0DTE":
+        return "afternoon → 1-3DTE assigned, 0DTE not selected"
+    return "morning → 0DTE assigned, 1-3DTE not selected"
+
+
 def _dedup_partition(strategy: str, dte_buckets: list[str], broker
                      ) -> tuple[list[str], list[tuple[str, str]]]:
     """D rule, with reasons. Returns (allowed, [(bucket, reason), ...]).

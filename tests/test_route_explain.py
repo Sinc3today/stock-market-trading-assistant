@@ -42,3 +42,24 @@ def test_dedup_filter_still_returns_same_list_as_partition_allowed():
     broker.record_open(strategy="iron_condor", dte_bucket="0DTE")
     allowed, _ = _dedup_partition("iron_condor", ["0DTE", "1-3DTE"], broker)
     assert _dedup_filter("iron_condor", ["0DTE", "1-3DTE"], broker) == allowed
+
+
+from signals.intraday_entry_router import _dte_reject_detail
+
+
+def test_dte_reject_detail_friday_pm_drops_1_3dte():
+    fri_pm = ET.localize(datetime(2024, 7, 12, 13, 0))   # 2024-07-12 is a Friday
+    detail = _dte_reject_detail(_setup(), fri_pm, "1-3DTE")
+    assert "Friday-PM safeguard" in detail
+
+
+def test_dte_reject_detail_morning_drops_1_3dte():
+    mon_am = ET.localize(datetime(2024, 7, 15, 10, 0))   # Monday 10:00 ET (pre-cutoff)
+    detail = _dte_reject_detail(_setup(), mon_am, "1-3DTE")
+    assert "morning" in detail
+
+
+def test_dte_reject_detail_afternoon_drops_0dte():
+    mon_pm = ET.localize(datetime(2024, 7, 15, 13, 0))   # Monday 13:00 ET (post-cutoff)
+    detail = _dte_reject_detail(_setup(), mon_pm, "0DTE")
+    assert "afternoon" in detail
