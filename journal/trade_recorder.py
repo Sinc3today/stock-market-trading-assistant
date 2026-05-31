@@ -249,6 +249,36 @@ class TradeRecorder:
 
         return updated
 
+    def void_trade(self, trade_id: str, reason: str) -> bool:
+        """Void a trade that was never a real fill (e.g. a synthetic stub).
+
+        Unlike log_exit, this books NO P&L: outcome="void", pnl_dollars=None.
+        Voided trades are excluded from both the open and closed sets and from
+        get_summary_stats, so they never affect win rate or total P&L.
+        """
+        trades  = self._load()
+        updated = False
+        eastern = pytz.timezone("US/Eastern")
+        now_est = datetime.now(eastern).strftime("%Y-%m-%d %I:%M %p EST")
+
+        for trade in trades:
+            if trade.get("trade_id") != trade_id.upper():
+                continue
+            trade["outcome"]     = "void"
+            trade["exit_date"]   = now_est
+            trade["pnl_dollars"] = None
+            trade["pnl_pct"]     = None
+            trade["notes_exit"]  = f"[VOID {now_est}] {reason}"
+            updated = True
+            logger.info(f"Trade voided: [{trade_id}] {trade.get('ticker')} — {reason}")
+            break
+
+        if updated:
+            self._save(trades)
+        else:
+            logger.warning(f"Trade not found to void: {trade_id}")
+        return updated
+
     # ─────────────────────────────────────────
     # P&L CALCULATIONS
     # ─────────────────────────────────────────
@@ -329,8 +359,12 @@ class TradeRecorder:
         return [t for t in self._load() if t.get("outcome") == "open"]
 
     def get_closed_trades(self) -> list:
-        """Return trades with outcome != 'open' (win / loss / breakeven)."""
-        return [t for t in self._load() if t.get("outcome") != "open"]
+        """Return trades with outcome in (win / loss / breakeven).
+
+        Excludes 'open' and 'void' — voided trades were never real fills and
+        carry no P&L, so they are not part of closed-trade performance.
+        """
+        return [t for t in self._load() if t.get("outcome") not in ("open", "void")]
 
     def get_trade_by_id(self, tid) -> dict | None:
         """Look up a trade by its trade_id (case-insensitive); returns None if missing."""
@@ -345,7 +379,7 @@ class TradeRecorder:
     def get_summary_stats(self) -> dict:
         """Aggregate win rate, P&L, and breakdown across all closed trades."""
         all_trades = self._load()
-        closed     = [t for t in all_trades if t.get("outcome") != "open"]
+        closed     = [t for t in all_trades if t.get("outcome") not in ("open", "void")]
         open_t     = [t for t in all_trades if t.get("outcome") == "open"]
 
         if not closed:
