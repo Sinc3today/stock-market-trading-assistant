@@ -38,7 +38,7 @@ import config
 from loguru import logger
 
 from journal.trade_recorder import TradeRecorder
-from learning.paper_broker  import AUTO_TAG
+from learning.paper_broker  import is_auto_paper
 
 
 # ── Tunables (registered in hypothesis_engine.TUNABLE_PARAMS) ─────────
@@ -232,7 +232,7 @@ class ExitManager:
         # market-data calls into Polygon's quota for no reason).
         open_auto = [
             t for t in self.trades.get_all_trades()
-            if t.get("outcome") == "open" and AUTO_TAG in (t.get("notes_entry") or "")
+            if t.get("outcome") == "open" and is_auto_paper(t)
         ]
         if dte_buckets is not None:
             buckets_set = set(dte_buckets)

@@ -45,6 +45,7 @@ from signals import macro_runner
 from data.earnings_calendar import EarningsCalendar
 from data import backtest_summary
 from learning.portfolio_greeks import PortfolioGreeks
+from learning.paper_broker import is_auto_paper
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
@@ -635,10 +636,9 @@ def _render_trades(trades: list[dict]) -> str:
             pnl_str   = f"${pnl:+,.2f}" if isinstance(pnl, (int, float)) else "—"
             label, status_cls = _trade_status(t)
             # AUTO-PAPER badge for bot-generated paper trades
-            notes_entry = t.get("notes_entry") or ""
             auto_badge = (
                 '<span class="badge status-auto">AUTO-PAPER</span>'
-                if "[AUTO-PAPER]" in notes_entry else ""
+                if is_auto_paper(t) else ""
             )
             rows.append(f'''
 <div class="alert-card">

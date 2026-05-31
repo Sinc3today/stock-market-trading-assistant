@@ -36,7 +36,7 @@ import config
 from loguru import logger
 
 from journal.trade_recorder import TradeRecorder
-from learning.paper_broker  import AUTO_TAG
+from learning.paper_broker  import is_auto_paper
 
 
 _OUTCOME_EMOJI = {"win": "✅", "loss": "❌", "breakeven": "➖"}
@@ -93,7 +93,7 @@ class ExpiryResolver:
         open_auto  = [
             t for t in all_trades
             if t.get("outcome") == "open"
-            and AUTO_TAG in (t.get("notes_entry") or "")
+            and is_auto_paper(t)
         ]
         if not open_auto:
             logger.info("ExpiryResolver: no open AUTO-PAPER trades")

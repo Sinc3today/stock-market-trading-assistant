@@ -31,6 +31,23 @@ from learning.predictions   import PredictionLog, Prediction
 
 AUTO_TAG = "[AUTO-PAPER]"
 
+# Structured marker for bot-generated paper trades. Preferred over the legacy
+# AUTO_TAG-in-notes substring check, which broke when the event-driven entry
+# path wrote the date inside the brackets ("[AUTO-PAPER 2026-05-27] ...").
+AUTO_SOURCE = "auto-paper"
+
+
+def is_auto_paper(trade: dict) -> bool:
+    """True if `trade` is a bot-generated paper position.
+
+    Prefers the structured `source` field; falls back to the legacy
+    `[AUTO-PAPER]` notes tag for trades recorded before `source` existed.
+    """
+    if trade.get("source") == AUTO_SOURCE:
+        return True
+    return AUTO_TAG in (trade.get("notes_entry") or "")
+
+
 # ── Multi-position concurrency caps ─────────────────────────────────────────
 # Per-book limits on open paper positions. Disciplined book is tighter (it's
 # the bot's real-money proxy); learning book is looser (it's sample-gathering).
@@ -215,6 +232,7 @@ class PaperBroker:
             notes           = notes,
             dte_bucket      = "45DTE",
             book            = "disciplined",
+            source          = AUTO_SOURCE,
         )
 
         self.plans.mark_executed(today_str, trade_id)
@@ -261,9 +279,10 @@ class PaperBroker:
             legs        = setup.get("legs", []),
             max_profit  = setup.get("max_profit"),
             max_loss    = setup.get("max_loss"),
-            notes       = f"[AUTO-PAPER {setup.get('date')}] event-driven entry",
+            notes       = f"{AUTO_TAG} event-driven entry {setup.get('date')}",
             dte_bucket  = setup.get("dte_bucket"),
             book        = book,
+            source      = AUTO_SOURCE,
         )
         logger.info(
             f"PaperBroker.execute_signal: opened {tid} | "

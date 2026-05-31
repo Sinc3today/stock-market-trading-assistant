@@ -61,6 +61,7 @@ class TradeRecorder:
         notes:           str  = "",
         dte_bucket:      str | None = None,   # "0DTE" / "1-3DTE" / "45DTE"
         book:            str | None = None,   # "disciplined" / "learning"
+        source:          str | None = None,   # "auto-paper" for bot-generated paper trades
     ) -> str:
         """
         Log a trade entry.
@@ -146,6 +147,9 @@ class TradeRecorder:
             # Per-strategy tags (Phase 2a)
             "dte_bucket": dte_bucket,
             "book":       book,
+
+            # Provenance — "auto-paper" for bot-generated paper trades, else None
+            "source":     source,
         }
 
         trades = self._load()

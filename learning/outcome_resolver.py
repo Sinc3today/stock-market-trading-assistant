@@ -33,7 +33,7 @@ import config
 from loguru import logger
 
 from learning.predictions    import PredictionLog
-from learning.paper_broker   import AUTO_TAG
+from learning.paper_broker   import is_auto_paper
 from journal.trade_recorder  import TradeRecorder
 
 
@@ -186,7 +186,7 @@ class OutcomeResolver:
         all_trades = self.trades.get_all_trades()
         open_auto  = [
             t for t in all_trades
-            if t.get("outcome") == "open" and AUTO_TAG in (t.get("notes_entry") or "")
+            if t.get("outcome") == "open" and is_auto_paper(t)
         ]
         if not open_auto:
             return
