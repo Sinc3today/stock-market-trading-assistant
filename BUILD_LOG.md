@@ -4,6 +4,51 @@
 
 ---
 
+## 2026-05-30 (pm) — Fix: auto-paper trades unresolved (structured `source` field)
+
+**Branch:** `feat/router-explain-tracking-surface` (commits `00931bd`, `ab89398`)
+
+Investigated why the two Phase 3 synthetic iron condors (`F1A205B7`, `200A9567`,
+opened 5/27) were still `outcome: open` days past their 5/27 / 5/29 expirations.
+
+**Root cause (systematic-debugging, confirmed empirically):** every consumer that
+acts on bot-generated paper trades filtered with `AUTO_TAG in notes_entry`
+(`AUTO_TAG = "[AUTO-PAPER]"`). The event-driven entry path (`paper_broker.execute_signal`)
+wrote the date *inside* the brackets — `"[AUTO-PAPER 2026-05-27] event-driven entry"` —
+so the literal `[AUTO-PAPER]` substring was absent (`"[AUTO-PAPER]" in that` → `False`,
+verified). The two ICs fell through **all** of: OutcomeResolver MTM snapshot (→ zero
+MTM lines vs the bull put's 11), ExpiryResolver expiry-close (→ the reported bug),
+ExitManager mid-life exits, and the web dashboard AUTO-PAPER badge. Second, independent
+issue: even if matched, the IC legs are stubs (single synthetic `BUY CALL strike=0`),
+so ExpiryResolver would price exit at `0.0` and book a fabricated "win" — that's the
+Phase 4b dependency.
+
+**Fix (robust, TDD, 4 new test files / 12 tests):**
+- `AUTO_SOURCE = "auto-paper"` + `is_auto_paper(trade)` in `paper_broker.py` — prefers a
+  structured `source` field, falls back to the legacy notes tag for old trades.
+- `TradeRecorder.log_entry` persists `source`; both PaperBroker paths stamp
+  `source="auto-paper"`. Event-driven note reformatted so the legacy tag also matches.
+- Switched `outcome_resolver`, `expiry_resolver`, `exit_manager`, `reflector`, and the
+  `web_app` badge from the substring to `is_auto_paper()`.
+- `TradeRecorder.void_trade(id, reason)` — books no P&L (`outcome="void"`, `pnl=None`);
+  excluded from `get_closed_trades` / `get_summary_stats` so voids never touch win-rate.
+
+**Data op (on gitignored `logs/trades.json`; backup `trades.json.bak-20260530`):**
+- Voided both stub ICs (`pre-Phase-4b synthetic stub; not priceable`).
+- Backfilled `source="auto-paper"` onto the open bull put `DB8869CD`.
+- End state: open `[DB8869CD]` (now structurally recognized → will MTM + close at its
+  6/26 expiry); 2 voided; summary stats clean (closed=0, win_rate 0.0, total_pnl 0.0).
+
+**Tests:** full non-integration suite **918 passed** (+12), 10 deselected, 0 regressions.
+The 2 failures (`test_fred`, `test_economic_scanner`) are pre-existing live-FRED HTTP-429
+network flakiness, unrelated.
+
+**Next:** Phase 4b structure builder — real 4-leg IC structures so intraday fills are
+priceable; once legs are real, the existing ExpiryResolver closes them honestly with no
+further change. (Worth a follow-up: mark the 2 live-FRED tests `integration` or mock them.)
+
+---
+
 ## 2026-05-30 — Router `route_explain()` + decision-tracking surface (Phase 1, offline)
 
 **Spec:** `docs/superpowers/specs/2026-05-30-router-explain-tracking-surface-design.md`
