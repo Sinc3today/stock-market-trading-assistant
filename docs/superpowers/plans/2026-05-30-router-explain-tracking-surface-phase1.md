@@ -1,6 +1,6 @@
 # Router `route_explain()` + Decision Tracking Surface — Phase 1 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build the offline half of the router decision-tracking surface — `route_explain()` plus a backfill and parquet rollup over cached 2024 history — so the router's gating behavior (accepted *and* rejected) is observable and the threshold-calibration exercise (spec 2026-05-29) has a full year of data.
 
@@ -36,7 +36,7 @@ Extract the dedup logic into one function that also returns rejection reasons, a
 - Modify: `signals/intraday_entry_router.py` (the `_dedup_filter` function, lines ~104-124)
 - Test: `tests/test_route_explain.py` (new file; first tests land here)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_route_explain.py`:
 
@@ -87,12 +87,12 @@ def test_dedup_filter_still_returns_same_list_as_partition_allowed():
     assert _dedup_filter("iron_condor", ["0DTE", "1-3DTE"], broker) == allowed
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_route_explain.py -v`
 Expected: FAIL — `ImportError: cannot import name '_dedup_partition'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `signals/intraday_entry_router.py`, replace the existing `_dedup_filter` function (lines ~104-124) with the shared primitive plus a wrapper:
 
@@ -134,17 +134,17 @@ def _dedup_filter(strategy: str, dte_buckets: list[str], broker) -> list[str]:
     return allowed
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_route_explain.py -v`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Run the router's existing tests to confirm `route()` unchanged**
+- [x] **Step 5: Run the router's existing tests to confirm `route()` unchanged**
 
 Run: `pytest tests/test_intraday_entry_router.py tests/test_intraday_router_wf.py -v --tb=short`
 Expected: PASS (all pre-existing tests still green — the refactor is behavior-preserving).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add signals/intraday_entry_router.py tests/test_route_explain.py
@@ -161,7 +161,7 @@ A human-readable reason a DTE bucket was *not* assigned by `_assign_dte_buckets`
 - Modify: `signals/intraday_entry_router.py` (add function after `_assign_dte_buckets`)
 - Test: `tests/test_route_explain.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_route_explain.py`:
 
@@ -187,12 +187,12 @@ def test_dte_reject_detail_afternoon_drops_0dte():
     assert "afternoon" in detail
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_route_explain.py -k dte_reject_detail -v`
 Expected: FAIL — `ImportError: cannot import name '_dte_reject_detail'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `signals/intraday_entry_router.py`, add directly after `_assign_dte_buckets` (ends ~line 101):
 
@@ -209,12 +209,12 @@ def _dte_reject_detail(setup, now: datetime, bucket: str) -> str:
     return "morning → 0DTE assigned, 1-3DTE not selected"
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_route_explain.py -k dte_reject_detail -v`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add signals/intraday_entry_router.py tests/test_route_explain.py
@@ -231,7 +231,7 @@ The non-mutating decision trace. Must agree with `route()` on the accept set (te
 - Modify: `signals/intraday_entry_router.py` (add `route_explain` after `route`)
 - Test: `tests/test_route_explain.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_route_explain.py`:
 
@@ -314,12 +314,12 @@ def test_route_explain_accept_set_matches_route_across_fixtures():
         assert explain_accepted == route_accepted, (s.conviction, s.score, now)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_route_explain.py -k route_explain -v`
 Expected: FAIL — `ImportError: cannot import name 'route_explain'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `signals/intraday_entry_router.py`, add after `route` (ends ~line 165):
 
@@ -366,12 +366,12 @@ def route_explain(setup, now: datetime, broker) -> dict:
     }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_route_explain.py -v`
 Expected: PASS (all tests in the file).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add signals/intraday_entry_router.py tests/test_route_explain.py
@@ -386,7 +386,7 @@ git commit -m "feat: add route_explain() decision trace for the entry router"
 - Create: `learning/router_tracker.py`
 - Test: `tests/test_router_tracker.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_router_tracker.py`:
 
@@ -460,12 +460,12 @@ def test_write_trace_appends_and_round_trips(tmp_path, monkeypatch):
     assert json.loads(lines[0]) == rec
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_router_tracker.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'learning.router_tracker'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `learning/router_tracker.py`:
 
@@ -527,12 +527,12 @@ def write_trace(record: dict, day=None) -> str:
     return path
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_router_tracker.py -v`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add learning/router_tracker.py tests/test_router_tracker.py
@@ -547,7 +547,7 @@ git commit -m "feat: add router_tracker (flatten + append JSONL trace rows)"
 - Create: `backtests/router_track_backfill.py`
 - Test: `tests/test_router_track_backfill.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_router_track_backfill.py`:
 
@@ -633,12 +633,12 @@ def test_backfill_empty_setups_day_writes_nothing(tmp_path, monkeypatch):
     assert n == 0
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_router_track_backfill.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'backtests.router_track_backfill'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `backtests/router_track_backfill.py`:
 
@@ -708,12 +708,12 @@ if __name__ == "__main__":
     logger.info(f"backfill: done, {total} rows")
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_router_track_backfill.py -v`
 Expected: PASS (5 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backtests/router_track_backfill.py tests/test_router_track_backfill.py
@@ -728,7 +728,7 @@ git commit -m "feat: add router_track_backfill (replay cached history via route_
 - Create: `backtests/router_track_rollup.py`
 - Test: `tests/test_router_track_rollup.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_router_track_rollup.py`:
 
@@ -785,12 +785,12 @@ def test_rollup_empty_dir_writes_schema_only_parquet(tmp_path):
     assert "reject_gates" in df.columns
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_router_track_rollup.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'backtests.router_track_rollup'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `backtests/router_track_rollup.py`:
 
@@ -872,12 +872,12 @@ if __name__ == "__main__":
     rollup_to_parquet(load_jsonl_dir(args.in_dir), args.out)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_router_track_rollup.py -v`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backtests/router_track_rollup.py tests/test_router_track_rollup.py
@@ -891,7 +891,7 @@ git commit -m "feat: add router_track_rollup (JSONL -> parquet for calibration)"
 **Files:**
 - Test: `tests/test_router_track_integration.py`
 
-- [ ] **Step 1: Write the integration test**
+- [x] **Step 1: Write the integration test**
 
 Create `tests/test_router_track_integration.py`:
 
@@ -925,12 +925,12 @@ def test_backfill_then_rollup_on_real_april_2024(tmp_path, monkeypatch):
     assert df["source"].eq("backfill").all()
 ```
 
-- [ ] **Step 2: Run the integration test**
+- [x] **Step 2: Run the integration test**
 
 Run: `pytest tests/test_router_track_integration.py -v -m integration`
 Expected: PASS. If it fails with empty data, confirm `backtests/.cache/SPY_5minute_2024-04-*.parquet` exist (they do per the spec's data audit) and that `build_historical_setup` finds ≥30 daily bars before 2024-04-01 in `backtests/spy_history.csv`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/test_router_track_integration.py
@@ -943,17 +943,17 @@ git commit -m "test: end-to-end backfill+rollup integration on real April 2024 d
 
 Not a code change — produces the artifact calibration consumes. Run after Tasks 1-7 are green.
 
-- [ ] **Step 1: Run the full-year backfill**
+- [x] **Step 1: Run the full-year backfill**
 
 Run: `python -m backtests.router_track_backfill --start 2024-01-02 --end 2024-12-31`
 Expected: a `backfill: N trace rows over 2024-01-02..2024-12-31` log line with N ≥ 100. First run may hit Polygon for any day not already cached; cached days are free.
 
-- [ ] **Step 2: Roll up to parquet**
+- [x] **Step 2: Roll up to parquet**
 
 Run: `python -m backtests.router_track_rollup`
 Expected: `rollup: N rows → .../backtests/.cache/router_track/router_track.parquet`.
 
-- [ ] **Step 3: Sanity-check the artifact**
+- [x] **Step 3: Sanity-check the artifact**
 
 Run:
 ```bash
@@ -961,7 +961,7 @@ python -c "import pandas as pd; df=pd.read_parquet('backtests/.cache/router_trac
 ```
 Expected: non-zero rows; a distribution of `reject_gates` (tier/dte/dedup combos) — this is the gating-behavior data calibration will reference.
 
-- [ ] **Step 4: Note the artifact location for the next session**
+- [x] **Step 4: Note the artifact location for the next session**
 
 The parquet under `backtests/.cache/router_track/` is git-ignored (it's under `.cache/`). Record in BUILD_LOG.md that the backfill artifact exists and how to regenerate it (the two commands above). No commit of the parquet itself.
 
@@ -969,17 +969,17 @@ The parquet under `backtests/.cache/router_track/` is git-ignored (it's under `.
 
 ## Final verification (before declaring Phase 1 done)
 
-- [ ] **Run the full non-integration suite**
+- [x] **Run the full non-integration suite**
 
 Run: `pytest tests/ -v -m "not integration" --tb=short`
 Expected: all green, including the 4 new test files. (Per Standing Rule #5, this gate must pass before any push.)
 
-- [ ] **Confirm `route()` behavior is unchanged**
+- [x] **Confirm `route()` behavior is unchanged**
 
 Run: `pytest tests/test_intraday_entry_router.py tests/test_intraday_router_wf.py -v`
 Expected: all pre-existing router tests still pass (the Task 1 refactor was behavior-preserving).
 
-- [ ] **Append a BUILD_LOG.md entry** summarizing Phase 1 (route_explain + tracker + backfill/rollup, the seeded 2024 artifact, and that Phase 2 live wiring remains deferred).
+- [x] **Append a BUILD_LOG.md entry** summarizing Phase 1 (route_explain + tracker + backfill/rollup, the seeded 2024 artifact, and that Phase 2 live wiring remains deferred).
 
 ---
 

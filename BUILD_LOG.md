@@ -4,6 +4,58 @@
 
 ---
 
+## 2026-05-30 — Router `route_explain()` + decision-tracking surface (Phase 1, offline)
+
+**Spec:** `docs/superpowers/specs/2026-05-30-router-explain-tracking-surface-design.md`
+**Plan:** `docs/superpowers/plans/2026-05-30-router-explain-tracking-surface-phase1.md`
+**Branch:** `feat/router-explain-tracking-surface` (7 build commits `553c160..7183daa`)
+
+Built the **offline half** of the router decision-tracking surface — a non-mutating
+`route_explain()` plus a backfill + parquet rollup over cached 2024 history — so the
+entry router's gating behavior (accepted *and* rejected buckets) is observable, feeding
+the threshold-calibration exercise (spec 2026-05-29). Phase 2 (live trace at the scanner
+seam) is deferred per the offline-only decision.
+
+**Modules shipped (pure addition; `route()` behavior unchanged):**
+- `signals/intraday_entry_router.py` — extracted `_dedup_partition` (returns reject
+  reasons); `_dedup_filter` now wraps it. Added `_dte_reject_detail` reason helper and
+  `route_explain()`, which reuses `_passes_entry_tier` / `_assign_dte_buckets` and emits a
+  full decision trace without touching broker state.
+- `learning/router_tracker.py` — flattens a decision trace to an append-only JSONL row.
+- `backtests/router_track_backfill.py` — replays cached 2024 days through `route_explain()`
+  (per-day fresh `_MockBroker`, 09:45-ET model mirroring the walk-forward).
+- `backtests/router_track_rollup.py` — compacts the JSONL to one parquet for calibration.
+
+**Tests:** 23 new unit tests across 5 files (`test_route_explain`, `test_router_tracker`,
+`test_router_track_backfill`, `test_router_track_rollup`, `test_router_track_integration`)
+— all green. Full non-integration suite: **906 passed, 2 failed, 10 deselected** (3m15s).
+The 2 failures (`test_fred::test_fred_can_fetch_jobs_data` → live FRED API HTTP 429;
+`test_economic_scanner::test_observation_has_direction` → same live fetch) are pre-existing
+network-bound external-API tests, unrelated to this work (zero source changes this session).
+
+**Task 8 — data generation (this session, no code change):**
+- Full-year JSONL backfill seeded: every 2024 trading day under
+  `logs/learning/router_track/*.jsonl` (gitignored).
+- Rolled up to `backtests/.cache/router_track/router_track.parquet` (gitignored): **370 rows**,
+  span 2024-01-02 → 2024-12-31. Reject-gate distribution: **219 tier / 135 dte / 16 clean**;
+  **167 accepted buckets**. This is the gating-behavior dataset calibration will reference.
+
+**Regenerate the artifact (both commands):**
+```bash
+python -m backtests.router_track_backfill --start 2024-01-02 --end 2024-12-31
+python -m backtests.router_track_rollup
+```
+
+**Next step (separate exercise):** threshold calibration (spec 2026-05-29) — examine the
+parquet's raw gating distribution vs the 5/21 baseline, then populate the four `MIN_*`
+verdict constants in `backtests/intraday_router_wf.py`.
+
+**Push status:** still blocked on the PAT scope noted in the 5/28 entry — local `main` /
+this branch are ahead of `origin`. Resolve with a fine-grained PAT carrying `Contents: write`
+(or classic PAT with `repo`) + `gh auth login` before pushing.
+
+---
+
 ## 2026-05-28 — Intraday entry-router walk-forward backtest (Phase 3 validation harness)
 
 **Spec:** `docs/superpowers/specs/2026-05-28-intraday-router-wf-design.md`
