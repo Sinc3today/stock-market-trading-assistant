@@ -70,6 +70,7 @@ def build_intraday_structure(setup: dict, spot: float, chain, as_of=None):
                             LiveChainPricer(chain), as_of=as_of)
     if built is None:
         return None
+    # replaces the router's placeholder legs/pricing with live-priced values
     return {**setup, "legs": built["legs"], "entry_price": built["entry_price"],
             "max_profit": built["max_profit"], "max_loss": built["max_loss"]}
 
@@ -232,8 +233,10 @@ class IntradayScanner:
             try:
                 broker      = PaperBroker()
                 setup_dicts = _route_entry(setup, now_et, broker)
+                if not setup_dicts:
+                    continue
                 spy_spot    = float(df_15m["close"].iloc[-1])
-                chain       = OptionsChain(polygon_client=self.polygon)
+                chain       = OptionsChain()
                 for sd in setup_dicts:
                     enriched = build_intraday_structure(sd, spot=spy_spot, chain=chain)
                     if enriched is None:
