@@ -25,6 +25,7 @@ import pytz
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import config
+from data.options_chain import OptionsChain
 from data.polygon_client import PolygonClient
 from data.alpaca_client import AlpacaClient
 from data.cache import cache_get, cache_set
@@ -49,6 +50,28 @@ EASTERN = pytz.timezone("US/Eastern")
 # Key: (ticker, strategy) → last score posted
 _fired_cache: dict[tuple, int] = {}
 RESEND_SCORE_DELTA = 10   # Only re-alert if score improves by 10+ pts
+
+
+def build_intraday_structure(setup: dict, spot: float, chain, as_of=None):
+    """Materialize a routed setup_dict into one with REAL legs + pricing.
+
+    Calls build_structure with LiveChainPricer(chain) and merges the result
+    into a copy of the setup dict.  Returns the enriched dict, or None when
+    the structure can't be priced (unpriceable chains, non-positive entry, etc.).
+
+    Args:
+        setup:  setup_dict from the entry router (must have 'strategy' and 'dte_bucket').
+        spot:   current SPY spot price used to select strikes.
+        chain:  an OptionsChain-compatible object (real or test double).
+        as_of:  date for expiry window; defaults to today when omitted.
+    """
+    from signals.intraday_structure_builder import build_structure, LiveChainPricer
+    built = build_structure(setup["strategy"], setup["dte_bucket"], spot,
+                            LiveChainPricer(chain), as_of=as_of)
+    if built is None:
+        return None
+    return {**setup, "legs": built["legs"], "entry_price": built["entry_price"],
+            "max_profit": built["max_profit"], "max_loss": built["max_loss"]}
 
 
 class IntradayScanner:
@@ -209,10 +232,19 @@ class IntradayScanner:
             try:
                 broker      = PaperBroker()
                 setup_dicts = _route_entry(setup, now_et, broker)
+                spy_spot    = float(df_15m["close"].iloc[-1])
+                chain       = OptionsChain(polygon_client=self.polygon)
                 for sd in setup_dicts:
-                    result = broker.execute_signal(sd)
+                    enriched = build_intraday_structure(sd, spot=spy_spot, chain=chain)
+                    if enriched is None:
+                        logger.info(
+                            f"intraday structure unpriceable — skipped "
+                            f"{sd.get('strategy')}/{sd.get('dte_bucket')}"
+                        )
+                        continue
+                    result = broker.execute_signal(enriched)
                     logger.info(
-                        f"Phase 3 entry: {sd['strategy']} @ {sd['dte_bucket']} → "
+                        f"Phase 3 entry: {enriched['strategy']} @ {enriched['dte_bucket']} → "
                         f"trade_id={result.get('trade_id')} recorded={result.get('recorded')}"
                     )
             except Exception as e:

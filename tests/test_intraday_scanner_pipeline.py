@@ -93,7 +93,9 @@ def test_flag_on_high_conv_setup_triggers_execute_signal(tmp_path, monkeypatch):
     scanner.logger = mock.Mock()  # avoid JSON serialization of SPYSetup in log_alert
 
     with mock.patch("scanners.intraday_scanner.PaperBroker") as PB, \
-         mock.patch("scanners.intraday_scanner._route_entry") as router_mock:
+         mock.patch("scanners.intraday_scanner._route_entry") as router_mock, \
+         mock.patch("scanners.intraday_scanner.build_intraday_structure",
+                    side_effect=lambda sd, **kw: sd) as _bis:
         router_mock.return_value = [{
             "date": "2026-05-27", "strategy": "call_debit_spread",
             "dte_bucket": "0DTE", "book": "disciplined",
@@ -143,7 +145,9 @@ def test_router_returning_two_dicts_produces_two_execute_signal_calls(tmp_path, 
     scanner.logger = mock.Mock()  # avoid JSON serialization of SPYSetup in log_alert
 
     with mock.patch("scanners.intraday_scanner.PaperBroker") as PB, \
-         mock.patch("scanners.intraday_scanner._route_entry") as router_mock:
+         mock.patch("scanners.intraday_scanner._route_entry") as router_mock, \
+         mock.patch("scanners.intraday_scanner.build_intraday_structure",
+                    side_effect=lambda sd, **kw: sd) as _bis:
         router_mock.return_value = [
             {"date": "2026-05-27", "strategy": "call_debit_spread",
              "dte_bucket": "0DTE", "book": "disciplined", "direction": "bullish",
