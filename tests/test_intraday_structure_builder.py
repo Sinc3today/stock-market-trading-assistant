@@ -83,3 +83,49 @@ def test_risk_debit():
     mp, ml = _risk("bull_debit", entry=1.20)
     assert mp == round((DEBIT_SHORT_OTM - 1.20) * 100, 2)  # (3-1.2)*100 = 180.0
     assert ml == round(1.20 * 100, 2)                      # 120.0
+
+
+# ---------------------------------------------------------------------------
+# Task 4: LiveChainPricer
+# ---------------------------------------------------------------------------
+
+from datetime import date
+
+
+class _FakeChain:
+    """Stand-in for OptionsChain.get_chain returning canned contracts."""
+    def __init__(self, contracts): self._c = contracts
+    def get_chain(self, ticker, contract_type, min_expiration, max_expiration,
+                  strike_min=None, strike_max=None, limit=50):
+        return [c for c in self._c if c["type"] == contract_type]
+
+
+def _contract(strike, cp, mid, exp="2026-06-01"):
+    return {"ticker": f"O:SPY..{cp}{strike}", "strike": float(strike),
+            "expiration": exp, "dte": 0, "type": cp, "mid": mid,
+            "bid": mid, "ask": mid, "delta": None}
+
+
+def test_live_pricer_prices_iron_condor():
+    from signals.intraday_structure_builder import LiveChainPricer
+    chain = _FakeChain([
+        _contract(497, "put", 1.20), _contract(492, "put", 0.40),
+        _contract(503, "call", 1.10), _contract(508, "call", 0.35),
+    ])
+    legs = select_legs("iron_condor", spot=500.0)
+    out = LiveChainPricer(chain).price(legs, "iron_condor", "0DTE", spot=500.0,
+                                       as_of=date(2026, 6, 1))
+    assert round(out["entry_price"], 2) == 1.55
+    assert out["max_profit"] == 155.0
+    assert out["max_loss"] == 345.0
+    # journal leg shape
+    assert all(set(("action", "type", "option_type", "strike", "expiration", "expiry", "mid")) <= set(l) for l in out["legs"])
+    assert {l["type"] for l in out["legs"]} == {"put", "call"}
+
+
+def test_live_pricer_returns_none_when_a_leg_missing():
+    from signals.intraday_structure_builder import LiveChainPricer
+    chain = _FakeChain([_contract(497, "put", 1.20)])  # only one of four legs
+    legs = select_legs("iron_condor", spot=500.0)
+    assert LiveChainPricer(chain).price(legs, "iron_condor", "0DTE", 500.0,
+                                        as_of=date(2026, 6, 1)) is None

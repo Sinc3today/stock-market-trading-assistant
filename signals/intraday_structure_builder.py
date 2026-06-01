@@ -7,6 +7,10 @@ docs/superpowers/specs/2026-05-31-phase4b-structure-builder-design.md.
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
+
+from loguru import logger
+
 # Spot-offset geometry (points). Fixed constants for now (parity + YAGNI);
 # promote to config.py only when a hypothesis wants to tune them.
 CONDOR_SHORT_OTM = 3.0   # short strikes this many points OTM
@@ -73,3 +77,67 @@ def _risk(structure: str, entry: float) -> tuple[float, float]:
     if _is_credit(structure):
         return round(entry * 100, 2), round((CONDOR_WING - entry) * 100, 2)
     return round((DEBIT_SHORT_OTM - entry) * 100, 2), round(entry * 100, 2)
+
+
+# ---------------------------------------------------------------------------
+# Task 4: LiveChainPricer
+# ---------------------------------------------------------------------------
+
+_CP_TO_TYPE = {"C": "call", "P": "put"}
+
+
+def _target_expiry_window(dte_bucket: str, as_of: date) -> tuple[date, date]:
+    """[min, max] expiry dates for a bucket. 0DTE = same day; 1-3DTE = the
+    next 1..3 calendar days (pricer picks the nearest listed expiry in range)."""
+    if dte_bucket == "0DTE":
+        return as_of, as_of
+    if dte_bucket == "1-3DTE":
+        return as_of + timedelta(days=1), as_of + timedelta(days=3)
+    return as_of, as_of
+
+
+class LiveChainPricer:
+    """Price known strikes from the live OptionsChain snapshot."""
+    def __init__(self, options_chain):
+        self.chain = options_chain
+
+    def price(self, legs, structure, dte_bucket, spot, as_of):
+        min_exp, max_exp = _target_expiry_window(dte_bucket, as_of)
+        # Fetch both contract types once each, across the bucket's expiry window.
+        calls = self.chain.get_chain("SPY", "call", min_exp, max_exp,
+                                     strike_min=spot * 0.90, strike_max=spot * 1.10)
+        puts  = self.chain.get_chain("SPY", "put",  min_exp, max_exp,
+                                     strike_min=spot * 0.90, strike_max=spot * 1.10)
+        by_key = {}
+        chosen_exp = None
+        for c in (calls + puts):
+            if c.get("mid") is None:
+                continue
+            by_key[(c["type"], float(c["strike"]))] = c
+            chosen_exp = chosen_exp or c.get("expiration")
+
+        priced = []
+        for leg in legs:
+            ctype = _CP_TO_TYPE[leg["cp"]]
+            c = by_key.get((ctype, float(leg["strike"])))
+            if c is None:
+                logger.info(f"LiveChainPricer: no quote for {ctype} {leg['strike']} — unpriceable")
+                return None
+            priced.append({**leg, "type": ctype, "mid": c["mid"]})
+
+        entry = _net_premium(priced, structure)
+        if entry <= 0:
+            return None  # a non-positive credit/debit means the chain is unusable
+        mp, ml = _risk(structure, entry)
+        exp = chosen_exp or min_exp.isoformat()
+        journal_legs = [{
+            "action":      leg["action"],
+            "type":        leg["type"],
+            "option_type": leg["type"],
+            "strike":      leg["strike"],
+            "expiration":  exp,
+            "expiry":      exp,
+            "mid":         leg["mid"],
+        } for leg in priced]
+        return {"legs": journal_legs, "entry_price": round(entry, 2),
+                "max_profit": mp, "max_loss": ml}
