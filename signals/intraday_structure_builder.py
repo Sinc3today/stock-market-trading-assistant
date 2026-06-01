@@ -110,9 +110,12 @@ class LiveChainPricer:
                                      strike_min=spot * 0.90, strike_max=spot * 1.10)
 
         # Group contracts by expiry: {expiry_iso -> {(type, strike): contract}}
+        # Use `mark` (quote midpoint, else day close/vwap) so structures still
+        # price on a plan whose snapshot carries no bid/ask. See memory:
+        # reference-polygon-snapshot-no-quotes.
         by_expiry: dict[str, dict] = {}
         for c in (calls + puts):
-            if c.get("mid") is None:
+            if c.get("mark") is None:
                 continue
             exp_iso = c.get("expiration")
             if exp_iso is None:
@@ -141,7 +144,7 @@ class LiveChainPricer:
             if c is None:
                 logger.info(f"LiveChainPricer: no quote for {ctype} {leg['strike']} — unpriceable")
                 return None
-            priced.append({**leg, "type": ctype, "mid": c["mid"]})
+            priced.append({**leg, "type": ctype, "mid": c["mark"]})
 
         entry = _net_premium(priced, structure)
         if entry <= 0:

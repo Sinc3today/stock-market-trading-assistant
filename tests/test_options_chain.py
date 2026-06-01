@@ -25,6 +25,7 @@ def _fake_snapshot(
     *, ticker, strike, expiration, contract_type,
     delta=0.50, gamma=0.01, theta=-0.05, vega=0.1,
     iv=0.20, bid=1.00, ask=1.10, oi=1000, volume=500,
+    day_close=None, vwap=None,
 ):
     return SimpleNamespace(
         details            = SimpleNamespace(
@@ -35,7 +36,7 @@ def _fake_snapshot(
             delta=delta, gamma=gamma, theta=theta, vega=vega),
         implied_volatility = iv,
         last_quote         = SimpleNamespace(bid=bid, ask=ask),
-        day                = SimpleNamespace(volume=volume, vwap=None),
+        day                = SimpleNamespace(volume=volume, vwap=vwap, close=day_close),
         open_interest      = oi,
     )
 
@@ -137,12 +138,38 @@ def test_normalise_handles_missing_quote_bid_ask():
         greeks             = SimpleNamespace(delta=0.5, gamma=0.01, theta=-0.05, vega=0.1),
         implied_volatility = 0.2,
         last_quote         = SimpleNamespace(bid=None, ask=None),
-        day                = SimpleNamespace(volume=None, vwap=None),
+        day                = SimpleNamespace(volume=None, vwap=None, close=None),
         open_interest      = 0,
     )
     out = OptionsChain._normalise(bad)
     assert out["mid"] is None
+    assert out["mark"] is None   # no quote AND no day price → no mark
     assert out["delta"] == 0.5
+
+
+def test_normalise_mark_falls_back_to_day_close_when_no_quote():
+    """This Polygon plan's snapshot has no bid/ask (mid=None); mark must fall
+    back to day.close so LiveChainPricer can still price. mid stays None."""
+    snap = _fake_snapshot(
+        ticker="O:X", strike=762.0,
+        expiration=(date.today()).isoformat(), contract_type="call",
+        bid=None, ask=None, day_close=0.37, vwap=0.12,
+    )
+    out = OptionsChain._normalise(snap)
+    assert out["mid"] is None
+    assert out["mark"] == 0.37
+
+
+def test_normalise_mark_prefers_quote_midpoint_over_day_close():
+    """When a real quote exists, mark is the quote midpoint, not day.close."""
+    snap = _fake_snapshot(
+        ticker="O:X", strike=600.0,
+        expiration=(date.today()).isoformat(), contract_type="call",
+        bid=1.00, ask=1.10, day_close=0.50,
+    )
+    out = OptionsChain._normalise(snap)
+    assert out["mid"] == 1.05
+    assert out["mark"] == 1.05
 
 
 # ─────────────────────────────────────────

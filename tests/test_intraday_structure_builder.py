@@ -106,9 +106,12 @@ class _FakeChain:
         ]
 
 
-def _contract(strike, cp, mid, exp="2026-06-01"):
+def _contract(strike, cp, mid, exp="2026-06-01", mark=None):
+    # mark defaults to mid (real-quote case); pass mark explicitly with mid=None
+    # to simulate this plan's quote-less snapshot.
     return {"ticker": f"O:SPY..{cp}{strike}", "strike": float(strike),
             "expiration": exp, "dte": 0, "type": cp, "mid": mid,
+            "mark": mark if mark is not None else mid,
             "bid": mid, "ask": mid, "delta": None}
 
 
@@ -127,6 +130,22 @@ def test_live_pricer_prices_iron_condor():
     # journal leg shape
     assert all(set(("action", "type", "option_type", "strike", "expiration", "expiry", "mid")) <= set(l) for l in out["legs"])
     assert {l["type"] for l in out["legs"]} == {"put", "call"}
+
+
+def test_live_pricer_prices_from_mark_when_no_quote():
+    """Production case on this Polygon plan: snapshot has no bid/ask so mid is
+    None, but `mark` (day close) is set — LiveChainPricer must still price."""
+    from signals.intraday_structure_builder import LiveChainPricer
+    chain = _FakeChain([
+        _contract(497, "put",  None, mark=1.20), _contract(492, "put",  None, mark=0.40),
+        _contract(503, "call", None, mark=1.10), _contract(508, "call", None, mark=0.35),
+    ])
+    legs = select_legs("iron_condor", spot=500.0)
+    out = LiveChainPricer(chain).price(legs, "iron_condor", "0DTE", spot=500.0,
+                                       as_of=date(2026, 6, 1))
+    assert out is not None
+    assert round(out["entry_price"], 2) == 1.55
+    assert out["legs"][0]["mid"] == 1.20   # mark flowed into the leg price
 
 
 def test_live_pricer_returns_none_when_a_leg_missing():

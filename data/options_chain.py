@@ -260,9 +260,17 @@ class OptionsChain:
 
     @staticmethod
     def _safe_mid(contract: dict) -> float:
-        """Mid price, or 0.0 when bid/ask unavailable (Saturday eve, etc)."""
-        m = contract.get("mid")
-        return float(m) if isinstance(m, (int, float)) else 0.0
+        """Per-share mark, or 0.0 when no price is available.
+
+        Prefers the quote midpoint (`mid`); falls back to `mark` (day close /
+        vwap) so real-chain pricing still works on a plan whose snapshot has no
+        bid/ask. See memory: reference-polygon-snapshot-no-quotes.
+        """
+        for key in ("mid", "mark"):
+            m = contract.get(key)
+            if isinstance(m, (int, float)):
+                return float(m)
+        return 0.0
 
     @staticmethod
     def _closest_strike(chain: list[dict], target: float) -> Optional[dict]:
@@ -344,6 +352,17 @@ class OptionsChain:
         if isinstance(bid, (int, float)) and isinstance(ask, (int, float)) and bid > 0 and ask > 0:
             mid = round((bid + ask) / 2, 3)
 
+        # Mark: a usable per-share price even when this plan's snapshot carries
+        # no quote (last_quote None → mid None). Prefer the quote midpoint, then
+        # fall back to the day's close, then vwap. See memory:
+        # reference-polygon-snapshot-no-quotes.
+        mark = mid
+        if mark is None and day is not None:
+            for cand in (getattr(day, "close", None), getattr(day, "vwap", None)):
+                if isinstance(cand, (int, float)) and cand > 0:
+                    mark = round(float(cand), 3)
+                    break
+
         try:
             exp_str = d.expiration_date
             exp_date = date.fromisoformat(exp_str if isinstance(exp_str, str) else exp_str.isoformat())
@@ -358,6 +377,7 @@ class OptionsChain:
             "dte":           dte,
             "type":          d.contract_type,
             "mid":           mid,
+            "mark":          mark,
             "bid":           bid,
             "ask":           ask,
             "iv":            getattr(snapshot, "implied_volatility", None),
