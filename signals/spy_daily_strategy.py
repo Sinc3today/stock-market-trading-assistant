@@ -80,13 +80,18 @@ class SPYDailyStrategy:
         polygon_client = None,   # data.polygon_client.PolygonClient
         vix_client     = None,   # data.vix_client.VIXClient  (stub — build next)
         ivr_client     = None,   # data.ivr_client.IVRClient  (stub — build next)
-        event_calendar = None,   # list[date] — FOMC, CPI, NFP, OPEX dates
+        event_calendar = None,   # EventCalendar object OR list[date] (FOMC/CPI/NFP/OPEX)
         options_chain  = None,   # data.options_chain.OptionsChain (Polygon Options Starter+)
     ):
         self.polygon  = polygon_client
         self.vix      = vix_client
         self.ivr      = ivr_client
-        self.detector = RegimeDetector(event_calendar=event_calendar)
+        # RegimeDetector wants an iterable of block dates; callers may pass the
+        # EventCalendar object (MorningBriefer needs the object) — normalize here.
+        block_dates = (event_calendar.get_block_dates()
+                       if hasattr(event_calendar, "get_block_dates")
+                       else event_calendar)
+        self.detector = RegimeDetector(event_calendar=block_dates)
         # If options_chain is not injected, instantiate one — it'll just
         # return None from its API calls on free tier, and OptionsLayer
         # will fall through to theoretical legs.

@@ -48,6 +48,33 @@ def _strategy():
     )
 
 
+# ── event_calendar accepts the EventCalendar object (regression) ──────────
+
+def test_strategy_accepts_event_calendar_object():
+    """Live wiring passes an EventCalendar OBJECT (MorningBriefer needs it).
+    SPYDailyStrategy must normalize it to block dates for RegimeDetector,
+    which expects an iterable of dates — set(EventCalendar()) would TypeError."""
+    from data.event_calendar import EventCalendar
+    ec = EventCalendar()
+    strat = SPYDailyStrategy(
+        polygon_client=_FakePolygon(), vix_client=_FakeVix(), ivr_client=_FakeIvr(),
+        event_calendar=ec,
+    )
+    # detector got the block-date set, not the object
+    assert isinstance(strat.detector.event_calendar, set)
+    assert strat.detector.event_calendar == set(ec.get_block_dates())
+
+
+def test_strategy_still_accepts_event_date_list():
+    """Back-compat: a plain list[date] must still work."""
+    dates = [date(2026, 6, 17), date(2026, 6, 18)]
+    strat = SPYDailyStrategy(
+        polygon_client=_FakePolygon(), vix_client=_FakeVix(), ivr_client=_FakeIvr(),
+        event_calendar=dates,
+    )
+    assert strat.detector.event_calendar == set(dates)
+
+
 # ── OptionsLayer DTE override ──────────────────────────
 
 def test_options_layer_dte_target_override():

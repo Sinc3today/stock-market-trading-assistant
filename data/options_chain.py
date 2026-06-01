@@ -14,7 +14,8 @@ Returned contract shape:
         "expiration":  "2026-06-05",
         "dte":         20,
         "type":        "call" | "put",
-        "mid":         4.20,         # (bid+ask)/2 — None outside market hours
+        "mid":         4.20,         # (bid+ask)/2 — None when no quote
+        "mark":        4.20,         # mid, else day close, else vwap (usable price)
         "iv":          0.143,        # implied volatility (decimal)
         "delta":       0.55,
         "gamma":       0.012,

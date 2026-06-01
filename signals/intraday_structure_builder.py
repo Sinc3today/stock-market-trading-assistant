@@ -144,6 +144,7 @@ class LiveChainPricer:
             if c is None:
                 logger.info(f"LiveChainPricer: no quote for {ctype} {leg['strike']} — unpriceable")
                 return None
+            # store the mark under "mid" for journal/_net_premium compatibility
             priced.append({**leg, "type": ctype, "mid": c["mark"]})
 
         entry = _net_premium(priced, structure)
