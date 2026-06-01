@@ -69,7 +69,7 @@ def _net_premium(priced_legs: list[dict], structure: str) -> float:
 
 def _risk(structure: str, entry: float) -> tuple[float, float]:
     """(max_profit, max_loss) in dollars per 1 contract, matching the
-    backtest's _simulate_short_dte_with_expiration formula."""
+    credit/debit formula in backtests/intraday_router_wf.py::_simulate_short_dte_with_expiration."""
     if _is_credit(structure):
         return round(entry * 100, 2), round((CONDOR_WING - entry) * 100, 2)
     return round((DEBIT_SHORT_OTM - entry) * 100, 2), round(entry * 100, 2)
