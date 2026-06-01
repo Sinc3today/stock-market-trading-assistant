@@ -235,6 +235,10 @@ def _simulate_short_dte_with_expiration(day, expiry,
     if _built is None:
         return None
     # Apply slippage and compute max_profit using the same formula as before.
+    # The builder's max_profit/max_loss are pre-slippage and intentionally NOT used
+    # here — the backtest recomputes them on the post-slippage entry to preserve
+    # walk-forward parity. Do not "simplify" to _built["max_profit"].
+    # (The builder returns the raw spread value; slippage is a backtest concern.)
     credit = is_credit_structure(structure)
     entry_px = _built["entry_price"]
     entry_px = (entry_px - SLIPPAGE) if credit else (entry_px + SLIPPAGE)

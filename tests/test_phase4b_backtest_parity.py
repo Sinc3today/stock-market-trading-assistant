@@ -2,8 +2,11 @@
 
 Parity guard for Task 7: verifies that HistoricalPricer.price() called with
 entry_ts and expiry parameters produces the same per-leg marks as the backtest's
-inline marks_at() logic, and therefore the same entry_price, max_profit, and
-max_loss.
+inline marks_at() logic, and therefore the same raw entry_price.
+
+NOTE: these tests do NOT assert the backtest's post-slippage max_profit/max_loss
+against the builder's values — slippage is applied by the backtest after calling
+build_structure(), so the builder's max_profit/max_loss differ intentionally.
 
 Also tests the build_structure() forwarding of entry_ts and expiry.
 """

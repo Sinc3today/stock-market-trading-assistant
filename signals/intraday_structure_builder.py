@@ -220,6 +220,7 @@ class HistoricalPricer:
 
     def price(self, legs, structure, dte_bucket, spot, as_of,
               entry_ts=None, expiry=None):
+        import pytz as _pytz
         from data.options_history import option_ticker
         if expiry is not None:
             exp = expiry
@@ -238,10 +239,8 @@ class HistoricalPricer:
                 # from the backtest). Convert the df index to ET for the comparison.
                 idx = df.index
                 if idx.tz is None:
-                    import pytz as _pytz
                     idx = idx.tz_localize("UTC").tz_convert(_pytz.timezone("US/Eastern"))
                 else:
-                    import pytz as _pytz
                     idx = idx.tz_convert(_pytz.timezone("US/Eastern"))
                 at = df["close"][idx <= entry_ts]
                 if at.empty:
