@@ -30,13 +30,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import pytz
 from loguru import logger
 
-ET = pytz.timezone("US/Eastern")
-
-# ── Structure parameters re-exported from the shared builder ─────────
+# ── Structure parameters sourced from the shared builder ─────────────
 from signals.intraday_structure_builder import (
     select_legs as _select_legs,
     CONDOR_SHORT_OTM, CONDOR_WING, DEBIT_SHORT_OTM,
 )
+
+ET = pytz.timezone("US/Eastern")
 # Intraday exit
 PROFIT_TARGET_PCT  = 0.50   # 0DTE: take profit faster than swing
 STOP_MULT          = 2.0    # stop at this multiple of credit/debit risk
