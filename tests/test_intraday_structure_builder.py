@@ -185,3 +185,45 @@ def test_live_pricer_1to3dte_none_when_no_single_expiry_covers_all():
     result = LiveChainPricer(chain).price(legs, "iron_condor", "1-3DTE",
                                           spot=500.0, as_of=as_of)
     assert result is None, f"Expected None (no covering expiry); got {result}"
+
+
+# ---------------------------------------------------------------------------
+# Task 5: HistoricalPricer
+# ---------------------------------------------------------------------------
+
+import pandas as pd
+
+
+class _FakeHistory:
+    """Stand-in for OptionsHistory: maps contract ticker -> close price."""
+    def __init__(self, prices): self._p = prices   # {contract_str: float}
+    def get_aggs(self, contract, multiplier, timespan, from_date, to_date, limit=50000):
+        px = self._p.get(contract)
+        if px is None:
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        idx = pd.to_datetime(["2026-06-01 13:45:00"])
+        return pd.DataFrame({"close": [px]}, index=idx)
+
+
+def test_historical_pricer_prices_bull_debit():
+    from signals.intraday_structure_builder import HistoricalPricer
+    from data.options_history import option_ticker
+    d = date(2026, 6, 1)
+    legs = select_legs("bull_debit", spot=500.0)   # BUY C500, SELL C503
+    prices = {
+        option_ticker("SPY", d, "C", 500): 2.00,
+        option_ticker("SPY", d, "C", 503): 0.80,
+    }
+    out = HistoricalPricer(_FakeHistory(prices)).price(
+        legs, "bull_debit", "0DTE", spot=500.0, as_of=d)
+    assert round(out["entry_price"], 2) == 1.20
+    assert out["max_profit"] == 180.0
+    assert out["max_loss"] == 120.0
+
+
+def test_historical_pricer_none_when_leg_missing():
+    from signals.intraday_structure_builder import HistoricalPricer
+    legs = select_legs("bull_debit", spot=500.0)
+    out = HistoricalPricer(_FakeHistory({})).price(
+        legs, "bull_debit", "0DTE", spot=500.0, as_of=date(2026, 6, 1))
+    assert out is None

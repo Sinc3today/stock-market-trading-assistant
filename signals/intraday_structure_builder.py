@@ -159,3 +159,42 @@ class LiveChainPricer:
         } for leg in priced]
         return {"legs": journal_legs, "entry_price": round(entry, 2),
                 "max_profit": mp, "max_loss": ml}
+
+
+# ---------------------------------------------------------------------------
+# Task 5: HistoricalPricer
+# ---------------------------------------------------------------------------
+
+class HistoricalPricer:
+    """Price known strikes from real per-contract intraday aggregates.
+
+    Uses the FIRST available bar in the day window as the entry mark (the
+    backtest enters at the opening-range end; callers pass that day). Returns
+    None if any leg has no data."""
+    def __init__(self, options_history):
+        self.history = options_history
+
+    def price(self, legs, structure, dte_bucket, spot, as_of):
+        from data.options_history import option_ticker
+        min_exp, _ = _target_expiry_window(dte_bucket, as_of)
+        exp = min_exp   # 0DTE -> as_of; 1-3DTE -> first day of window
+        priced = []
+        for leg in legs:
+            contract = option_ticker("SPY", exp, leg["cp"], leg["strike"])
+            df = self.history.get_aggs(contract, 5, "minute", as_of, as_of)
+            if df is None or df.empty or "close" not in df:
+                return None
+            mid = float(df["close"].iloc[0])
+            priced.append({**leg, "type": _CP_TO_TYPE[leg["cp"]], "mid": mid})
+
+        entry = _net_premium(priced, structure)
+        if entry <= 0:
+            return None
+        mp, ml = _risk(structure, entry)
+        journal_legs = [{
+            "action": leg["action"], "type": leg["type"], "option_type": leg["type"],
+            "strike": leg["strike"], "expiration": exp.isoformat(),
+            "expiry": exp.isoformat(), "mid": leg["mid"],
+        } for leg in priced]
+        return {"legs": journal_legs, "entry_price": round(entry, 2),
+                "max_profit": mp, "max_loss": ml}
