@@ -4,6 +4,65 @@
 
 ---
 
+## 2026-06-01 — Phase 4b: intraday structure builder (real strikes + pricing)
+
+**Spec:** `docs/superpowers/specs/2026-05-31-phase4b-structure-builder-design.md`
+**Plan:** `docs/superpowers/plans/2026-05-31-phase4b-structure-builder.md`
+**Branch:** `phase4b-structure-builder` (13 commits `b0bd106..84501e6`)
+
+Replaced the intraday entry router's placeholder structures (synthetic strike-0 legs,
+`entry_price=1.0 / max_profit=200 / max_loss=100`) with **real strikes + pricing**, from
+ONE spot-offset selection rule shared by live trading and the walk-forward backtest.
+Subagent-driven execution: 8 implementer tasks, each gated by spec + code-quality reviews,
+plus a final whole-branch review (verdict: ready to merge).
+
+**Module shipped — `signals/intraday_structure_builder.py` (new):**
+- `select_legs(structure, spot)` — spot-offset geometry, byte-identical to the backtest's
+  `build_0dte_legs` (which now delegates to it). `structure_for_strategy()` maps router
+  names. Constants (`CONDOR_SHORT_OTM=3`, `CONDOR_WING=5`, `DEBIT_SHORT_OTM=3`) live here.
+- `_net_premium` / `_risk` — credit/debit pricing math (matches the WF formula).
+- `LiveChainPricer(OptionsChain)` — prices known strikes from snapshot mids; picks the
+  **nearest single expiry covering all legs** (review-caught fix — prevents 1-3DTE leg
+  mixing across expiries); returns None when unpriceable.
+- `HistoricalPricer(OptionsHistory)` — prices from per-contract aggregates; accepts
+  `entry_ts`/`expiry` so the backtest marks at the same bar/expiry it always did.
+- `build_structure(strategy, dte_bucket, spot, pricer, as_of, entry_ts, expiry)` — composer.
+
+**Wiring:**
+- `backtests/intraday_backtest.py` + `intraday_router_wf.py` — entry pricing now flows through
+  `build_structure(HistoricalPricer)`; exit-marking loops unchanged. **Walk-forward parity
+  preserved: 39/39 identical.** (Slippage + max_profit/max_loss stay inline post-slippage —
+  intentional, commented in both files, to preserve WF thresholds.)
+- `scanners/intraday_scanner.py` — `build_intraday_structure()` builds the real structure at
+  the `execute_signal` seam (LiveChainPricer); unpriceable → skip + log, never a placeholder
+  trade. `route()` / `route_explain()` stay pure.
+
+**Honesty guarantee:** the router's `_build_setup_dict` placeholders are now always overwritten
+on the live-ON path (retained only as a documented fallback). Combined with the 2026-05-30
+auto-paper fix, intraday paper trades will carry real legs and `ExpiryResolver` closes them at
+real intrinsic — no more synthetic-leg fake P&L.
+
+**Tests:** full non-integration suite **948 passed** (+30 new across 4 test files), 2 pre-existing
+live-FRED network failures (`test_fred`, `test_economic_scanner`), 0 regressions. Geometry parity,
+both pricers, builder composition, backtest entry parity, and the scanner seam all covered.
+
+**Out of scope (later specs):** dual-book + exit-feasibility, per-sub-strategy reflector,
+off-hours Option A, KB-validator tightening. The OptionsChain 0DTE `find_*` sub-fix was dropped
+(LiveChainPricer prices known strikes via `get_chain`, which has no same-day clamp).
+
+**DEPLOY / ACTIVATE (operator step, after merge):**
+1. `sudo systemctl restart smta.service` — the live process is still running May-27 code; restart
+   loads Phase 4b + the auto-paper fix.
+2. `INTRADAY_PAPER_BROKER_ENABLED=True` (already set) → intraday goes live with real structures.
+3. First-session watch: real legs/pricing on new intraday trades; 0DTE honestly no-ops on
+   non-expiry days (logged "unpriceable — skipped"); sanity-check first `entry_price` values.
+
+**Follow-ups (non-blocking):** consolidate WF `_strategy_to_structure` into the builder's
+`structure_for_strategy` (DRY); WF edge validation + threshold calibration (gates capital, not
+honest paper); mark the 2 live-FRED tests `integration` or mock them.
+
+---
+
 ## 2026-05-30 (pm) — Fix: auto-paper trades unresolved (structured `source` field)
 
 **Branch:** `feat/router-explain-tracking-surface` (commits `00931bd`, `ab89398`)
