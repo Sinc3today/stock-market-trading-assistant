@@ -1,0 +1,55 @@
+"""Phase 4b — real intraday option structures.
+
+select_legs() owns the spot-offset geometry (identical to the backtest's
+build_0dte_legs). A pricer (live snapshot or historical aggregates) turns the
+geometry into priced legs. build_structure() composes them. See
+docs/superpowers/specs/2026-05-31-phase4b-structure-builder-design.md.
+"""
+from __future__ import annotations
+
+# Spot-offset geometry (points). Fixed constants for now (parity + YAGNI);
+# promote to config.py only when a hypothesis wants to tune them.
+CONDOR_SHORT_OTM = 3.0   # short strikes this many points OTM
+CONDOR_WING      = 5.0   # long strike this many points beyond the short
+DEBIT_SHORT_OTM  = 3.0   # debit short leg this many points OTM (long is ATM)
+
+# Router sub-strategy name -> canonical structure name.
+_STRATEGY_TO_STRUCTURE = {
+    "call_debit_spread": "bull_debit",
+    "put_debit_spread":  "bear_debit",
+    "iron_condor":       "iron_condor",
+}
+
+
+def structure_for_strategy(strategy: str) -> str:
+    """Map a router sub-strategy name to a canonical structure name."""
+    return _STRATEGY_TO_STRUCTURE.get(strategy, strategy)
+
+
+def select_legs(structure: str, spot: float) -> list[dict]:
+    """Spot-offset leg geometry, rounded to SPY's $1 strikes.
+
+    Returns [{action, cp, strike}] — identical to backtests.intraday_backtest
+    .build_0dte_legs (which now delegates here). cp is "C"/"P".
+    """
+    def k(x: float) -> int:
+        return round(spot + x)
+
+    if structure == "iron_condor":
+        return [
+            {"action": "SELL", "cp": "P", "strike": k(-CONDOR_SHORT_OTM)},
+            {"action": "BUY",  "cp": "P", "strike": k(-CONDOR_SHORT_OTM - CONDOR_WING)},
+            {"action": "SELL", "cp": "C", "strike": k(+CONDOR_SHORT_OTM)},
+            {"action": "BUY",  "cp": "C", "strike": k(+CONDOR_SHORT_OTM + CONDOR_WING)},
+        ]
+    if structure == "bull_debit":
+        return [
+            {"action": "BUY",  "cp": "C", "strike": k(0)},
+            {"action": "SELL", "cp": "C", "strike": k(+DEBIT_SHORT_OTM)},
+        ]
+    if structure == "bear_debit":
+        return [
+            {"action": "BUY",  "cp": "P", "strike": k(0)},
+            {"action": "SELL", "cp": "P", "strike": k(-DEBIT_SHORT_OTM)},
+        ]
+    return []
