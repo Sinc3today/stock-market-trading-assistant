@@ -108,18 +108,36 @@ class LiveChainPricer:
                                      strike_min=spot * 0.90, strike_max=spot * 1.10)
         puts  = self.chain.get_chain("SPY", "put",  min_exp, max_exp,
                                      strike_min=spot * 0.90, strike_max=spot * 1.10)
-        by_key = {}
-        chosen_exp = None
+
+        # Group contracts by expiry: {expiry_iso -> {(type, strike): contract}}
+        by_expiry: dict[str, dict] = {}
         for c in (calls + puts):
             if c.get("mid") is None:
                 continue
-            by_key[(c["type"], float(c["strike"]))] = c
-            chosen_exp = chosen_exp or c.get("expiration")
+            exp_iso = c.get("expiration")
+            if exp_iso is None:
+                continue
+            by_expiry.setdefault(exp_iso, {})[(c["type"], float(c["strike"]))] = c
 
+        # Pick the NEAREST (ascending) expiry at which every leg has a quote.
+        required_keys = [(_CP_TO_TYPE[leg["cp"]], float(leg["strike"])) for leg in legs]
+        chosen_exp = None
+        for exp_iso in sorted(by_expiry):
+            key_map = by_expiry[exp_iso]
+            if all(k in key_map for k in required_keys):
+                chosen_exp = exp_iso
+                break
+
+        if chosen_exp is None:
+            logger.info(f"LiveChainPricer: no single expiry covers all legs for {structure} — unpriceable")
+            return None
+
+        # Resolve all legs from the single chosen expiry.
+        key_map = by_expiry[chosen_exp]
         priced = []
         for leg in legs:
             ctype = _CP_TO_TYPE[leg["cp"]]
-            c = by_key.get((ctype, float(leg["strike"])))
+            c = key_map.get((ctype, float(leg["strike"])))
             if c is None:
                 logger.info(f"LiveChainPricer: no quote for {ctype} {leg['strike']} — unpriceable")
                 return None
@@ -127,16 +145,16 @@ class LiveChainPricer:
 
         entry = _net_premium(priced, structure)
         if entry <= 0:
-            return None  # a non-positive credit/debit means the chain is unusable
+            logger.warning(f"LiveChainPricer: non-positive entry {entry:.3f} for {structure} — skipping")
+            return None
         mp, ml = _risk(structure, entry)
-        exp = chosen_exp or min_exp.isoformat()
         journal_legs = [{
             "action":      leg["action"],
             "type":        leg["type"],
             "option_type": leg["type"],
             "strike":      leg["strike"],
-            "expiration":  exp,
-            "expiry":      exp,
+            "expiration":  chosen_exp,
+            "expiry":      chosen_exp,
             "mid":         leg["mid"],
         } for leg in priced]
         return {"legs": journal_legs, "entry_price": round(entry, 2),

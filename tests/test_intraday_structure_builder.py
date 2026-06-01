@@ -97,7 +97,13 @@ class _FakeChain:
     def __init__(self, contracts): self._c = contracts
     def get_chain(self, ticker, contract_type, min_expiration, max_expiration,
                   strike_min=None, strike_max=None, limit=50):
-        return [c for c in self._c if c["type"] == contract_type]
+        min_iso = min_expiration.isoformat()
+        max_iso = max_expiration.isoformat()
+        return [
+            c for c in self._c
+            if c["type"] == contract_type
+            and min_iso <= c["expiration"] <= max_iso
+        ]
 
 
 def _contract(strike, cp, mid, exp="2026-06-01"):
@@ -129,3 +135,53 @@ def test_live_pricer_returns_none_when_a_leg_missing():
     legs = select_legs("iron_condor", spot=500.0)
     assert LiveChainPricer(chain).price(legs, "iron_condor", "0DTE", 500.0,
                                         as_of=date(2026, 6, 1)) is None
+
+
+def test_live_pricer_1to3dte_picks_nearest_covering_expiry():
+    """1-3DTE window: all four legs exist at as_of+2 AND some at as_of+3.
+    Pricer must pick as_of+2 (nearest that covers ALL legs) for every journal leg."""
+    from signals.intraday_structure_builder import LiveChainPricer
+    as_of = date(2026, 6, 1)
+    near = (as_of + __import__("datetime").timedelta(days=2)).isoformat()  # 2026-06-03
+    far  = (as_of + __import__("datetime").timedelta(days=3)).isoformat()  # 2026-06-04
+    # Full iron_condor set at near expiry
+    contracts = [
+        _contract(497, "put",  1.20, exp=near),
+        _contract(492, "put",  0.40, exp=near),
+        _contract(503, "call", 1.10, exp=near),
+        _contract(508, "call", 0.35, exp=near),
+        # Extra contracts at far expiry (should not be chosen)
+        _contract(503, "call", 1.05, exp=far),
+        _contract(508, "call", 0.30, exp=far),
+    ]
+    chain = _FakeChain(contracts)
+    legs = select_legs("iron_condor", spot=500.0)
+    out = LiveChainPricer(chain).price(legs, "iron_condor", "1-3DTE",
+                                       spot=500.0, as_of=as_of)
+    assert out is not None, "Expected a priced structure; got None"
+    # ALL journal legs must show the nearest covering expiry
+    for leg in out["legs"]:
+        assert leg["expiration"] == near, (
+            f"Expected expiration={near!r}, got {leg['expiration']!r}"
+        )
+        assert leg["expiry"] == near
+
+
+def test_live_pricer_1to3dte_none_when_no_single_expiry_covers_all():
+    """Put legs only at as_of+1, call legs only at as_of+3.
+    No single expiry has ALL four iron_condor legs → must return None."""
+    from signals.intraday_structure_builder import LiveChainPricer
+    as_of = date(2026, 6, 1)
+    puts_exp  = (as_of + __import__("datetime").timedelta(days=1)).isoformat()  # 2026-06-02
+    calls_exp = (as_of + __import__("datetime").timedelta(days=3)).isoformat()  # 2026-06-04
+    contracts = [
+        _contract(497, "put",  1.20, exp=puts_exp),
+        _contract(492, "put",  0.40, exp=puts_exp),
+        _contract(503, "call", 1.10, exp=calls_exp),
+        _contract(508, "call", 0.35, exp=calls_exp),
+    ]
+    chain = _FakeChain(contracts)
+    legs = select_legs("iron_condor", spot=500.0)
+    result = LiveChainPricer(chain).price(legs, "iron_condor", "1-3DTE",
+                                          spot=500.0, as_of=as_of)
+    assert result is None, f"Expected None (no covering expiry); got {result}"
