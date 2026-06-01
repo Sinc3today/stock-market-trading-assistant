@@ -216,11 +216,19 @@ def simulate_0dte_day(day: date, structure: str, spy_intraday, options_history,
             out.append((leg, float(at.iloc[-1])))
         return out
 
-    credit = is_credit_structure(structure)
-    entry_marks = marks_at(entry_ts)
-    if entry_marks is None:
+    # ── Entry structure: raw mark from shared builder ──────────────────────
+    # build_structure(entry_ts=entry_ts, expiry=day) matches this function's
+    # semantics exactly: 0DTE expiry == day, mark at entry_ts (opening-range end).
+    from signals.intraday_structure_builder import build_structure, HistoricalPricer
+    _built = build_structure(structure, "0DTE", entry_spot,
+                             HistoricalPricer(options_history),
+                             as_of=day, entry_ts=entry_ts, expiry=day)
+    if _built is None:
         return None
-    entry_px = _spread_value(entry_marks, structure)
+    # Apply slippage and compute max_profit using the same formula as before.
+    # (The builder returns the raw spread value; slippage is a backtest concern.)
+    credit = is_credit_structure(structure)
+    entry_px = _built["entry_price"]
     entry_px = (entry_px - SLIPPAGE) if credit else (entry_px + SLIPPAGE)
     if entry_px <= 0:
         return None

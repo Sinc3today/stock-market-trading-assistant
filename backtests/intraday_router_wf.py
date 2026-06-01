@@ -224,11 +224,19 @@ def _simulate_short_dte_with_expiration(day, expiry,
             out.append((leg, float(at.iloc[-1])))
         return out
 
-    credit = is_credit_structure(structure)
-    entry_marks = marks_at(entry_ts)
-    if entry_marks is None:
+    # ── Entry structure: raw mark from shared builder ──────────────────────
+    # build_structure(entry_ts=entry_ts, expiry=expiry) matches this function's
+    # semantics: uses the explicit future expiry for option_ticker lookups and
+    # marks at entry_ts (opening-range end, ~9:45 ET).
+    from signals.intraday_structure_builder import build_structure, HistoricalPricer
+    _built = build_structure(structure, "1-3DTE", entry_spot,
+                             HistoricalPricer(options_history),
+                             as_of=day, entry_ts=entry_ts, expiry=expiry)
+    if _built is None:
         return None
-    entry_px = _spread_value(entry_marks, structure)
+    # Apply slippage and compute max_profit using the same formula as before.
+    credit = is_credit_structure(structure)
+    entry_px = _built["entry_price"]
     entry_px = (entry_px - SLIPPAGE) if credit else (entry_px + SLIPPAGE)
     if entry_px <= 0:
         return None

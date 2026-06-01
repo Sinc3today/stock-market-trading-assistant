@@ -169,42 +169,93 @@ class LiveChainPricer:
 # Task 6: build_structure
 # ---------------------------------------------------------------------------
 
-def build_structure(strategy, dte_bucket, spot, pricer, as_of=None):
+def build_structure(strategy, dte_bucket, spot, pricer, as_of=None,
+                    entry_ts=None, expiry=None):
     """Compose selection + pricing into a journal-ready structure dict, or None
-    when it can't be priced honestly. `strategy` may be a router name
-    (call_debit_spread/...) or a canonical structure name."""
+    when it can't be priced honestly.
+
+    `strategy` may be a router name (call_debit_spread/...) or a canonical
+    structure name.
+
+    entry_ts : optional timestamp — forwarded to pricers that support it
+      (HistoricalPricer). When provided, each leg is marked at the last bar
+      whose index <= entry_ts rather than at the first bar of the day.
+    expiry   : optional date — forwarded to pricers that support it
+      (HistoricalPricer). When provided, overrides the expiry derived from
+      _target_expiry_window so the caller can pin the exact contract expiry.
+
+    Pricers that don't accept these kwargs (LiveChainPricer) are called without
+    them — callers that use LiveChainPricer simply don't pass entry_ts/expiry.
+    """
     as_of = as_of or date.today()
     structure = structure_for_strategy(strategy)
     legs = select_legs(structure, spot)
     if not legs:
         return None
+    # Forward optional backtest-parity params only when the pricer accepts them.
+    if entry_ts is not None or expiry is not None:
+        return pricer.price(legs, structure, dte_bucket, spot, as_of,
+                            entry_ts=entry_ts, expiry=expiry)
     return pricer.price(legs, structure, dte_bucket, spot, as_of)
 
 
 class HistoricalPricer:
     """Price known strikes from real per-contract intraday aggregates.
 
-    Uses the FIRST available bar in the day window as the entry mark (the
-    backtest enters at the opening-range end; callers pass that day). Returns
-    None if any leg has no data."""
+    Default behaviour (entry_ts=None, expiry=None):
+      - Uses the FIRST available bar in the day window as the entry mark.
+      - Derives the expiry from _target_expiry_window(dte_bucket, as_of).
+
+    Backtest behaviour (entry_ts and/or expiry provided):
+      - entry_ts: mark each leg as the last bar whose index <= entry_ts,
+        matching the backtest's marks_at() logic (opening-range end, ~9:45 ET).
+      - expiry: use this date directly for option_ticker lookups instead of
+        deriving it from _target_expiry_window. Required for the 1-3DTE path
+        where the backtest passes an explicit future expiry (day+2).
+
+    Returns None if any leg has no data or if entry <= 0."""
+
     def __init__(self, options_history):
         self.history = options_history
 
-    def price(self, legs, structure, dte_bucket, spot, as_of):
+    def price(self, legs, structure, dte_bucket, spot, as_of,
+              entry_ts=None, expiry=None):
         from data.options_history import option_ticker
-        min_exp, _ = _target_expiry_window(dte_bucket, as_of)
-        exp = min_exp   # 0DTE -> as_of; 1-3DTE -> first day of window
+        if expiry is not None:
+            exp = expiry
+        else:
+            min_exp, _ = _target_expiry_window(dte_bucket, as_of)
+            exp = min_exp   # 0DTE -> as_of; 1-3DTE -> first day of window
         priced = []
         for leg in legs:
             contract = option_ticker("SPY", exp, leg["cp"], leg["strike"])
             df = self.history.get_aggs(contract, 5, "minute", as_of, as_of)
             if df is None or df.empty or "close" not in df:
                 return None
-            mid = float(df["close"].iloc[0])
+            if entry_ts is not None:
+                # Normalize timezone: convert df index to match entry_ts's tz.
+                # get_aggs returns UTC-naive data; entry_ts is tz-aware (US/Eastern
+                # from the backtest). Convert the df index to ET for the comparison.
+                idx = df.index
+                if idx.tz is None:
+                    import pytz as _pytz
+                    idx = idx.tz_localize("UTC").tz_convert(_pytz.timezone("US/Eastern"))
+                else:
+                    import pytz as _pytz
+                    idx = idx.tz_convert(_pytz.timezone("US/Eastern"))
+                at = df["close"][idx <= entry_ts]
+                if at.empty:
+                    return None
+                mid = float(at.iloc[-1])
+            else:
+                mid = float(df["close"].iloc[0])
             priced.append({**leg, "type": _CP_TO_TYPE[leg["cp"]], "mid": mid})
 
         entry = _net_premium(priced, structure)
         if entry <= 0:
+            logger.warning(
+                f"HistoricalPricer: non-positive entry {entry:.3f} for {structure} — skipping"
+            )
             return None
         mp, ml = _risk(structure, entry)
         journal_legs = [{
