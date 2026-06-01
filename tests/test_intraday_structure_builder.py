@@ -227,3 +227,34 @@ def test_historical_pricer_none_when_leg_missing():
     out = HistoricalPricer(_FakeHistory({})).price(
         legs, "bull_debit", "0DTE", spot=500.0, as_of=date(2026, 6, 1))
     assert out is None
+
+
+# ---------------------------------------------------------------------------
+# Task 6: build_structure
+# ---------------------------------------------------------------------------
+
+def test_build_structure_live_end_to_end():
+    from signals.intraday_structure_builder import build_structure, LiveChainPricer
+    chain = _FakeChain([
+        _contract(497, "put", 1.20), _contract(492, "put", 0.40),
+        _contract(503, "call", 1.10), _contract(508, "call", 0.35),
+    ])
+    out = build_structure("iron_condor", "0DTE", spot=500.0,
+                          pricer=LiveChainPricer(chain), as_of=date(2026, 6, 1))
+    assert round(out["entry_price"], 2) == 1.55
+    assert len(out["legs"]) == 4
+
+
+def test_build_structure_returns_none_when_pricer_none():
+    from signals.intraday_structure_builder import build_structure, LiveChainPricer
+    out = build_structure("iron_condor", "0DTE", spot=500.0,
+                          pricer=LiveChainPricer(_FakeChain([])), as_of=date(2026, 6, 1))
+    assert out is None
+
+
+def test_build_structure_maps_router_strategy_name():
+    from signals.intraday_structure_builder import build_structure, LiveChainPricer
+    chain = _FakeChain([_contract(500, "call", 2.00), _contract(503, "call", 0.80)])
+    out = build_structure("call_debit_spread", "0DTE", spot=500.0,
+                          pricer=LiveChainPricer(chain), as_of=date(2026, 6, 1))
+    assert round(out["entry_price"], 2) == 1.20

@@ -165,6 +165,22 @@ class LiveChainPricer:
 # Task 5: HistoricalPricer
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Task 6: build_structure
+# ---------------------------------------------------------------------------
+
+def build_structure(strategy, dte_bucket, spot, pricer, as_of=None):
+    """Compose selection + pricing into a journal-ready structure dict, or None
+    when it can't be priced honestly. `strategy` may be a router name
+    (call_debit_spread/...) or a canonical structure name."""
+    as_of = as_of or date.today()
+    structure = structure_for_strategy(strategy)
+    legs = select_legs(structure, spot)
+    if not legs:
+        return None
+    return pricer.price(legs, structure, dte_bucket, spot, as_of)
+
+
 class HistoricalPricer:
     """Price known strikes from real per-contract intraday aggregates.
 
