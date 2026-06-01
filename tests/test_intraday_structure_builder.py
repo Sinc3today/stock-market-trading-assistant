@@ -45,3 +45,10 @@ def test_router_strategy_maps_to_structure():
 
 def test_unknown_structure_returns_empty():
     assert select_legs("nonsense", spot=500.0) == []
+
+
+def test_select_legs_matches_legacy_build_0dte_legs():
+    from backtests.intraday_backtest import build_0dte_legs
+    for structure in ("iron_condor", "bull_debit", "bear_debit"):
+        for spot in (487.3, 500.0, 612.49):
+            assert select_legs(structure, spot) == build_0dte_legs(spot, structure), structure

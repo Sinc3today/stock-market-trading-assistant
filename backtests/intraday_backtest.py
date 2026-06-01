@@ -32,10 +32,11 @@ from loguru import logger
 
 ET = pytz.timezone("US/Eastern")
 
-# ── Structure parameters (0DTE SPY, $1 strikes) ──────────────────────
-CONDOR_SHORT_OTM   = 3.0    # short strikes this many points OTM
-CONDOR_WING        = 5.0    # long strike this many points beyond the short
-DEBIT_SHORT_OTM    = 3.0    # debit short leg this many points OTM (long is ATM)
+# ── Structure parameters re-exported from the shared builder ─────────
+from signals.intraday_structure_builder import (
+    select_legs as _select_legs,
+    CONDOR_SHORT_OTM, CONDOR_WING, DEBIT_SHORT_OTM,
+)
 # Intraday exit
 PROFIT_TARGET_PCT  = 0.50   # 0DTE: take profit faster than swing
 STOP_MULT          = 2.0    # stop at this multiple of credit/debit risk
@@ -121,29 +122,9 @@ def decide_structure(regime: str, direction: str, is_high_vol: bool,
 
 
 def build_0dte_legs(spot: float, structure: str) -> list[dict]:
-    """
-    Construct 0DTE leg specs at point-offsets from spot, rounded to SPY's
-    $1 strikes. Returns [{action, cp, strike}].
-    """
-    def k(x): return round(spot + x)   # SPY strikes are $1-wide
-    if structure == "iron_condor":
-        return [
-            {"action": "SELL", "cp": "P", "strike": k(-CONDOR_SHORT_OTM)},
-            {"action": "BUY",  "cp": "P", "strike": k(-CONDOR_SHORT_OTM - CONDOR_WING)},
-            {"action": "SELL", "cp": "C", "strike": k(+CONDOR_SHORT_OTM)},
-            {"action": "BUY",  "cp": "C", "strike": k(+CONDOR_SHORT_OTM + CONDOR_WING)},
-        ]
-    if structure == "bull_debit":   # buy ATM call, sell OTM call
-        return [
-            {"action": "BUY",  "cp": "C", "strike": k(0)},
-            {"action": "SELL", "cp": "C", "strike": k(+DEBIT_SHORT_OTM)},
-        ]
-    if structure == "bear_debit":   # buy ATM put, sell OTM put
-        return [
-            {"action": "BUY",  "cp": "P", "strike": k(0)},
-            {"action": "SELL", "cp": "P", "strike": k(-DEBIT_SHORT_OTM)},
-        ]
-    return []
+    """Construct leg specs at point-offsets from spot (SPY $1 strikes).
+    Delegates to the shared builder so live + backtest select identically."""
+    return _select_legs(structure, spot)
 
 
 def is_credit_structure(structure: str) -> bool:
