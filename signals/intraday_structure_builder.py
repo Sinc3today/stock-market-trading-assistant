@@ -53,3 +53,23 @@ def select_legs(structure: str, spot: float) -> list[dict]:
             {"action": "SELL", "cp": "P", "strike": k(-DEBIT_SHORT_OTM)},
         ]
     return []
+
+
+def _is_credit(structure: str) -> bool:
+    return structure == "iron_condor"
+
+
+def _net_premium(priced_legs: list[dict], structure: str) -> float:
+    """Net per-share premium from priced legs (each has action + mid).
+    Credit structures: shorts - longs. Debit: longs - shorts."""
+    longs  = sum(leg["mid"] for leg in priced_legs if leg["action"] == "BUY")
+    shorts = sum(leg["mid"] for leg in priced_legs if leg["action"] == "SELL")
+    return (shorts - longs) if _is_credit(structure) else (longs - shorts)
+
+
+def _risk(structure: str, entry: float) -> tuple[float, float]:
+    """(max_profit, max_loss) in dollars per 1 contract, matching the
+    backtest's _simulate_short_dte_with_expiration formula."""
+    if _is_credit(structure):
+        return round(entry * 100, 2), round((CONDOR_WING - entry) * 100, 2)
+    return round((DEBIT_SHORT_OTM - entry) * 100, 2), round(entry * 100, 2)
