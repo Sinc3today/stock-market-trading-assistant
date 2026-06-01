@@ -406,7 +406,7 @@ if __name__ == "__main__":
             vix_client     = vix_client,
             ivr_client     = ivr_client,
             post_fn        = notifier.message,
-            event_calendar = event_cal.get_block_dates(),
+            event_calendar = event_cal,   # pass the EventCalendar object, not its block-date list
         )
         logger.info("✅ SPY daily strategy jobs registered")
         logger.info("   09:15 ET -- Pre-market play")

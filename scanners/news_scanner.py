@@ -197,11 +197,11 @@ class NewsScanner:
     def _post_news_to_discord(self, message: str):
         """
         Post news briefing to Discord.
-        Uses get_bot_loop() which stores the event loop on bot connect.
-        Required for discord.py 2.x where bot.loop was removed.
+        Uses bot.loop (set once the bot connects) to schedule the send from
+        this worker thread — the same pattern as post_message_sync.
         """
         try:
-            from alerts.discord_bot import get_bot_loop, bot
+            from alerts.discord_bot import bot
             import asyncio
 
             channel_id = getattr(config, "DISCORD_CHANNEL_ID_NEWS", 0) \
@@ -235,7 +235,7 @@ class NewsScanner:
                 else:
                     logger.error(f"News channel {channel_id} not found — check DISCORD_CHANNEL_ID_NEWS in .env")
 
-            loop = get_bot_loop()
+            loop = getattr(bot, "loop", None)
             if loop and loop.is_running():
                 asyncio.run_coroutine_threadsafe(_send_all(), loop)
             else:

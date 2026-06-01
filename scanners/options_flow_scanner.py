@@ -292,9 +292,11 @@ class OptionsFlowScanner:
             from polygon import RESTClient
             client = RESTClient(api_key=config.POLYGON_API_KEY)
 
+            # `limit` must go inside params — the Polygon SDK dropped it as a
+            # direct kwarg. See memory: reference-polygon-snapshot-no-quotes.
             contracts = list(client.list_snapshot_options_chain(
                 underlying_asset = ticker,
-                limit            = 250,
+                params           = {"limit": 250},
             ))
 
             if not contracts:
