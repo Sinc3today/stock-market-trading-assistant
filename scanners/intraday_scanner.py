@@ -134,6 +134,16 @@ class IntradayScanner:
         """Register the Discord posting callable."""
         self.discord_post_fn = fn
 
+    def set_play_fn(self, fn):
+        """Register the actionable-play push hook (notifier.play).
+
+        Instance method mirroring set_discord_fn so main.py wires it on the
+        scanner instance; it sets the module-level _PLAY_FN that
+        _maybe_play_on_open reads.
+        """
+        global _PLAY_FN
+        _PLAY_FN = fn
+
     # ─────────────────────────────────────────
     # MARKET HOURS CHECK
     # ─────────────────────────────────────────
