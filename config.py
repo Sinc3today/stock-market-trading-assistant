@@ -305,6 +305,20 @@ ULTRA_CONVICTION_DOUBLE_DTE_SCORE = 85
 # After a position closes, a fresh setup can re-open up to this cap.
 INTRADAY_PER_COMBO_DAILY_CAP = 2
 
+# Per-(strategy, dte_bucket) exit-feasibility thresholds for dual-book routing.
+# Entries clearing BOTH thresholds → disciplined book; else → learning book
+# (the falsification sandbox). DEFAULT PERMISSIVE (all 0.0 → everything
+# disciplined) until the intraday WF calibration populates real values —
+# mirrors the router_wf MIN_* deferred-threshold pattern.
+INTRADAY_FEASIBILITY = {
+    ("call_debit_spread", "0DTE"):   {"min_target_dollars": 0.0, "min_rr": 0.0},
+    ("call_debit_spread", "1-3DTE"): {"min_target_dollars": 0.0, "min_rr": 0.0},
+    ("put_debit_spread",  "0DTE"):   {"min_target_dollars": 0.0, "min_rr": 0.0},
+    ("put_debit_spread",  "1-3DTE"): {"min_target_dollars": 0.0, "min_rr": 0.0},
+    ("iron_condor",       "0DTE"):   {"min_target_dollars": 0.0, "min_rr": 0.0},
+    ("iron_condor",       "1-3DTE"): {"min_target_dollars": 0.0, "min_rr": 0.0},
+}
+
 
 # ─────────────────────────────────────────
 # ENVIRONMENT
