@@ -27,7 +27,8 @@ def assign_book(
     risk (max_profit / max_loss) >= min_rr. Otherwise learning. Total function:
     an unconfigured combo uses a permissive default (disciplined); never raises.
 
-    A non-positive max_profit (degenerate pricing) routes to "learning" by design.
+    A negative max_profit (degenerate pricing) routes to "learning" by design
+    (target < 0 fails the >= check even under permissive 0.0 thresholds).
     """
     th = config.INTRADAY_FEASIBILITY.get((strategy, dte_bucket), _PERMISSIVE)
     min_t = th.get("min_target_dollars", 0.0)

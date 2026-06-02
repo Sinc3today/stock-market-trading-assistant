@@ -113,8 +113,8 @@ def job_reflector(post_fn=None):
     try:
         result = Reflector(post_fn=post_fn).reflect_today()
         logger.info(
-            f"learning.reflector -> md={result.get('markdown')} "
-            f"kb={len(result.get('kb_ids', []))} parsed={result.get('parsed')}"
+            f"learning.reflector -> units={result.get('units')} "
+            f"failed={result.get('failed')} kb={len(result.get('kb_ids', []))}"
         )
     except Exception as e:
         logger.exception(f"learning.reflector failed: {e}")
