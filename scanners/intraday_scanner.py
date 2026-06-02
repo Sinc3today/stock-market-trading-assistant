@@ -75,6 +75,16 @@ def build_intraday_structure(setup: dict, spot: float, chain, as_of=None):
             "max_profit": built["max_profit"], "max_loss": built["max_loss"]}
 
 
+def _assign_book_for_enriched(enriched: dict) -> str:
+    """Route a priced enriched setup to the disciplined or learning book."""
+    from signals.exit_feasibility import assign_book
+    from learning.exit_manager import exit_rule_for
+    pt = exit_rule_for(enriched.get("strategy"), enriched.get("dte_bucket"))["profit_target_pct"]
+    return assign_book(enriched.get("strategy"), enriched.get("dte_bucket"),
+                       enriched.get("max_profit"), enriched.get("max_loss"),
+                       profit_target_pct=pt)
+
+
 class IntradayScanner:
     """
     Intraday scanner — runs every 5 minutes during market hours.
@@ -245,6 +255,7 @@ class IntradayScanner:
                             f"{sd.get('strategy')}/{sd.get('dte_bucket')}"
                         )
                         continue
+                    enriched["book"] = _assign_book_for_enriched(enriched)
                     result = broker.execute_signal(enriched)
                     logger.info(
                         f"Phase 3 entry: {enriched['strategy']} @ {enriched['dte_bucket']} → "
