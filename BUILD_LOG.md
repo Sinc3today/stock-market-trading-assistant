@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-06-02 — Intraday WF calibration: 0DTE sandboxed, dual-book + verdict thresholds set
+
+**Branch:** `intraday-wf-calibration` (commit `7694591`)
+**Report:** `logs/router_wf_calibrated.json` (regen: `python -m backtests.intraday_router_wf --start 2024-01-02 --end 2025-12-31`)
+
+Ran the full 2024-2025 walk-forward (real-priced via Phase 4b, 16 rolling 6mo/3mo windows) to calibrate the dual-book `INTRADAY_FEASIBILITY` and the router `MIN_*` verdict thresholds (both had shipped deferred/permissive).
+
+**Finding (honest, decisive):**
+- **0DTE is a structural loser even router-filtered:** −$14.08/trade over 599 treatment trades, total −$8,434 (baseline −$18.27/trade, −$26,550). Re-confirms the 0DTE shelving with real-priced OOS data.
+- **1-3DTE** is the only non-losing bucket (+$9.46/trade) but tiny sample (49 trades / 2 yr) and the router doesn't even filter it (T == B) — "not disproven," not "proven."
+- **The router is a good *filter*, not *alpha*:** cuts total loss ~70% (−$7,971 vs −$26,086) by trading fewer 0DTE losers; ΔPnL/trade +$4.22 mean (9/16 windows positive, improving over time) — but treatment is **net-negative in 12/16 windows** and win rate is slightly worse (0.484 vs 0.495). Filtering a losing strategy yields a smaller loss, not a profit.
+
+**Calibration applied (policy: strict/honest):**
+- `config.INTRADAY_FEASIBILITY` — ALL 0DTE combos get a prohibitive `min_target_dollars` (1e9) → every 0DTE entry routes to the **learning sandbox**, where the falsificationist loop keeps probing for a regime in which 0DTE earns its keep. 1-3DTE stays permissive → **disciplined** book. **Live behavior change** (was all-disciplined).
+- `intraday_router_wf.MIN_*` — set to require genuine capital-worthiness (ΔPnL/trade ≥ 0, OOS PnL ≥ 0, Sharpe ≥ 0, win rate ≥ 0.50). Calibrated WF verdict: **4 pass / 12 fail, pass_rate 0.25** — the honest "don't fund 0DTE" signal.
+
+**Tests:** calibration policy pinned (0DTE→learning, 1-3DTE→disciplined real-config tests); the old "verdict raw when unset" test now monkeypatches the (now-calibrated) MIN_* to None to isolate the raw branch; added a pass/fail verdict test. 35 affected tests pass.
+
+**Net:** the dual-book is now *active* (0DTE sandboxed, 1-3DTE disciplined). Intraday is not funded for 0DTE — by design — and the falsification loop accumulates the disconfirming evidence. Revisit 0DTE thresholds when the sandbox shows OOS edge.
+
+**Deploy:** restart `smta.service` to load the live `INTRADAY_FEASIBILITY` change.
+
+---
+
 ## 2026-06-01 — Intraday learning isolation: dual-book + falsificationist reflector
 
 **Spec:** `docs/superpowers/specs/2026-06-01-intraday-learning-isolation-design.md`
