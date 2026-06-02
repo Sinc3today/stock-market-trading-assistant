@@ -23,12 +23,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from loguru import logger
 
 from alerts import alert_store
-from alerts.pushover_client import (
-    PushoverClient,
-    strip_discord_markdown,
-    extract_pushover_title,
-    _build_alert_url,
-)
+from alerts.pushover_client import PushoverClient, _build_alert_url
 
 PLAY_PRIORITY = 1   # Pushover high — makes sound
 
@@ -42,6 +37,7 @@ class Notifier:
     # ── PLAY: actionable-play push (the only thing that reaches the phone) ──
 
     def play(self, alert: dict | None = None, *, title: str, body: str) -> None:
+        """Push a priority-1 notification; persists `alert` (if given) for the deep link."""
         url = None
         if alert is not None:
             try:
