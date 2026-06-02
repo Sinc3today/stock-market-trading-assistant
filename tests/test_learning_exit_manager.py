@@ -18,6 +18,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from learning.exit_manager import ExitManager, bs_price
 import learning.exit_manager as em
+
+
+def test_public_exit_rule_for_exposes_profit_target():
+    from learning.exit_manager import exit_rule_for
+    rule = exit_rule_for("iron_condor", "0DTE")
+    assert "profit_target_pct" in rule
+    assert isinstance(rule["profit_target_pct"], float)
 from journal.trade_recorder import TradeRecorder
 from learning.paper_broker  import AUTO_TAG
 

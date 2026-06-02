@@ -147,6 +147,11 @@ def _exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
     return _exit_rule_for(strategy, "45DTE")
 
 
+def exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
+    """Public accessor for the per-(strategy, dte_bucket) exit rule."""
+    return _exit_rule_for(strategy, dte_bucket)
+
+
 # ── Black-Scholes (r = 0; VIX/100 as sigma) ──────────────────────────
 
 def _norm_cdf(x: float) -> float:
