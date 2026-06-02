@@ -60,10 +60,19 @@ Return ONLY a single JSON object, no prose around it, matching this schema:
       "claim":      "the specific lesson, <= 200 chars",
       "evidence":   "the numbers / events backing it",
       "confidence": 0.0 to 1.0,
-      "tags":       ["short", "labels"]
+      "tags":       ["short", "labels"],
+      "stance":     "confirming" or "disconfirming"
     }
   ]
-}"""
+}
+
+After the "what worked" analysis you MUST run a DISCONFIRMATION PASS: actively
+try to DISPROVE the current stance. Ask: what belief did today's data challenge?
+What would have to be true for this sub-strategy's gate/threshold to be WRONG?
+Compare the disciplined trades against the learning-book (refused) trades for the
+same sub-strategy -- did refusing the learning-book trades hold up, or would they
+have won? Each kb_entry MUST include a "stance" field set to "confirming" or
+"disconfirming"."""
 
 
 class Reflector:
@@ -216,6 +225,21 @@ class Reflector:
             "trades":     combo_trades[-10:],
             "accuracy":   combo_acc,
         }
+
+    def _build_substrategy_prompt(self, ctx: dict) -> str:
+        """Build the per-sub-strategy prompt including disconfirmation framing."""
+        return (
+            f"DATE: {ctx['date']}\n"
+            f"SUB-STRATEGY: {ctx['strategy']} @ {ctx['dte_bucket']} "
+            f"(reflect on THIS sub-strategy only, across BOTH books)\n\n"
+            f"THIS SUB-STRATEGY'S TRADES (both books):\n"
+            f"{json.dumps(ctx['trades'], indent=2, default=str)}\n\n"
+            f"ACCURACY SLICES (disciplined vs learning):\n"
+            f"{json.dumps(ctx['accuracy'], indent=2)}\n\n"
+            f"Run the what-worked analysis AND the disconfirmation pass. Did "
+            f"refusing the learning-book trades hold up, or do they challenge our "
+            f"gate? Produce the JSON reflection now."
+        )
 
     # ── CLAUDE ────────────────────────────────────────
 

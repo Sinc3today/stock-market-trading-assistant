@@ -43,3 +43,19 @@ def test_scoped_context_includes_both_books(monkeypatch, tmp_path):
     assert len(ctx["trades"]) == 2
     assert set(ctx["accuracy"].keys()) == {"iron_condor:0DTE:disciplined", "iron_condor:0DTE:learning"}
     assert ctx["strategy"] == "iron_condor" and ctx["dte_bucket"] == "0DTE"
+
+
+def test_substrategy_prompt_has_disconfirmation_and_scope(monkeypatch, tmp_path):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from learning.reflector import Reflector, REFLECTOR_SYSTEM
+    # System prompt instructs a disconfirmation pass + stance on entries
+    assert "disprove" in REFLECTOR_SYSTEM.lower() or "disconfirm" in REFLECTOR_SYSTEM.lower()
+    assert "stance" in REFLECTOR_SYSTEM.lower()
+    r = Reflector()
+    ctx = {"date": "2026-06-01", "strategy": "iron_condor", "dte_bucket": "0DTE",
+           "trades": [{"trade_id": "A", "book": "learning", "outcome": "open"}],
+           "accuracy": {"iron_condor:0DTE:learning": {"n": 1}}}
+    p = r._build_substrategy_prompt(ctx)
+    assert "iron_condor" in p and "0DTE" in p
+    assert "disprove" in p.lower() or "challenge" in p.lower()  # disconfirmation framing
