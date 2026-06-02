@@ -42,13 +42,19 @@ from learning.exit_manager      import ExitManager, format_exit_message
 
 # ── JOB WRAPPERS ──────────────────────────────────────
 
-def job_paper_broker():
+def job_paper_broker(play_fn=None):
     if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
         logger.info("paper_broker: non-trading day, skipping")
         return
     try:
         result = PaperBroker().execute_today()
         logger.info(f"learning.paper_broker -> {result}")
+        if play_fn and result.get("recorded"):
+            try:
+                play_fn(title="📈 Daily play opened",
+                        body=f"45DTE disciplined play opened — {result.get('trade_id')}")
+            except Exception as e:
+                logger.warning(f"paper_broker play notify failed: {e}")
     except Exception as e:
         logger.exception(f"learning.paper_broker failed: {e}")
 
@@ -72,7 +78,7 @@ def job_outcome_resolver(polygon_client, post_fn=None):
 
 
 def job_exit_manager(polygon_client, vix_client=None, post_fn=None,
-                     dte_buckets=None):
+                     play_fn=None, dte_buckets=None):
     if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
         logger.info("exit_manager: non-trading day, skipping")
         return
@@ -81,27 +87,27 @@ def job_exit_manager(polygon_client, vix_client=None, post_fn=None,
             polygon_client=polygon_client, vix_client=vix_client,
         ).manage_open(dte_buckets=dte_buckets)
         logger.info(f"learning.exit_manager [{dte_buckets or 'all'}] -> {len(closed)} closed")
-        if closed and post_fn:
+        if closed and play_fn:
             try:
-                post_fn(format_exit_message(closed))
+                play_fn(title="⚠️ Exit — target/stop hit", body=format_exit_message(closed))
             except Exception as e:
-                logger.warning(f"learning.exit_manager notify failed: {e}")
+                logger.warning(f"exit_manager play notify failed: {e}")
     except Exception as e:
         logger.exception(f"learning.exit_manager failed: {e}")
 
 
-def job_expiry_resolver(polygon_client, post_fn=None):
+def job_expiry_resolver(polygon_client, post_fn=None, play_fn=None):
     if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
         logger.info("expiry_resolver: non-trading day, skipping")
         return
     try:
         closed = ExpiryResolver(polygon_client=polygon_client).resolve_expired()
         logger.info(f"learning.expiry_resolver -> {len(closed)} closed")
-        if closed and post_fn:
+        if closed and play_fn:
             try:
-                post_fn(format_expiry_message(closed))
+                play_fn(title="⏱️ Expiry close", body=format_expiry_message(closed))
             except Exception as e:
-                logger.warning(f"learning.expiry_resolver notify failed: {e}")
+                logger.warning(f"expiry play notify failed: {e}")
     except Exception as e:
         logger.exception(f"learning.expiry_resolver failed: {e}")
 
@@ -151,6 +157,7 @@ def register_learning_jobs(
     polygon_client=None,
     vix_client=None,
     post_fn=None,
+    play_fn=None,
 ):
     """Register all learning jobs onto an already-running scheduler."""
     from apscheduler.triggers.cron import CronTrigger
@@ -159,6 +166,7 @@ def register_learning_jobs(
     scheduler.add_job(
         job_paper_broker,
         CronTrigger(day_of_week="mon-fri", hour=9, minute=16, timezone=eastern),
+        kwargs={"play_fn": play_fn},
         id="learning_paper_broker",
         name="Learning: paper broker",
         replace_existing=True,
@@ -177,7 +185,7 @@ def register_learning_jobs(
         job_exit_manager,
         CronTrigger(day_of_week="mon-fri", hour=16, minute=8, timezone=eastern),
         kwargs={"polygon_client": polygon_client, "vix_client": vix_client,
-                "post_fn": post_fn, "dte_buckets": ["45DTE"]},
+                "post_fn": post_fn, "play_fn": play_fn, "dte_buckets": ["45DTE"]},
         id="learning_exit_manager",
         name="Learning: exit manager (daily 45DTE)",
         replace_existing=True,
@@ -192,7 +200,7 @@ def register_learning_jobs(
         CronTrigger(day_of_week="mon-fri", hour="9-15", minute="*/5",
                     timezone=eastern),
         kwargs={"polygon_client": polygon_client, "vix_client": vix_client,
-                "post_fn": post_fn, "dte_buckets": ["0DTE", "1-3DTE"]},
+                "post_fn": post_fn, "play_fn": play_fn, "dte_buckets": ["0DTE", "1-3DTE"]},
         id="learning_exit_manager_intraday",
         name="Learning: exit manager (intraday 0DTE / 1-3DTE)",
         replace_existing=True,
@@ -201,7 +209,7 @@ def register_learning_jobs(
     scheduler.add_job(
         job_expiry_resolver,
         CronTrigger(day_of_week="mon-fri", hour=16, minute=10, timezone=eastern),
-        kwargs={"polygon_client": polygon_client, "post_fn": post_fn},
+        kwargs={"polygon_client": polygon_client, "post_fn": post_fn, "play_fn": play_fn},
         id="learning_expiry_resolver",
         name="Learning: expiry resolver",
         replace_existing=True,
