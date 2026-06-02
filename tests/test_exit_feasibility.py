@@ -38,3 +38,28 @@ def test_zero_max_loss_routes_learning(monkeypatch):
     monkeypatch.setattr(config, "INTRADAY_FEASIBILITY",
                         {("iron_condor", "0DTE"): {"min_target_dollars": 0.0, "min_rr": 0.1}})
     assert assign_book("iron_condor", "0DTE", 100.0, 0.0, profit_target_pct=0.7) == "learning"
+
+
+def test_none_max_profit_does_not_raise(monkeypatch):
+    """None max_profit must not raise; with min_target_dollars=50 → target 0 < 50 → learning."""
+    import config
+    monkeypatch.setattr(config, "INTRADAY_FEASIBILITY",
+                        {("iron_condor", "0DTE"): {"min_target_dollars": 50.0, "min_rr": 0.0}})
+    result = assign_book("iron_condor", "0DTE", None, 400.0, profit_target_pct=0.7)
+    assert isinstance(result, str)
+    assert result == "learning"
+
+
+def test_negative_max_profit_routes_learning(monkeypatch):
+    """Degenerate pricing (negative max_profit) routes to learning by design."""
+    import config
+    monkeypatch.setattr(config, "INTRADAY_FEASIBILITY", {})
+    # target = 0.7 * -5.0 = -3.5 < 0.0 (permissive min_target_dollars) → learning
+    assert assign_book("call_debit_spread", "0DTE", -5.0, 100.0, profit_target_pct=0.7) == "learning"
+
+
+def test_zero_max_loss_disciplined_under_permissive(monkeypatch):
+    """Zero max_loss → rr=0.0; permissive min_rr=0.0; target 70>=0 → disciplined."""
+    import config
+    monkeypatch.setattr(config, "INTRADAY_FEASIBILITY", {})
+    assert assign_book("iron_condor", "0DTE", 100.0, 0.0, profit_target_pct=0.7) == "disciplined"
