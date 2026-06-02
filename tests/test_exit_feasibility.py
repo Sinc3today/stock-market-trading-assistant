@@ -63,3 +63,19 @@ def test_zero_max_loss_disciplined_under_permissive(monkeypatch):
     import config
     monkeypatch.setattr(config, "INTRADAY_FEASIBILITY", {})
     assert assign_book("iron_condor", "0DTE", 100.0, 0.0, profit_target_pct=0.7) == "disciplined"
+
+
+# ── Calibrated policy (2026-06-02): 0DTE sandboxed, 1-3DTE disciplined ──
+
+def test_calibrated_0dte_routes_to_learning_sandbox():
+    """Real config: every 0DTE structure routes to learning (prohibitive bar),
+    regardless of how rich its pricing looks — 0DTE is a confirmed OOS loser."""
+    for strat in ("call_debit_spread", "put_debit_spread", "iron_condor"):
+        # even a generous 0DTE structure (target 140, rr 2.0) must go learning
+        assert assign_book(strat, "0DTE", 200.0, 100.0, profit_target_pct=0.7) == "learning"
+
+
+def test_calibrated_1_3dte_routes_disciplined():
+    """Real config: 1-3DTE is permissive → disciplined (the marginal winner)."""
+    for strat in ("call_debit_spread", "put_debit_spread", "iron_condor"):
+        assert assign_book(strat, "1-3DTE", 100.0, 400.0, profit_target_pct=0.7) == "disciplined"

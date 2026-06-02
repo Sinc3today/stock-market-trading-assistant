@@ -161,11 +161,29 @@ def test_window_stats_includes_per_bucket_breakdown():
 from backtests.intraday_router_wf import window_verdict, aggregate_verdict
 
 
-def test_window_verdict_returns_raw_when_thresholds_unset():
-    """All thresholds None → verdict 'raw' regardless of stats."""
+def test_window_verdict_returns_raw_when_thresholds_unset(monkeypatch):
+    """All thresholds None → verdict 'raw' regardless of stats.
+
+    The module's MIN_* were calibrated 2026-06-02 (no longer None), so isolate
+    the raw branch by forcing them None here — this tests the logic, not the
+    current calibrated values."""
+    import backtests.intraday_router_wf as wf
+    for name in ("MIN_DELTA_PNL_PER_TRADE", "MIN_OOS_PNL", "MIN_OOS_SHARPE", "MIN_OOS_WIN_RATE"):
+        monkeypatch.setattr(wf, name, None)
     stats = {"n_trades_T": 50, "pnl_T": 1000.0, "sharpe_T": 1.5, "win_rate_T": 0.7,
              "delta_pnl_per_trade": 10.0}
     assert window_verdict(stats) == "raw"
+
+
+def test_window_verdict_pass_fail_with_calibrated_thresholds():
+    """With the calibrated thresholds set, a profitable window passes and a
+    losing one fails — verifies the verdict is no longer perpetually 'raw'."""
+    good = {"n_trades_T": 50, "pnl_T": 1000.0, "sharpe_T": 1.5, "win_rate_T": 0.7,
+            "delta_pnl_per_trade": 10.0}
+    bad  = {"n_trades_T": 50, "pnl_T": -1000.0, "sharpe_T": -0.5, "win_rate_T": 0.45,
+            "delta_pnl_per_trade": -5.0}
+    assert window_verdict(good) == "pass"
+    assert window_verdict(bad) == "fail"
 
 
 def test_window_verdict_inconclusive_when_too_few_trades():

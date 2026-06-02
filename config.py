@@ -307,16 +307,24 @@ INTRADAY_PER_COMBO_DAILY_CAP = 2
 
 # Per-(strategy, dte_bucket) exit-feasibility thresholds for dual-book routing.
 # Entries clearing BOTH thresholds → disciplined book; else → learning book
-# (the falsification sandbox). DEFAULT PERMISSIVE (all 0.0 → everything
-# disciplined) until the intraday WF calibration populates real values —
-# mirrors the router_wf MIN_* deferred-threshold pattern.
+# (the falsification sandbox).
+#
+# CALIBRATED 2026-06-02 from the full 2024-2025 walk-forward (real-priced,
+# 16 windows). Finding: 0DTE is a structural loser even router-filtered
+# (-$14.08/trade over 599 trades; total -$8,434) — it re-confirms the 0DTE
+# shelving. 1-3DTE is the only non-losing bucket (+$9.46/trade) but tiny
+# sample (49 trades/2yr). Policy (user, strict/honest): gate ALL 0DTE to the
+# learning sandbox (prohibitive bar) where the falsificationist loop keeps
+# probing for a regime in which 0DTE earns its keep; let 1-3DTE into the
+# disciplined book (permissive). Revisit 0DTE when the sandbox shows OOS edge.
+_PROHIBITIVE = 1e9   # no real 0DTE structure clears this target → always learning
 INTRADAY_FEASIBILITY = {
-    ("call_debit_spread", "0DTE"):   {"min_target_dollars": 0.0, "min_rr": 0.0},
-    ("call_debit_spread", "1-3DTE"): {"min_target_dollars": 0.0, "min_rr": 0.0},
-    ("put_debit_spread",  "0DTE"):   {"min_target_dollars": 0.0, "min_rr": 0.0},
-    ("put_debit_spread",  "1-3DTE"): {"min_target_dollars": 0.0, "min_rr": 0.0},
-    ("iron_condor",       "0DTE"):   {"min_target_dollars": 0.0, "min_rr": 0.0},
-    ("iron_condor",       "1-3DTE"): {"min_target_dollars": 0.0, "min_rr": 0.0},
+    ("call_debit_spread", "0DTE"):   {"min_target_dollars": _PROHIBITIVE, "min_rr": 0.0},
+    ("call_debit_spread", "1-3DTE"): {"min_target_dollars": 0.0,          "min_rr": 0.0},
+    ("put_debit_spread",  "0DTE"):   {"min_target_dollars": _PROHIBITIVE, "min_rr": 0.0},
+    ("put_debit_spread",  "1-3DTE"): {"min_target_dollars": 0.0,          "min_rr": 0.0},
+    ("iron_condor",       "0DTE"):   {"min_target_dollars": _PROHIBITIVE, "min_rr": 0.0},
+    ("iron_condor",       "1-3DTE"): {"min_target_dollars": 0.0,          "min_rr": 0.0},
 }
 
 

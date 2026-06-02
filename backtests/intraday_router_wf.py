@@ -340,13 +340,18 @@ def window_stats(trades_T: list[dict], trades_B: list[dict]) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# Verdict thresholds — TBD via separate calibration exercise.
-# When ALL of these are None, window_verdict returns 'raw'.
+# Verdict thresholds — CALIBRATED 2026-06-02 from the full 2024-2025
+# walk-forward. A window "passes" only if the router-filtered book is
+# genuinely worth capital: beats baseline per-trade AND net profitable AND
+# non-negative Sharpe AND wins >half its trades. With the current intraday
+# strategy these honestly FAIL most windows (treatment net-negative in
+# 12/16) — the correct signal that the disciplined book should not fund
+# 0DTE. Re-run after the falsification loop earns it back.
 # ─────────────────────────────────────────────────────────────
-MIN_DELTA_PNL_PER_TRADE: float | None = None
-MIN_OOS_PNL:             float | None = None
-MIN_OOS_SHARPE:          float | None = None
-MIN_OOS_WIN_RATE:        float | None = None
+MIN_DELTA_PNL_PER_TRADE: float | None = 0.0
+MIN_OOS_PNL:             float | None = 0.0
+MIN_OOS_SHARPE:          float | None = 0.0
+MIN_OOS_WIN_RATE:        float | None = 0.50
 
 
 def window_verdict(stats: dict, min_n: int = 10) -> str:
