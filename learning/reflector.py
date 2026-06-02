@@ -147,6 +147,7 @@ class Reflector:
             except Exception as e:
                 logger.warning(f"Reflector: post_fn failed: {e}")
 
+        # units = attempted (successful = units - failed)
         return {"date": today_str, "units": attempted, "failed": failed, "kb_ids": kb_ids}
 
     def _reflect_one(self, prompt: str, scope: dict, today_str: str, context: dict) -> dict:
@@ -154,6 +155,9 @@ class Reflector:
 
         scope = {"strategy": ..., "dte_bucket": ..., "book": ...}  (Nones for standby)
         Returns {"kb_ids", "markdown", "route", "parsed"}.
+        # Sub-strategy units always route to phi4 by design: the scoped context carries
+        # no anomaly signal (no prediction/open_positions), so anomaly detection is not
+        # applicable; per the local-budget cost decision, phi4 handles all sub-strategy units.
         """
         facts = self._gather_anomaly_facts(context)
         reply, route = self._call_claude(prompt, facts)
@@ -336,6 +340,9 @@ class Reflector:
         """Pull all numeric facts from today's context for evidence-check.
 
         Field names must match the Prediction dataclass in learning/predictions.py.
+        Additive: also reads ctx['trades'] (scoped sub-strategy trades) and
+        ctx['accuracy'] (scoped accuracy dict) so sub-strategy units have real
+        ground-truth numbers for the kb_validator.
         """
         nums: set = set()
         pred = ctx.get("prediction") or {}
@@ -350,16 +357,42 @@ class Reflector:
                 v = pos.get(k)
                 if isinstance(v, (int, float)):
                     nums.add(v)
+        # Scoped sub-strategy trades (present on sub-strategy units, absent on standby).
+        for trade in ctx.get("trades", []):
+            for k in ("entry_price", "max_profit", "max_loss", "pnl_dollars", "pnl_pct"):
+                v = trade.get(k)
+                if isinstance(v, (int, float)):
+                    nums.add(v)
+            for leg in trade.get("legs", []):
+                v = leg.get("strike")
+                if isinstance(v, (int, float)):
+                    nums.add(v)
+        # Scoped accuracy dict (ctx['accuracy'] on sub-strategy units;
+        # ctx['rolling_accuracy'] on full/standby context — both handled here).
+        for acc_dict in (ctx.get("accuracy") or {}, ctx.get("rolling_accuracy") or {}):
+            for slice_val in acc_dict.values():
+                if isinstance(slice_val, dict):
+                    for v in slice_val.values():
+                        if isinstance(v, (int, float)):
+                            nums.add(v)
+                elif isinstance(slice_val, (int, float)):
+                    nums.add(slice_val)
         return nums
 
     def _extract_today_trade_ids(self, ctx: dict) -> set:
         """Pull trade_ids from today's open positions + today's closed trades.
 
+        Also reads ctx['trades'] (scoped sub-strategy trades) so sub-strategy
+        units supply real ground-truth IDs to the kb_validator.
         Today = the date string in ctx['date']. Closed-today trades are
         included so Claude can cite them as evidence without false violations.
         """
         ids = {pos.get("trade_id") for pos in ctx.get("open_positions", [])
                if pos.get("trade_id")}
+        # Scoped trades (present on sub-strategy units, absent on standby).
+        for trade in ctx.get("trades", []):
+            if trade.get("trade_id"):
+                ids.add(trade["trade_id"])
         today_str = ctx.get("date", "")
         if today_str:
             for t in self.trades.get_all_trades():
@@ -510,15 +543,26 @@ class Reflector:
                 "```",
                 "",
             ]
+        # Context Snapshot: use scoped fields for sub-strategy units (no 'prediction' key),
+        # fall back to full/standby fields otherwise.
+        if ctx.get("prediction") is None and ctx.get("trades") is not None:
+            snapshot = {
+                "strategy":      ctx.get("strategy"),
+                "dte_bucket":    ctx.get("dte_bucket"),
+                "trades_n":      len(ctx.get("trades", [])),
+                "accuracy":      ctx.get("accuracy"),
+            }
+        else:
+            snapshot = {
+                "prediction":        ctx.get("prediction"),
+                "rolling_accuracy":  ctx.get("rolling_accuracy"),
+                "open_positions_n":  len(ctx.get("open_positions", [])),
+            }
         lines += [
             "## Context Snapshot",
             "",
             "```json",
-            json.dumps({
-                "prediction":        ctx.get("prediction"),
-                "rolling_accuracy":  ctx.get("rolling_accuracy"),
-                "open_positions_n":  len(ctx.get("open_positions", [])),
-            }, indent=2, default=str),
+            json.dumps(snapshot, indent=2, default=str),
             "```",
         ]
         with open(path, "w") as f:

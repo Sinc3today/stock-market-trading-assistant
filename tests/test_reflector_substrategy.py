@@ -114,3 +114,65 @@ def test_reflect_today_one_failure_does_not_sink_others(monkeypatch, tmp_path):
     monkeypatch.setattr(r, "_reflect_one", flaky)
     out = r.reflect_today(today=__import__("datetime").date(2026, 6, 1))
     assert out["units"] == 2 and out["failed"] == 1 and "k1" in out["kb_ids"]
+
+
+# ── TDD: ground-truth extraction from scoped trades ───────────────────────
+
+
+def test_extract_trade_ids_reads_scoped_trades(monkeypatch, tmp_path):
+    """Scoped context with trades list → _extract_today_trade_ids returns those IDs.
+
+    Sub-strategy contexts carry 'trades' (not 'open_positions'), so the helper
+    must read both to give the kb_validator real ground-truth for sub-strategy units.
+    """
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from learning.reflector import Reflector
+    r = Reflector()
+    ctx = {
+        "date": "2026-06-01",
+        "strategy": "iron_condor",
+        "dte_bucket": "0DTE",
+        "trades": [
+            {"trade_id": "AB12", "entry_price": 1.10, "outcome": "open"},
+            {"trade_id": "CD34", "entry_price": 0.95, "outcome": "closed"},
+        ],
+        "accuracy": {},
+    }
+    ids = r._extract_today_trade_ids(ctx)
+    assert "AB12" in ids, "trade_id from scoped trades must appear in extracted set"
+    assert "CD34" in ids, "second trade_id from scoped trades must appear in extracted set"
+
+
+def test_extract_numbers_reads_scoped_trades(monkeypatch, tmp_path):
+    """Scoped context with a trade carrying numeric fields → those floats are in the set.
+
+    Verifies: entry_price, max_loss are extracted (representative sample of the fields
+    listed in the fix spec). The set stores raw Python floats matching what
+    _extract_today_numbers already uses for open_positions (isinstance int/float → add as-is).
+    """
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from learning.reflector import Reflector
+    ctx = {
+        "date": "2026-06-01",
+        "strategy": "iron_condor",
+        "dte_bucket": "0DTE",
+        "trades": [
+            {
+                "trade_id": "AB12",
+                "entry_price": 1.55,
+                "max_profit": 200.0,
+                "max_loss": 345.0,
+                "pnl_dollars": -50.0,
+                "pnl_pct": -0.14,
+                "legs": [{"strike": 490}, {"strike": 495}],
+            }
+        ],
+        "accuracy": {"iron_condor:0DTE:disciplined": {"accuracy": 0.72}},
+    }
+    nums = Reflector._extract_today_numbers(ctx)
+    assert 1.55 in nums,   "entry_price must be extracted from scoped trades"
+    assert 345.0 in nums,  "max_loss must be extracted from scoped trades"
+    # Also verify the scoped accuracy dict's numeric value is extracted
+    assert 0.72 in nums,   "accuracy value from ctx['accuracy'] must be extracted"
