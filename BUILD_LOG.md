@@ -4,6 +4,35 @@
 
 ---
 
+## 2026-06-01 — Intraday learning isolation: dual-book + falsificationist reflector
+
+**Spec:** `docs/superpowers/specs/2026-06-01-intraday-learning-isolation-design.md`
+**Plan:** `docs/superpowers/plans/2026-06-01-intraday-learning-isolation.md`
+**Branch:** `intraday-learning-isolation` (11 commits) — subagent-driven, each task spec+quality reviewed, final whole-branch review.
+
+Isolated intraday learning per sub-strategy and made it *falsificationist* — actively seeking disconfirming evidence instead of waiting for priors to confirm (the user's anti-bias principle; the extension gate is the live example of the bias, addressed in a deferred daily-path thread).
+
+**Dual-book (the learning book = falsification sandbox):**
+- `signals/exit_feasibility.py::assign_book(strategy, dte_bucket, max_profit, max_loss, *, profit_target_pct)` — per-`(strategy,dte_bucket)` thresholds from `config.INTRADAY_FEASIBILITY`. Disciplined iff `profit_target_pct*max_profit ≥ min_target_$` AND R/R ≥ `min_rr`; else learning. Pure, None-safe, total (unconfigured combo → disciplined).
+- **Defaults permissive (all 0.0) → live routing unchanged until WF calibration** populates real per-combo values (router_wf MIN_* pattern). So the learning book stays empty by design until calibrated — not a wiring failure.
+- Wired at the scanner seam (`_assign_book_for_enriched`) after real pricing, using `exit_manager.exit_rule_for`'s profit target. Router stays pure. `execute_signal` already applies per-book caps (disciplined 3 / learning 6).
+
+**Per-sub-strategy falsificationist reflector:**
+- `reflect_today` now loops one isolated phi4-first reflection per *active* sub-strategy (across BOTH books, so each reflection compares disciplined vs learning-book outcomes), with a mandatory **disconfirmation pass**. Extracted `_reflect_one` preserves all wiring (anomaly routing, kb_validator, route telemetry, post). One unit's failure can't sink the rest.
+- **Skip-day standby reflection** still runs every weekday (Rule 15) on the local model — captures why-we-skipped + near-misses.
+- KB gains a `stance` field (confirming/disconfirming); entries stamped `strategy/dte_bucket/book/stance`. Sub-strategy reflections write `logs/learning/reflections/<date>/<strategy>__<dte_bucket>.md`; standby keeps the flat `<date>.md`.
+- Validator fix: `_extract_today_numbers`/`_extract_today_trade_ids` now read the scoped `trades`/`accuracy` so sub-strategy KB entries get real ground-truth (else every one would be falsely evidence-flagged).
+
+**Also fixed (review-caught):** `main.py` was passing a *list* (`event_cal.get_block_dates()`) as `event_calendar` into the daily play — `SPYDailyStrategy` now normalizes the EventCalendar object to block-dates for `RegimeDetector`; scanner-health bugs (news `bot.loop`, options_flow `params={"limit":}`, mark-fallback for quote-less snapshots) shipped earlier the same day.
+
+**Tests:** 11 TDD commits; offline gate 185 passed (only the pre-existing live-FRED `test_economic_scanner`/`test_fred` network tests fail). 0 regressions. Final review: ready to merge.
+
+**Deferred (next threads):** extension-gate shadow-test (counterfactual "trade we didn't take" on the daily path — where the anti-bias principle bites hardest); tier-gate-refused entries in the sandbox; **intraday WF calibration** to populate `INTRADAY_FEASIBILITY` (and the router MIN_* verdict constants).
+
+**Deploy note:** restart `smta.service` to load. Until calibration, all intraday entries route disciplined (learning book empty by design). Reflections move to per-sub-strategy files on active days.
+
+---
+
 ## 2026-06-01 — Phase 4b: intraday structure builder (real strikes + pricing)
 
 **Spec:** `docs/superpowers/specs/2026-05-31-phase4b-structure-builder-design.md`
