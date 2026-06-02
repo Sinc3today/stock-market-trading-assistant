@@ -1,20 +1,18 @@
 """
-alerts/notifier.py -- Unified Notification Router
+alerts/notifier.py -- Pushover-only notification router.
 
-Routes every alert and message to both:
-    PRIMARY   -> Pushover  (phone push, short summary + deep link)
-    SECONDARY -> Discord   (full card / log message)
+Two intents:
+    play(alert=None, *, title, body)  -> push (priority 1) + persist; the ONLY
+                                          path that reaches the phone. Used for
+                                          actionable plays (disciplined open,
+                                          target/stop hit, expiry close).
+    log(message_or_alert)             -> record only (persist alerts to the
+                                          store, logger.info); NO push.
 
-Drop-in replacement for the raw Discord functions used in main.py:
-    notifier.alert(alert, discord_msg)   replaces  post_alert_sync(alert, msg)
-    notifier.message(msg)                replaces  post_message_sync(msg)
-
-Alert persistence:
-    Every scanner alert is saved to the SQLite store at logs/alert_store.db
-    so the per-alert web app can load it by ID. The Pushover notification
-    URL embeds that same ID (config.PUSHOVER_BASE_URL/alerts/<id>).
+.alert()/.message() are kept as silent wrappers over log() so existing call
+sites keep working without pushing — push is opt-in. Discord was removed
+2026-06-02 (see the spec).
 """
-
 from __future__ import annotations
 
 import os
@@ -29,93 +27,51 @@ from alerts.pushover_client import (
     PushoverClient,
     strip_discord_markdown,
     extract_pushover_title,
+    _build_alert_url,
 )
+
+PLAY_PRIORITY = 1   # Pushover high — makes sound
 
 
 class Notifier:
-    """
-    Unified notification router -- sends every event to Pushover and Discord.
+    """Pushover-only router. play() pushes; log() is silent."""
 
-    Usage in main.py:
-        notifier = Notifier(pushover, post_alert_sync, post_message_sync)
-        swing_scanner.set_discord_fn(notifier.alert)
-        options_flow_scanner.set_discord_fn(notifier.message)
-    """
+    def __init__(self, pushover: PushoverClient):
+        self.pushover = pushover
 
-    def __init__(
-        self,
-        pushover:           PushoverClient,
-        discord_alert_fn,   # post_alert_sync(alert, message)
-        discord_message_fn, # post_message_sync(message)
-    ):
-        self.pushover          = pushover
-        self._discord_alert    = discord_alert_fn
-        self._discord_message  = discord_message_fn
+    # ── PLAY: actionable-play push (the only thing that reaches the phone) ──
 
-    # ─────────────────────────────────────────
-    # ALERT ROUTE  (swing / intraday / SPY options)
-    # ─────────────────────────────────────────
-
-    def alert(self, alert: dict, discord_message: str) -> None:
-        """
-        Route a scanner alert to Pushover (short summary + deep link)
-        and Discord (full card).
-
-        Side-effect: persists the alert to alert_store.db before sending,
-        so the link embedded in the Pushover notification resolves to a
-        real per-alert page in the web app.
-        """
-        # 1. Persist first — gives us the alert_id used in the deep link.
-        alert.setdefault("discord_message", discord_message)
-        try:
-            alert_id = alert_store.save_alert(alert)
-        except Exception as e:
-            logger.error(f"alert_store.save_alert failed: {e}")
-            alert_id = None
-        alert["alert_id"] = alert_id
-
-        # 2. Pushover — short summary + deep link to the alert page.
-        try:
-            self.pushover.send_alert(alert, alert_id)
-        except Exception as e:
-            logger.error(f"Pushover alert send failed: {e}")
-
-        # 3. Discord — full card (unchanged).
-        if self._discord_alert:
+    def play(self, alert: dict | None = None, *, title: str, body: str) -> None:
+        url = None
+        if alert is not None:
             try:
-                self._discord_alert(alert, discord_message)
+                alert_id = alert_store.save_alert(alert)
+                if alert_id:
+                    url, _ = _build_alert_url(alert_id)
             except Exception as e:
-                logger.error(f"Discord alert send failed: {e}")
+                logger.error(f"Notifier.play: alert_store.save_alert failed: {e}")
+        try:
+            self.pushover.send(title=title, message=body, url=url, priority=PLAY_PRIORITY)
+        except Exception as e:
+            logger.error(f"Notifier.play: pushover send failed: {e}")
 
-    # ─────────────────────────────────────────
-    # MESSAGE ROUTE  (briefings / UOA / SPY daily / reflection)
-    # ─────────────────────────────────────────
+    # ── LOG: record only, NO push ──────────────────────────────────────────
+
+    def log(self, message_or_alert) -> None:
+        if isinstance(message_or_alert, dict):
+            try:
+                alert_store.save_alert(message_or_alert)
+            except Exception as e:
+                logger.error(f"Notifier.log: alert_store.save_alert failed: {e}")
+            logger.info(f"notify(log) alert: {message_or_alert.get('ticker','?')} "
+                        f"{message_or_alert.get('strategy','')} tier={message_or_alert.get('tier','')}")
+        else:
+            logger.info(f"notify(log): {str(message_or_alert)[:200]}")
+
+    # ── Legacy aliases — now SILENT (route to log, never push) ──────────────
+
+    def alert(self, alert: dict, discord_message: str = "") -> None:
+        self.log(alert)
 
     def message(self, raw_message: str) -> None:
-        """
-        Route a plain-text (or Discord-markdown) message to both channels.
-
-        Pushover receives a stripped, truncated version (<= 500 chars);
-        Discord receives the full message unchanged.
-        """
-        # Discord — full message
-        if self._discord_message:
-            try:
-                self._discord_message(raw_message)
-            except Exception as e:
-                logger.error(f"Discord message send failed: {e}")
-
-        # Pushover — strip markdown, extract title from first line
-        try:
-            title = extract_pushover_title(raw_message)
-            body  = strip_discord_markdown(raw_message)
-
-            body_lines = body.splitlines()
-            if body_lines and body_lines[0].strip() == title.strip():
-                body = "\n".join(body_lines[1:]).strip()
-
-            body = body[:500]
-            if body:
-                self.pushover.send_message(title=title, body=body, priority=-1)
-        except Exception as e:
-            logger.error(f"Pushover message send failed: {e}")
+        self.log(raw_message)
