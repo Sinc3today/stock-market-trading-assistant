@@ -186,6 +186,37 @@ class Reflector:
             f"Produce the JSON reflection now."
         )
 
+    # ── SUB-STRATEGY HELPERS (Task 5) ─────────────────
+
+    @staticmethod
+    def _active_substrategies(trades: list[dict], today_str: str) -> set:
+        """(strategy, dte_bucket) combos with an AUTO-PAPER trade entered today."""
+        active = set()
+        for t in trades:
+            if not is_auto_paper(t):
+                continue
+            if (t.get("entry_date") or "")[:10] != today_str:
+                continue
+            strat, bucket = t.get("strategy"), t.get("dte_bucket")
+            if strat and bucket:
+                active.add((strat, bucket))
+        return active
+
+    @staticmethod
+    def _build_substrategy_context(strategy, dte_bucket, trades, accuracy, today_str) -> dict:
+        """Scoped context for ONE sub-strategy, across BOTH books."""
+        combo_trades = [t for t in trades
+                        if t.get("strategy") == strategy and t.get("dte_bucket") == dte_bucket]
+        prefix = f"{strategy}:{dte_bucket}:"
+        combo_acc = {k: v for k, v in (accuracy or {}).items() if k.startswith(prefix)}
+        return {
+            "date":       today_str,
+            "strategy":   strategy,
+            "dte_bucket": dte_bucket,
+            "trades":     combo_trades[-10:],
+            "accuracy":   combo_acc,
+        }
+
     # ── CLAUDE ────────────────────────────────────────
 
     def _call_claude(self, prompt: str, facts: dict) -> tuple[str, str]:
