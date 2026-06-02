@@ -44,7 +44,12 @@ class NewsScanner:
     # ─────────────────────────────────────────
 
     def run(self, briefing_type: str = "morning", post_to_discord: bool = True) -> dict:
-        """Build and (optionally) post a briefing of type 'morning' | 'midday' | 'eod'."""
+        """Build a briefing of type 'morning' | 'midday' | 'eod'.
+
+        post_to_discord is DEPRECATED (Discord removed 2026-06-02) and ignored.
+        Briefings are persisted to news_briefings.json via _save_briefing().
+        The param is kept for call-site back-compat only.
+        """
         now_est = datetime.now(self.eastern).strftime("%I:%M %p EST")
         logger.info(f"📰 {briefing_type.upper()} news briefing starting at {now_est}")
 
@@ -110,10 +115,6 @@ class NewsScanner:
         # Format discord message
         discord_msg = self._format_discord_message(briefing)
         briefing["discord_message"] = discord_msg
-
-        # Post to Discord (only if not being called from inside the bot async context)
-        if post_to_discord:
-            self._post_news_to_discord(discord_msg)
 
         # Save to log
         self._save_briefing(briefing)

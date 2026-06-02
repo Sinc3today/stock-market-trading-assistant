@@ -23,3 +23,9 @@ def test_main_constructs_pushover_only_notifier():
 def test_news_scanner_does_not_import_discord_bot():
     src = _src("scanners/news_scanner.py")
     assert "from alerts.discord_bot import bot" not in src
+
+
+def test_economic_scanner_does_not_import_discord_bot():
+    src = _src("scanners/economic_scanner.py")
+    assert "discord_bot" not in src, \
+        "scanners/economic_scanner.py must not import alerts.discord_bot"

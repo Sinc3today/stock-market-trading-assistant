@@ -97,37 +97,30 @@ class EconomicScanner:
     # POST TO DISCORD
     # ─────────────────────────────────────────
 
-    def post_economic_alert(self, release: dict):
+    def post_economic_alert(self, release: dict, notify_fn=None):
         """
-        Post a high-impact economic alert to Discord.
-        Uses same pattern as news_scanner.
+        Log a high-impact economic alert via the provided notify_fn.
+
+        Discord was removed 2026-06-02.  Economic releases are NON-urgent so
+        they route through notifier.message() (silent log, no push).
+
+        Args:
+            release:   release dict (must contain 'discord_alert' key with the
+                       formatted message string).
+            notify_fn: callable(str) — typically notifier.message.  If None,
+                       falls back to logger.info so the method is still safe
+                       when called from tests without a full notifier.
         """
-        if not release.get("discord_alert"):
+        message = release.get("discord_alert")
+        if not message:
             return
 
+        _fn = notify_fn if callable(notify_fn) else logger.info
         try:
-            from alerts.discord_bot import get_bot_loop, bot
-
-            channel_id = getattr(config, "DISCORD_CHANNEL_ID_NEWS", 0) \
-                         or config.DISCORD_CHANNEL_ID_STANDARD
-
-            message = release["discord_alert"]
-
-            async def _send():
-                channel = bot.get_channel(channel_id)
-                if channel:
-                    await channel.send(message)
-                    logger.info(f"Economic alert posted: {release['name']}")
-
-            import asyncio
-            loop = get_bot_loop()
-            if loop and loop.is_running():
-                asyncio.run_coroutine_threadsafe(_send(), loop)
-            else:
-                logger.warning("Bot loop not ready — economic alert not posted")
-
+            _fn(message)
+            logger.info(f"Economic alert logged: {release.get('name', '?')}")
         except Exception as e:
-            logger.error(f"Economic alert post error: {type(e).__name__}")
+            logger.error(f"Economic alert log error: {type(e).__name__}")
 
     # ─────────────────────────────────────────
     # AI ANALYSIS

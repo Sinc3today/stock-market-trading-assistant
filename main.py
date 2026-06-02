@@ -53,9 +53,8 @@ from scanners.options_flow_scanner import OptionsFlowScanner
 
 # ── Local scanner-status dict (replaces the Discord bot's shared dict) ────────
 scanner_status: dict = {
-    "running":      False,
-    "last_scan":    None,
-    "alerts_today": 0,
+    "running":   False,
+    "last_scan": None,
 }
 
 # ── Notification router (Pushover-only) ───────────────────────────────────────
@@ -102,8 +101,7 @@ def run_economic_scan():
         releases = economic_scanner.scan_for_new_releases(days_back=1)
         for release in releases:
             if release.get("is_high_impact") and release.get("discord_alert"):
-                economic_scanner.post_economic_alert(release)
-                logger.info(f"Economic alert posted: {release['name']}")
+                economic_scanner.post_economic_alert(release, notify_fn=notifier.message)
         if releases:
             logger.info(f"Economic scan: {len(releases)} new release(s) found")
         else:
@@ -457,10 +455,7 @@ if __name__ == "__main__":
             time_module.sleep(60)
             now = datetime.now()
             if now.minute == 0:
-                logger.info(
-                    f"💓 Heartbeat — {now.strftime('%I:%M %p')} | "
-                    f"Alerts today: {scanner_status['alerts_today']}"
-                )
+                logger.info(f"💓 Heartbeat — {now.strftime('%I:%M %p')}")
     except KeyboardInterrupt:
         logger.info("Shutting down Trading Assistant...")
         try:
