@@ -79,7 +79,7 @@ def _assign_book_for_enriched(enriched: dict) -> str:
     """Route a priced enriched setup to the disciplined or learning book."""
     from signals.exit_feasibility import assign_book
     from learning.exit_manager import exit_rule_for
-    pt = exit_rule_for(enriched.get("strategy"), enriched.get("dte_bucket"))["profit_target_pct"]
+    pt = exit_rule_for(enriched.get("strategy"), enriched.get("dte_bucket")).get("profit_target_pct", 0.0)
     return assign_book(enriched.get("strategy"), enriched.get("dte_bucket"),
                        enriched.get("max_profit"), enriched.get("max_loss"),
                        profit_target_pct=pt)
