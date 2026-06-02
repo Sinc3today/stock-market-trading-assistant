@@ -65,6 +65,7 @@ class KBEntry:
     strategy:   str | None     = None   # e.g. "iron_condor", "bull_debit", "put_debit_spread"
     dte_bucket: str | None     = None   # "0DTE" / "1-3DTE" / "45DTE"
     book:       str | None     = None   # "disciplined" / "learning"
+    stance:     str | None     = None   # "confirming" / "disconfirming" — falsification tag
     id:         str            = field(default_factory=lambda: uuid.uuid4().hex[:10])
 
     def __post_init__(self):
