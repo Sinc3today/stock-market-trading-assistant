@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-06-02 (pm) — Notification curation: Pushover urgent-only, Discord removed
+
+**Spec:** `docs/superpowers/specs/2026-06-02-notification-curation-design.md`
+**Plan:** `docs/superpowers/plans/2026-06-02-notification-curation.md`
+**Branch:** `notification-curation` (6 commits) — subagent-driven, each task spec+quality reviewed + final whole-branch review.
+
+Curated Pushover to only urgent, actionable-play signals and removed Discord entirely (it was congested because the old `Notifier` fanned every event to both channels).
+
+**`Notifier` → Pushover-only, push is opt-in:**
+- `play(alert=None, *, title, body)` — persists (deep link) + pushes Pushover **priority 1**. The ONLY path to the phone.
+- `log(message_or_alert)` — records (alert_store + logger.info), **no push**. `.alert()`/`.message()` are now silent wrappers over `log()`, so a new scanner can't re-congest by accident.
+
+**Urgent set (the only `play()` callers):** disciplined position opened (45DTE daily `job_paper_broker` + intraday `_maybe_play_on_open` when `book=="disciplined"`), profit-target/stop hit (`job_exit_manager`), expiry close (`job_expiry_resolver`). `play_fn=notifier.play` threaded through the scheduler; intraday via `set_play_fn`. Learning-book/sandbox opens, briefings, reflections, UOA flow, economic releases, standard scans, outcome scoring → **silent** `log()`.
+
+**Discord removed from the live path:** `main.py` drops the bot thread/token, `start_discord`, the `_bot_ready` race gate, and the `discord_bot` import; `scanner_status` replaced with a local dict. `news_scanner._post_news_to_discord` and `economic_scanner.post_economic_alert` no longer import/dispatch to the bot — economic alerts now route via `notifier.message`→`log` (the review caught that economic_scanner was still reaching the dead bot loop). `alerts/discord_bot.py` left dormant-but-unwired (hard-delete is a noted follow-up).
+
+**Nothing lost:** alerts persist to `alert_store`; briefings/reflections/plans/economic persist at source + the silent log. Dashboard + source files + `app.log` are the review surface.
+
+**Tests:** 6 TDD commits; final review 124 passed (only the pre-existing live-FRED `test_economic_scanner`/`test_fred` network tests fail). 0 regressions.
+
+**Deploy:** restart `smta.service`; the phone goes quiet except disciplined open / target-stop / expiry. Post-restart smoke: one manual `notifier.play(...)` to confirm Pushover delivers at priority 1.
+
+**Follow-ups (noted):** hard-delete `alerts/discord_bot.py` + `post_*_sync`; drop the deprecated `news_scanner.run(post_to_discord=)` param + vestigial `discord_message` keys; clean stale `discord_bot` docstring examples in `spy_daily_scheduler`/`spy_daily_strategy`; optional "muted feed" dashboard tab.
+
+---
+
 ## 2026-06-02 — Intraday WF calibration: 0DTE sandboxed, dual-book + verdict thresholds set
 
 **Branch:** `intraday-wf-calibration` (commit `7694591`)
