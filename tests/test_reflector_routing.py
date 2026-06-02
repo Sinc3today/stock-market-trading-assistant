@@ -58,14 +58,23 @@ def test_anomalous_day_routes_to_sonnet(isolated_reflector, monkeypatch):
 
 
 def test_routing_recorded_in_result(isolated_reflector, monkeypatch):
-    """The result dict must include the route used (telemetry)."""
+    """Anomaly routing must still fire and the unit must complete.
+
+    Contract change (Task 7): reflect_today now returns {date, units, failed, kb_ids};
+    the per-unit "route" telemetry lives inside _reflect_one and is not surfaced on the
+    top-level return dict. Routing correctness is already verified by
+    test_anomalous_day_routes_to_sonnet (which checks call_llm kwargs). This test
+    verifies that the unit ran (units==1, failed==0) when anomaly routing fires —
+    confirming the route did not prevent the unit from completing.
+    """
     monkeypatch.setattr(
         "learning.reflector.is_anomalous_day", lambda facts: True
     )
     with patch("learning.reflector.call_llm",
                return_value='{"summary":"ok","narrative":"-","kb_entries":[]}'):
         result = isolated_reflector.reflect_today(today=date(2026, 5, 27))
-        assert result.get("route") in ("sonnet_anomaly", "sonnet_fallback", "sonnet_anomaly_error")
+        assert result["units"] == 1
+        assert result["failed"] == 0
 
 
 def test_regime_change_walkback_survives_thanksgiving_long_weekend(monkeypatch, tmp_path):

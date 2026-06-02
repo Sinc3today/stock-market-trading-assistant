@@ -101,66 +101,101 @@ class Reflector:
     def reflect_today(self, today: date | None = None) -> dict:
         today     = today or date.today()
         today_str = today.isoformat()
-        context   = self._build_context(today_str)
-        prompt    = self._build_prompt(context)
+        all_trades = self.trades.get_all_trades()
+        accuracy   = self.preds.accuracy(n=30, by_substrategy=True)
+        active = self._active_substrategies(all_trades, today_str)
 
-        # Phase 4a item 5: gather anomaly facts and route to phi4 or Sonnet
+        attempted = 0
+        successful: list[dict] = []
+        kb_ids: list[str] = []
+        failed = 0
+
+        if active:
+            for strategy, dte_bucket in sorted(active):
+                attempted += 1
+                ctx = self._build_substrategy_context(strategy, dte_bucket,
+                                                      all_trades, accuracy, today_str)
+                prompt = self._build_substrategy_prompt(ctx)
+                scope = {"strategy": strategy, "dte_bucket": dte_bucket, "book": None}
+                try:
+                    res = self._reflect_one(prompt, scope, today_str, ctx)
+                    successful.append(res)
+                    kb_ids.extend(res.get("kb_ids", []))
+                except Exception as e:
+                    failed += 1
+                    logger.exception(f"Reflector: sub-strategy {strategy}:{dte_bucket} failed: {e}")
+        else:
+            # Standby: prediction/skip/near-miss reflection (preserves the heartbeat).
+            attempted += 1
+            context = self._build_context(today_str)
+            prompt  = self._build_prompt(context)
+            scope   = {"strategy": None, "dte_bucket": None, "book": None}
+            try:
+                res = self._reflect_one(prompt, scope, today_str, context)
+                successful.append(res)
+                kb_ids.extend(res.get("kb_ids", []))
+            except Exception as e:
+                failed += 1
+                logger.exception(f"Reflector: standby reflection failed: {e}")
+
+        if self.post and successful:
+            try:
+                self.post(
+                    f"🪞 **Daily Reflection {today_str}** — "
+                    f"{attempted} unit(s), +{len(kb_ids)} KB entries"
+                )
+            except Exception as e:
+                logger.warning(f"Reflector: post_fn failed: {e}")
+
+        return {"date": today_str, "units": attempted, "failed": failed, "kb_ids": kb_ids}
+
+    def _reflect_one(self, prompt: str, scope: dict, today_str: str, context: dict) -> dict:
+        """Single reflection unit: LLM call → parse → validate → save MD → append KB.
+
+        scope = {"strategy": ..., "dte_bucket": ..., "book": ...}  (Nones for standby)
+        Returns {"kb_ids", "markdown", "route", "parsed"}.
+        """
         facts = self._gather_anomaly_facts(context)
         reply, route = self._call_claude(prompt, facts)
         parsed, parse_err = self._parse_reply(reply)
 
-        # Phase 4a items 3+4: validate KB entries (Task 5 wiring — preserved)
+        # Phase 4a items 3+4: validate KB entries
         if parsed:
             from learning.kb_validator import validate_kb_entries
-            today_numbers = self._extract_today_numbers(context)
-            today_trade_ids = self._extract_today_trade_ids(context)
-            today_kb_ids = self._extract_recent_kb_ids(context)
             parsed, _ = validate_kb_entries(
                 parsed,
-                facts={"trade_ids": today_trade_ids,
-                       "today_numbers": today_numbers,
-                       "kb_ids": today_kb_ids},
+                facts={"trade_ids": self._extract_today_trade_ids(context),
+                       "today_numbers": self._extract_today_numbers(context),
+                       "kb_ids": self._extract_recent_kb_ids(context)},
                 default_kind="daily",
             )
 
-        md_path = self._save_markdown(today_str, parsed, reply, context, parse_err)
+        label = (f"{scope['strategy']}__{scope['dte_bucket']}"
+                 if scope.get("strategy") else "standby")
+        md_path = self._save_markdown(today_str, parsed, reply, context, parse_err, label=label)
 
         kb_ids: list[str] = []
         if parsed and parsed.get("kb_entries"):
             for raw in parsed["kb_entries"]:
                 try:
                     entry = KBEntry(
-                        date       = today_str,
-                        category   = raw.get("category", "other"),
-                        claim      = raw.get("claim", "")[:500],
-                        evidence   = raw.get("evidence", "")[:1000],
-                        confidence = float(raw.get("confidence", 0.5)),
-                        source     = "reflector",
-                        tags       = list(raw.get("tags") or [])[:8],
+                        date=today_str,
+                        category=raw.get("category", "other"),
+                        claim=raw.get("claim", "")[:500],
+                        evidence=raw.get("evidence", "")[:1000],
+                        confidence=float(raw.get("confidence", 0.5)),
+                        source="reflector",
+                        tags=list(raw.get("tags") or [])[:8],
+                        strategy=scope.get("strategy"),
+                        dte_bucket=scope.get("dte_bucket"),
+                        book=scope.get("book"),
+                        stance=raw.get("stance"),
                     )
                     kb_ids.append(self.kb.append(entry))
                 except Exception as e:
                     logger.warning(f"Reflector: skipping malformed KB entry: {e}")
 
-        if self.post and parsed and parsed.get("summary"):
-            try:
-                self.post(
-                    f"🪞 **Daily Reflection {today_str}**\n"
-                    f"{parsed['summary']}\n"
-                    f"_+{len(kb_ids)} KB entries (route: {route}) -- see {md_path}_"
-                )
-            except Exception as e:
-                logger.warning(f"Reflector: post_fn failed: {e}")
-
-        return {
-            "date":              today_str,
-            "markdown":          md_path,
-            "kb_ids":            kb_ids,
-            "parsed":            bool(parsed),
-            "parse_err":         parse_err,
-            "validator_metrics": parsed.get("_validator_metrics", {}) if parsed else {},
-            "route":             route,   # Phase 4a item 5 telemetry
-        }
+        return {"kb_ids": kb_ids, "markdown": md_path, "route": route, "parsed": bool(parsed)}
 
     # ── CONTEXT ───────────────────────────────────────
 
@@ -434,11 +469,18 @@ class Reflector:
 
     def _save_markdown(
         self, today_str: str, parsed: dict | None, raw: str,
-        ctx: dict, parse_err: str | None,
+        ctx: dict, parse_err: str | None, label: str = "standby",
     ) -> str:
-        path = os.path.join(
-            config.LOG_DIR, "learning", "reflections", f"{today_str}.md"
-        )
+        if label == "standby":
+            # Legacy path for back-compat — keeps existing log consumers happy.
+            path = os.path.join(
+                config.LOG_DIR, "learning", "reflections", f"{today_str}.md"
+            )
+        else:
+            # Per-sub-strategy: logs/learning/reflections/<date>/<label>.md
+            day_dir = os.path.join(config.LOG_DIR, "learning", "reflections", today_str)
+            os.makedirs(day_dir, exist_ok=True)
+            path = os.path.join(day_dir, f"{label}.md")
         lines = [f"# Daily Reflection -- {today_str}", ""]
         if parsed:
             lines += [

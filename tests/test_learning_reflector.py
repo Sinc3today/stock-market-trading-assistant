@@ -73,7 +73,11 @@ def test_reflect_parses_claude_reply_and_writes_kb(iso, monkeypatch):
     monkeypatch.setattr(r, "_call_claude", lambda prompt, facts: (fake_reply, "phi4"))
 
     result = r.reflect_today()
-    assert result["parsed"] is True
+    # Contract change (Task 7): reflect_today now returns {date, units, failed, kb_ids}.
+    # "parsed" and "markdown" are per-unit fields inside _reflect_one; top-level result
+    # reports aggregates. Check that the unit ran and KB entries were created.
+    assert result["units"] == 1          # one standby unit ran (no active sub-strategies)
+    assert result["failed"] == 0
     assert len(result["kb_ids"]) == 2
 
     kb_rows = KnowledgeBase().all()
@@ -81,7 +85,12 @@ def test_reflect_parses_claude_reply_and_writes_kb(iso, monkeypatch):
     cats = {r["category"] for r in kb_rows}
     assert cats == {"regime_accuracy", "gate_quality"}
 
-    md = open(result["markdown"]).read()
+    # Standby reflection still writes the legacy flat MD path for back-compat.
+    import config
+    md_path = os.path.join(config.LOG_DIR, "learning", "reflections",
+                           f"{date.today().isoformat()}.md")
+    assert os.path.exists(md_path)
+    md = open(md_path).read()
     assert "Bullish call confirmed" in md
     assert "regime_accuracy" in md
 
@@ -93,10 +102,18 @@ def test_reflect_handles_malformed_json(iso, monkeypatch):
     monkeypatch.setattr(r, "_call_claude", lambda prompt, facts: ("this is not JSON at all", "phi4"))
 
     result = r.reflect_today()
-    assert result["parsed"] is False
-    assert result["parse_err"] is not None
-    assert len(result["kb_ids"]) == 0
-    md = open(result["markdown"]).read()
+    # Contract change (Task 7): top-level result no longer carries "parsed"/"parse_err"/
+    # "markdown". Verify: no KB entries (parse failed), unit still ran (failed=0 because
+    # _reflect_one itself succeeded; parse failure is handled gracefully inside it).
+    assert result["units"] == 1
+    assert result["failed"] == 0   # _reflect_one didn't raise; it handled the parse error
+    assert len(result["kb_ids"]) == 0   # no KB entries on parse failure
+    # The MD file is still written with the raw reply (preserved behavior).
+    import config
+    md_path = os.path.join(config.LOG_DIR, "learning", "reflections",
+                           f"{date.today().isoformat()}.md")
+    assert os.path.exists(md_path)
+    md = open(md_path).read()
     assert "parse failed" in md
     assert "this is not JSON" in md
 
@@ -106,5 +123,12 @@ def test_reflect_handles_no_api_key(iso, monkeypatch):
     _seed()
     r = Reflector(api_key=None)
     result = r.reflect_today()
-    assert result["parsed"] is False
-    assert os.path.exists(result["markdown"])
+    # Contract change (Task 7): top-level result no longer carries "parsed"/"markdown".
+    # Verify: no KB entries (LLM call failed → empty/error reply → no parse), unit attempted.
+    assert result["units"] == 1          # standby unit was attempted
+    assert len(result["kb_ids"]) == 0    # no KB entries without valid LLM reply
+    # The MD file must still be written (raw reply fallback preserved).
+    import config
+    md_path = os.path.join(config.LOG_DIR, "learning", "reflections",
+                           f"{date.today().isoformat()}.md")
+    assert os.path.exists(md_path)

@@ -59,3 +59,58 @@ def test_substrategy_prompt_has_disconfirmation_and_scope(monkeypatch, tmp_path)
     p = r._build_substrategy_prompt(ctx)
     assert "iron_condor" in p and "0DTE" in p
     assert "disprove" in p.lower() or "challenge" in p.lower()  # disconfirmation framing
+
+
+def test_reflect_today_runs_once_per_active_substrategy(monkeypatch, tmp_path):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from learning.reflector import Reflector
+    r = Reflector()
+    # two active sub-strategies today
+    monkeypatch.setattr(r.trades, "get_all_trades", lambda: [
+        _trade("iron_condor", "0DTE", "disciplined", "2026-06-01 09:30 AM EST"),
+        _trade("call_debit_spread", "1-3DTE", "learning", "2026-06-01 10:00 AM EST"),
+    ])
+    calls = []
+    def fake_reflect_one(prompt, scope, today_str, context):
+        calls.append(scope)
+        return {"kb_ids": [], "markdown": "x", "route": "phi4", "parsed": True}
+    monkeypatch.setattr(r, "_reflect_one", fake_reflect_one)
+    out = r.reflect_today(today=__import__("datetime").date(2026, 6, 1))
+    scopes = {(s.get("strategy"), s.get("dte_bucket")) for s in calls}
+    assert scopes == {("iron_condor", "0DTE"), ("call_debit_spread", "1-3DTE")}
+    assert out["units"] == 2
+
+
+def test_reflect_today_standby_when_no_active(monkeypatch, tmp_path):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from learning.reflector import Reflector
+    r = Reflector()
+    monkeypatch.setattr(r.trades, "get_all_trades", lambda: [])  # no trades today
+    calls = []
+    monkeypatch.setattr(r, "_reflect_one",
+                        lambda prompt, scope, today_str, context: calls.append(scope) or
+                        {"kb_ids": [], "markdown": "x", "route": "phi4", "parsed": True})
+    out = r.reflect_today(today=__import__("datetime").date(2026, 6, 1))
+    assert len(calls) == 1
+    assert calls[0].get("strategy") is None   # standby unit
+    assert out["units"] == 1
+
+
+def test_reflect_today_one_failure_does_not_sink_others(monkeypatch, tmp_path):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from learning.reflector import Reflector
+    r = Reflector()
+    monkeypatch.setattr(r.trades, "get_all_trades", lambda: [
+        _trade("iron_condor", "0DTE", "disciplined", "2026-06-01 09:30 AM EST"),
+        _trade("call_debit_spread", "1-3DTE", "learning", "2026-06-01 10:00 AM EST"),
+    ])
+    def flaky(prompt, scope, today_str, context):
+        if scope.get("strategy") == "iron_condor":
+            raise RuntimeError("LLM boom")
+        return {"kb_ids": ["k1"], "markdown": "x", "route": "phi4", "parsed": True}
+    monkeypatch.setattr(r, "_reflect_one", flaky)
+    out = r.reflect_today(today=__import__("datetime").date(2026, 6, 1))
+    assert out["units"] == 2 and out["failed"] == 1 and "k1" in out["kb_ids"]
