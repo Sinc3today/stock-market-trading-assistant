@@ -1,6 +1,6 @@
 """
 main.py — Trading Assistant Entry Point
-Starts the Discord bot, premarket scanner, swing scanner, and intraday scanner.
+Starts the premarket scanner, swing scanner, and intraday scanner.
 
 Run with:
     python main.py
@@ -11,7 +11,6 @@ as a uvicorn subprocess. See alerts/web_app.py.
 
 import subprocess
 import sys
-import threading
 import time as time_module
 from datetime import datetime, timedelta
 from loguru import logger
@@ -43,7 +42,6 @@ logger.add(
 )
 
 # ── Shared state ─────────────────────────────────────────────
-from alerts.discord_bot         import post_message_sync, scanner_status, post_alert_sync
 from alerts.pushover_client     import PushoverClient
 from alerts.notifier            import Notifier
 from scanners.swing_scanner     import SwingScanner
@@ -53,13 +51,16 @@ from scanners.news_scanner      import NewsScanner
 from scanners.economic_scanner  import EconomicScanner
 from scanners.options_flow_scanner import OptionsFlowScanner
 
-# ── Notification router (Pushover primary, Discord secondary) ─
+# ── Local scanner-status dict (replaces the Discord bot's shared dict) ────────
+scanner_status: dict = {
+    "running":      False,
+    "last_scan":    None,
+    "alerts_today": 0,
+}
+
+# ── Notification router (Pushover-only) ───────────────────────────────────────
 pushover = PushoverClient()
-notifier = Notifier(
-    pushover           = pushover,
-    discord_alert_fn   = post_alert_sync,
-    discord_message_fn = post_message_sync,
-)
+notifier = Notifier(pushover)
 
 swing_scanner        = SwingScanner()
 intraday_scanner     = IntradayScanner()
@@ -69,10 +70,11 @@ economic_scanner     = EconomicScanner()
 options_flow_scanner = OptionsFlowScanner()
 
 # Wire notifier into all scanners
-# notifier.alert   → Pushover short summary + Discord full card  (scanner alerts)
-# notifier.message → Pushover stripped summary + Discord full msg (plain messages)
+# .set_discord_fn -> now a silent log() wrapper (no push); kept for call-site compat
+# .set_play_fn    -> actionable-play push path (disciplined opens only)
 swing_scanner.set_discord_fn(notifier.alert)
 intraday_scanner.set_discord_fn(notifier.alert)
+intraday_scanner.set_play_fn(notifier.play)
 premarket_scanner.set_discord_fn(notifier.message)
 options_flow_scanner.set_discord_fn(notifier.message)
 
@@ -276,17 +278,6 @@ def start_scheduler():
 
 
 # ─────────────────────────────────────────
-# DISCORD BOT
-# ─────────────────────────────────────────
-
-def start_discord():
-    """Start the Discord bot (blocking — run in a daemon thread)."""
-    from alerts.discord_bot import run_bot
-    logger.info("Starting Discord bot thread...")
-    run_bot()
-
-
-# ─────────────────────────────────────────
 # CHILD-PROCESS LIFETIME (Windows)
 # ─────────────────────────────────────────
 #
@@ -383,7 +374,6 @@ if __name__ == "__main__":
     logger.info("=" * 52)
     logger.info(f"Environment:   {config.ENVIRONMENT}")
     logger.info(f"Polygon key:   {'✅ Set' if config.POLYGON_API_KEY   else '❌ Missing'}")
-    logger.info(f"Discord token: {'✅ Set' if config.DISCORD_BOT_TOKEN else '❌ Missing'}")
     logger.info(f"Alpaca key:    {'✅ Set' if config.ALPACA_API_KEY    else '❌ Missing'}")
     logger.info(f"Pushover:      {'✅ Set' if config.PUSHOVER_API_TOKEN else '❌ Missing'}")
     logger.info(f"Detail page:   {config.PUSHOVER_BASE_URL or '⚠️  PUSHOVER_BASE_URL not set — links disabled'}")
@@ -420,7 +410,8 @@ if __name__ == "__main__":
             scheduler      = scheduler,
             polygon_client = PolygonClient(),
             vix_client     = VIXClient(),   # exit_manager marks spreads with VIX as IV
-            post_fn        = notifier.message,
+            post_fn=notifier.message,
+            play_fn=notifier.play,
         )
         logger.info("✅ Self-learning jobs registered")
     except Exception as e:
@@ -452,14 +443,10 @@ if __name__ == "__main__":
     _bind_to_job_object(web_app_process)
     logger.info(f"   Alert web app: running on port {config.WEB_SERVER_PORT}")
 
-    # Start Discord bot in background thread
-    discord_thread = threading.Thread(target=start_discord, daemon=True)
-    discord_thread.start()
-
     logger.info("-" * 52)
     logger.info("✅ All systems running")
     logger.info("   Scanners:  scheduled and waiting")
-    logger.info("   Discord:   online")
+    logger.info("   Pushover:  active (play events only)")
     logger.info(f"  Web app:   http://localhost:{config.WEB_SERVER_PORT}/")
     logger.info("   Stop:      Ctrl+C")
     logger.info("=" * 52)

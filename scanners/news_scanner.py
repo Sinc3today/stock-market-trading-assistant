@@ -191,58 +191,14 @@ class NewsScanner:
         return all_articles[:config.NEWS_ARTICLES_LIMIT]
 
     # ─────────────────────────────────────────
-    # DISCORD POSTING
+    # DISCORD POSTING (neutered — Discord removed 2026-06-02)
     # ─────────────────────────────────────────
 
     def _post_news_to_discord(self, message: str):
+        """No-op: Discord was removed from the live path.
+        News content is persisted to news_briefings.json via _save_briefing().
         """
-        Post news briefing to Discord.
-        Uses bot.loop (set once the bot connects) to schedule the send from
-        this worker thread — the same pattern as post_message_sync.
-        """
-        try:
-            from alerts.discord_bot import bot
-            import asyncio
-
-            channel_id = getattr(config, "DISCORD_CHANNEL_ID_NEWS", 0) \
-                         or config.DISCORD_CHANNEL_ID_STANDARD
-
-            if not channel_id:
-                logger.warning("No Discord channel configured for news")
-                return
-
-            chunks = []
-            if len(message) <= 1900:
-                chunks = [message]
-            else:
-                current = ""
-                for line in message.split("\n"):
-                    if len(current) + len(line) + 1 > 1900:
-                        if current:
-                            chunks.append(current)
-                        current = line
-                    else:
-                        current = current + "\n" + line if current else line
-                if current:
-                    chunks.append(current)
-
-            async def _send_all():
-                channel = bot.get_channel(channel_id)
-                if channel:
-                    for chunk in chunks:
-                        await channel.send(chunk)
-                    logger.info(f"News briefing posted to Discord ({len(chunks)} chunk(s))")
-                else:
-                    logger.error(f"News channel {channel_id} not found — check DISCORD_CHANNEL_ID_NEWS in .env")
-
-            loop = getattr(bot, "loop", None)
-            if loop and loop.is_running():
-                asyncio.run_coroutine_threadsafe(_send_all(), loop)
-            else:
-                logger.warning("Discord bot loop not ready — news not posted")
-
-        except Exception as e:
-            logger.error(f"News Discord post error: {type(e).__name__} — {e}")
+        logger.debug("_post_news_to_discord: no-op (Discord removed)")
 
     # AI SYNTHESIS
     # ─────────────────────────────────────────
