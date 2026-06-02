@@ -45,6 +45,32 @@ from journal.trade_logger import TradeLogger
 
 EASTERN = pytz.timezone("US/Eastern")
 
+# ── Play notification hook ────────────────────────────────────
+# Mirrors the set_discord_fn pattern.  Wired to notifier.play by main.py.
+_PLAY_FN = None
+
+
+def set_play_fn(fn):
+    """Register the actionable-play push hook (notifier.play)."""
+    global _PLAY_FN
+    _PLAY_FN = fn
+
+
+def _maybe_play_on_open(enriched: dict, result: dict) -> None:
+    """Push a play() ONLY when a disciplined position actually opened.
+    Learning-book (sandbox) opens stay silent."""
+    if not (_PLAY_FN and result.get("recorded") and enriched.get("book") == "disciplined"):
+        return
+    try:
+        _PLAY_FN(
+            title=f"📈 Intraday play opened — {enriched.get('strategy')}/{enriched.get('dte_bucket')}",
+            body=f"{result.get('trade_id')} {enriched.get('strategy')} "
+                 f"@ {enriched.get('dte_bucket')} (entry {enriched.get('entry_price')})",
+        )
+    except Exception as e:
+        logger.warning(f"intraday play notify failed: {e}")
+
+
 # ── Alert dedup cache ────────────────────────────────────────
 # Prevents spamming the same alert every 5 minutes
 # Key: (ticker, strategy) → last score posted
@@ -257,6 +283,7 @@ class IntradayScanner:
                         continue
                     enriched["book"] = _assign_book_for_enriched(enriched)
                     result = broker.execute_signal(enriched)
+                    _maybe_play_on_open(enriched, result)
                     logger.info(
                         f"Phase 3 entry: {enriched['strategy']} @ {enriched['dte_bucket']} → "
                         f"trade_id={result.get('trade_id')} recorded={result.get('recorded')}"
