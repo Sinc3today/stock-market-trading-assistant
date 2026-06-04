@@ -324,6 +324,29 @@ def window_stats(trades_T: list[dict], trades_B: list[dict]) -> dict:
             "sharpe_T":   bT["sharpe"], "sharpe_B": bB["sharpe"],
         }
 
+    # Per-(strategy, dte_bucket) breakdown. Keyed by a JSON-serializable
+    # string "strategy|dte_bucket" (tuple keys break json.dump). This is the
+    # finest grain — lets us isolate, e.g., put_debit_spread|1-3DTE from the
+    # rest of the marginally-positive 1-3DTE bucket.
+    combos = sorted({f"{t['strategy']}|{t['dte_bucket']}" for t in trades_T} |
+                    {f"{t['strategy']}|{t['dte_bucket']}" for t in trades_B})
+    by_strategy_bucket = {}
+    for key in combos:
+        strat, bucket = key.split("|", 1)
+        cT = _aggregate([t for t in trades_T
+                         if t["strategy"] == strat and t["dte_bucket"] == bucket])
+        cB = _aggregate([t for t in trades_B
+                         if t["strategy"] == strat and t["dte_bucket"] == bucket])
+        by_strategy_bucket[key] = {
+            "n_trades_T": cT["n"],   "n_trades_B": cB["n"],
+            "pnl_T":      cT["pnl"], "pnl_B":      cB["pnl"],
+            "mean_T":     cT["mean"], "mean_B":    cB["mean"],
+            "sharpe_T":   cT["sharpe"], "sharpe_B": cB["sharpe"],
+            "wins_T":     cT["wins"], "wins_B":    cB["wins"],
+            "win_rate_T": (cT["wins"] / cT["n"]) if cT["n"] else 0.0,
+            "win_rate_B": (cB["wins"] / cB["n"]) if cB["n"] else 0.0,
+        }
+
     return {
         "n_trades_T":           T["n"],
         "n_trades_B":           B["n"],
@@ -336,6 +359,7 @@ def window_stats(trades_T: list[dict], trades_B: list[dict]) -> dict:
         "delta_pnl_per_trade":  (T["mean"] - B["mean"]) if (T["n"] and B["n"]) else float("nan"),
         "delta_sharpe":         T["sharpe"] - B["sharpe"],
         "by_bucket":            by_bucket,
+        "by_strategy_bucket":   by_strategy_bucket,
     }
 
 
@@ -397,6 +421,36 @@ def aggregate_verdict(window_results: list[dict]) -> dict:
         "n_inconclusive": n_inconclusive,
         "n_raw":          n_raw,
         "pass_rate":      (n_pass / determinative) if determinative else None,
+    }
+
+
+def aggregate_strategy_bucket(window_results: list[dict], key: str) -> dict:
+    """Sum the TREATMENT-side stats for one strategy|dte_bucket combo across
+    every window. Windows lacking the key (combo never traded that window) are
+    skipped. Returns headline n / pnl / mean / win_rate for the disciplined
+    (router-gated) book.
+
+    Parameters
+    ----------
+    window_results : list of {"stats": {"by_strategy_bucket": {key: {...}}}}
+    key            : e.g. "put_debit_spread|1-3DTE"
+    """
+    n = 0
+    pnl = 0.0
+    wins = 0
+    for w in window_results:
+        sb = w.get("stats", {}).get("by_strategy_bucket", {})
+        combo = sb.get(key)
+        if combo is None:
+            continue
+        n    += combo.get("n_trades_T", 0)
+        pnl  += combo.get("pnl_T", 0.0)
+        wins += combo.get("wins_T", 0)
+    return {
+        "n":        n,
+        "pnl":      pnl,
+        "mean":     (pnl / n) if n else 0.0,
+        "win_rate": (wins / n) if n else 0.0,
     }
 
 
