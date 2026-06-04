@@ -121,6 +121,7 @@ def test_strategy_to_structure_unknown_returns_sentinel():
 
 
 import math
+import statistics
 from backtests.intraday_router_wf import window_stats
 
 
@@ -156,6 +157,97 @@ def test_window_stats_includes_per_bucket_breakdown():
     assert "by_bucket" in s
     assert s["by_bucket"]["0DTE"]["n_trades_T"] == 1
     assert s["by_bucket"]["1-3DTE"]["n_trades_T"] == 1
+
+
+def test_window_stats_includes_per_strategy_bucket_breakdown():
+    # Mix strategies and buckets across both sides.
+    t = [
+        _trade(100, strategy="put_debit_spread", bucket="1-3DTE"),
+        _trade(-40, strategy="put_debit_spread", bucket="1-3DTE"),
+        _trade(60,  strategy="put_debit_spread", bucket="0DTE"),
+        _trade(20,  strategy="call_debit_spread", bucket="1-3DTE"),
+    ]
+    b = [
+        _trade(10,  strategy="put_debit_spread", bucket="1-3DTE"),
+        _trade(30,  strategy="call_debit_spread", bucket="1-3DTE"),
+        _trade(-50, strategy="call_debit_spread", bucket="1-3DTE"),
+    ]
+    s = window_stats(t, b)
+    assert "by_strategy_bucket" in s
+    sb = s["by_strategy_bucket"]
+
+    # String keys (JSON-serializable), not tuples.
+    assert all(isinstance(k, str) and "|" in k for k in sb)
+
+    pds13 = sb["put_debit_spread|1-3DTE"]
+    # Treatment side: two trades 100, -40.
+    assert pds13["n_trades_T"] == 2
+    assert pds13["pnl_T"] == pytest.approx(60.0)
+    assert pds13["mean_T"] == pytest.approx(30.0)
+    assert pds13["wins_T"] == 1
+    assert pds13["win_rate_T"] == pytest.approx(0.5)
+    assert pds13["sharpe_T"] == pytest.approx(
+        statistics.mean([100, -40]) / statistics.stdev([100, -40])
+    )
+    # Baseline side: one trade 10.
+    assert pds13["n_trades_B"] == 1
+    assert pds13["pnl_B"] == pytest.approx(10.0)
+    assert pds13["mean_B"] == pytest.approx(10.0)
+    assert pds13["wins_B"] == 1
+    assert pds13["win_rate_B"] == pytest.approx(1.0)
+
+    # put_debit_spread|0DTE present only on treatment side.
+    pds0 = sb["put_debit_spread|0DTE"]
+    assert pds0["n_trades_T"] == 1
+    assert pds0["pnl_T"] == pytest.approx(60.0)
+    assert pds0["n_trades_B"] == 0
+    assert pds0["pnl_B"] == 0.0
+    assert pds0["win_rate_B"] == 0.0
+
+    # call_debit_spread|1-3DTE present on both sides.
+    cds13 = sb["call_debit_spread|1-3DTE"]
+    assert cds13["n_trades_T"] == 1
+    assert cds13["pnl_T"] == pytest.approx(20.0)
+    assert cds13["n_trades_B"] == 2
+    assert cds13["pnl_B"] == pytest.approx(-20.0)
+    assert cds13["wins_B"] == 1
+    assert cds13["win_rate_B"] == pytest.approx(0.5)
+
+
+from backtests.intraday_router_wf import aggregate_strategy_bucket
+
+
+def _win(sb):
+    """Wrap a by_strategy_bucket dict into a window_result shape."""
+    return {"stats": {"by_strategy_bucket": sb}}
+
+
+def test_aggregate_strategy_bucket_sums_treatment_across_windows():
+    key = "put_debit_spread|1-3DTE"
+    windows = [
+        _win({key: {"n_trades_T": 2, "pnl_T": 60.0, "wins_T": 1}}),
+        _win({key: {"n_trades_T": 3, "pnl_T": -30.0, "wins_T": 1}}),
+        # A window missing the key entirely — must be tolerated.
+        _win({"call_debit_spread|0DTE": {"n_trades_T": 5, "pnl_T": 10.0, "wins_T": 4}}),
+        _win({key: {"n_trades_T": 1, "pnl_T": 90.0, "wins_T": 1}}),
+    ]
+    agg = aggregate_strategy_bucket(windows, key)
+    assert agg["n"] == 6
+    assert agg["pnl"] == pytest.approx(120.0)
+    assert agg["mean"] == pytest.approx(120.0 / 6)
+    assert agg["win_rate"] == pytest.approx(3 / 6)
+
+
+def test_aggregate_strategy_bucket_absent_everywhere_returns_zeros():
+    windows = [
+        _win({"iron_condor|0DTE": {"n_trades_T": 4, "pnl_T": 12.0, "wins_T": 3}}),
+        _win({}),
+    ]
+    agg = aggregate_strategy_bucket(windows, "put_debit_spread|1-3DTE")
+    assert agg["n"] == 0
+    assert agg["pnl"] == 0.0
+    assert agg["mean"] == 0.0
+    assert agg["win_rate"] == 0.0
 
 
 from backtests.intraday_router_wf import window_verdict, aggregate_verdict
