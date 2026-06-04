@@ -490,6 +490,7 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
     """
     trades_T: list[dict] = []
     trades_B: list[dict] = []
+    rows_T: list[dict] = []   # flat per-treatment-trade rows for loss attribution
     skip_reasons: Counter = Counter()
 
     for day in _iter_trading_days(*test_range):
@@ -540,7 +541,39 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
                 # Tag the trade dict for downstream window_stats.
                 outcome.setdefault("strategy", setup.strategy)
                 outcome.setdefault("dte_bucket", sd["dte_bucket"])
+                # Stamp the setup's entry features onto the treatment outcome
+                # so loss-attribution can break trades down by direction/score/
+                # rsi/etc. setdefault keeps this backward-compatible: if the
+                # simulator already populated a field we don't clobber it.
+                outcome.setdefault("direction",  setup.direction)
+                outcome.setdefault("score",      setup.score)
+                outcome.setdefault("conviction", setup.conviction)
+                outcome.setdefault("rsi",        setup.rsi)
+                outcome.setdefault("rvol",       setup.rvol)
+                outcome.setdefault("atr",        setup.atr)
+                outcome.setdefault("trend",      setup.trend)
                 day_T.append(outcome)
+                # Accumulate a flat row for this treatment trade. Overlapping
+                # walk-forward windows repeat the same calendar days, so these
+                # rows DUPLICATE across windows — downstream analysis must dedup
+                # by (date, strategy, dte_bucket, entry_spot).
+                rows_T.append({
+                    "date":        outcome.get("date"),
+                    "strategy":    setup.strategy,
+                    "dte_bucket":  sd["dte_bucket"],
+                    "direction":   setup.direction,
+                    "score":       setup.score,
+                    "conviction":  setup.conviction,
+                    "rsi":         setup.rsi,
+                    "rvol":        setup.rvol,
+                    "atr":         setup.atr,
+                    "trend":       setup.trend,
+                    "entry_spot":  outcome.get("entry_spot"),
+                    "entry_px":    outcome.get("entry_px"),
+                    "pnl_dollars": outcome.get("pnl_dollars"),
+                    "outcome":     outcome.get("outcome"),
+                    "exit_reason": outcome.get("exit_reason"),
+                })
                 broker_T.record_open(strategy=setup.strategy, dte_bucket=sd["dte_bucket"])
             if day_failed:
                 break
@@ -570,6 +603,7 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
         "stats":        stats,
         "skip_reasons": dict(skip_reasons),
         "verdict":      window_verdict(stats),
+        "rows_T":       rows_T,
     }
 
 
@@ -623,7 +657,13 @@ def run_walk_forward(start: date, end: date,
         results.append(r)
 
     agg = aggregate_verdict(results)
-    return {"windows": results, "aggregate": agg}
+    # Collect all treatment rows across windows for loss attribution. These
+    # DUPLICATE across overlapping windows by design — the analysis dedups by
+    # (date, strategy, dte_bucket, entry_spot).
+    all_rows_T: list[dict] = []
+    for r in results:
+        all_rows_T.extend(r.get("rows_T", []))
+    return {"windows": results, "aggregate": agg, "rows_T": all_rows_T}
 
 
 if __name__ == "__main__":
@@ -642,6 +682,23 @@ if __name__ == "__main__":
     report = run_walk_forward(start_d, end_d)
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
+
+    # Write the flat treatment rows to a sibling JSONL for loss attribution.
+    # NOTE: overlapping walk-forward windows repeat the same calendar days, so
+    # these rows DUPLICATE across windows — any analysis MUST dedup by
+    # (date, strategy, dte_bucket, entry_spot).
+    rows_out = os.path.join(os.path.dirname(args.out) or ".", "wf_trade_rows.jsonl")
+    rows_T = report.pop("rows_T", [])
+    with open(rows_out, "w") as rf:
+        for row in rows_T:
+            rf.write(json.dumps(row) + "\n")
+    logger.info(f"router_wf: wrote {len(rows_T)} treatment rows to {rows_out}")
+
+    # Strip the per-window rows_T copies from the JSON report (they're already
+    # captured in the JSONL above; keeping them would bloat the report).
+    for w in report.get("windows", []):
+        w.pop("rows_T", None)
+
     # Serialize: convert date tuples to ISO strings, Counters already dict.
     def _ser(obj):
         if isinstance(obj, date):

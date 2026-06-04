@@ -350,6 +350,79 @@ def test_run_window_apples_to_apples_skipped_day():
     assert result["stats"]["n_trades_T"] == 2
 
 
+def _featured_setup(strategy="put_debit_spread", conviction="high", score=72,
+                    direction="bearish", rsi=41.0, rvol=1.8, atr=3.2,
+                    trend="down"):
+    """A setup with REAL feature values (not MagicMock auto-attrs) so the
+    row-collection test can assert exact stamped values."""
+    s = MagicMock()
+    s.strategy   = strategy
+    s.conviction = conviction
+    s.score      = score
+    s.direction  = direction
+    s.rsi        = rsi
+    s.rvol       = rvol
+    s.atr        = atr
+    s.trend      = trend
+    return s
+
+
+def test_run_window_collects_rows_T_with_setup_features_stamped():
+    """run_window returns 'rows_T': one flat row per TREATMENT-side trade,
+    with the setup's entry features (direction/score/rsi/trend/...) stamped
+    alongside the outcome fields (pnl_dollars/outcome/exit_reason)."""
+
+    def get_setup(d):
+        return [_featured_setup()]
+
+    def get_pnl(day, setup, strategy, dte_bucket):
+        return {
+            "date": day.isoformat(),
+            "entry_spot": 500.0,
+            "entry_px": 1.25,
+            "pnl_dollars": -25.0,
+            "outcome": "loss",
+            "exit_reason": "eod",
+            "strategy": strategy,
+            "dte_bucket": dte_bucket,
+        }
+
+    result = run_window(
+        train_range=(_date(2024, 1, 1), _date(2024, 6, 14)),
+        test_range=(_date(2024, 6, 17), _date(2024, 6, 17)),  # single day
+        get_setup=get_setup,
+        get_pnl=get_pnl,
+    )
+
+    # Backward compat: existing keys untouched.
+    assert "stats" in result and "verdict" in result and "skip_reasons" in result
+    assert "rows_T" in result
+
+    rows = result["rows_T"]
+    # One row per treatment trade. put_debit_spread is directional, so the
+    # router emits one bucket per day here (score 72 < ULTRA double-DTE floor).
+    assert len(rows) == result["stats"]["n_trades_T"]
+    assert len(rows) >= 1
+
+    row = rows[0]
+    # Setup features stamped.
+    assert row["strategy"]   == "put_debit_spread"
+    assert row["direction"]  == "bearish"
+    assert row["score"]      == 72
+    assert row["conviction"] == "high"
+    assert row["rsi"]        == 41.0
+    assert row["rvol"]       == 1.8
+    assert row["atr"]        == 3.2
+    assert row["trend"]      == "down"
+    # Outcome fields present.
+    assert row["entry_spot"]  == 500.0
+    assert row["entry_px"]    == 1.25
+    assert row["pnl_dollars"] == -25.0
+    assert row["outcome"]     == "loss"
+    assert row["exit_reason"] == "eod"
+    assert "dte_bucket" in row and "date" in row
+
+
 def test_run_window_returns_skip_reasons():
     def get_setup(d):
         return []   # every day yields no setups → all skipped on both sides
