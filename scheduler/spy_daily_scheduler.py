@@ -43,8 +43,33 @@ ET = pytz.timezone("US/Eastern")
 
 
 # ─────────────────────────────────────────
-# SHADOW-TEST HELPER
+# SHADOW-TEST HELPERS
 # ─────────────────────────────────────────
+
+def _regime_and_levels_from_brief(brief: dict) -> "tuple[RegimeResult, float, float]":
+    """Reconstruct a RegimeResult (plus spot and ivr floats) from a serialized
+    morning-brief dict.
+
+    The brief is produced by ``MorningBriefer.build_today()`` which in turn
+    calls ``asdict(PlayCard)``. ``regime`` is stored as the enum *value*
+    (e.g. ``"trending_up_calm"``), so we re-wrap it with ``Regime()``.
+
+    Returns ``(regime_result, spot, ivr)`` — a pure data transform with no
+    side-effects; easy to unit-test in isolation.
+    """
+    metrics = brief.get("metrics") or {}
+    regime_result = RegimeResult(
+        regime     = Regime(brief.get("regime", "unknown")),
+        tradeable  = bool(brief.get("tradeable", False)),
+        play       = brief.get("play", ""),
+        confidence = float(brief.get("confidence") or 0.0),
+        reasons    = list(brief.get("reasons") or []),
+        metrics    = metrics,
+    )
+    spot = float(metrics.get("spy_close") or 0.0)
+    ivr  = float(metrics.get("ivr") or 0.0)
+    return regime_result, spot, ivr
+
 
 def _run_daily_shadow(regime_result, *, spot: float, ivr: float) -> None:
     """Invoke the extension-gate shadow-test, fully isolated so a shadow
@@ -108,20 +133,8 @@ def job_spy_premarket(
         # Reconstruct RegimeResult from the serialized brief so run_shadow
         # can inspect regime/tradeable/play. brief["metrics"] carries the
         # real spy_close + ivr values computed by SPYDailyStrategy.
-        _brief_metrics = brief.get("metrics") or {}
-        _regime_result = RegimeResult(
-            regime     = Regime(brief.get("regime", "unknown")),
-            tradeable  = bool(brief.get("tradeable", False)),
-            play       = brief.get("play", ""),
-            confidence = float(brief.get("confidence") or 0.0),
-            reasons    = list(brief.get("reasons") or []),
-            metrics    = _brief_metrics,
-        )
-        _run_daily_shadow(
-            _regime_result,
-            spot = float(_brief_metrics.get("spy_close") or 0.0),
-            ivr  = float(_brief_metrics.get("ivr") or 0.0),
-        )
+        _regime_result, _spot, _ivr = _regime_and_levels_from_brief(brief)
+        _run_daily_shadow(_regime_result, spot=_spot, ivr=_ivr)
 
         # Plan is saved inside briefer; just post to Discord here.
         if post_fn:
