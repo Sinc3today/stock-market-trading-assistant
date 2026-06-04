@@ -130,3 +130,42 @@ def run_shadow(
 
     logger.info(f"shadow: recorded counterfactual bull trade {tid} (book=shadow, entry_spy={spot})")
     return {"recorded": True, "trade_id": tid}
+
+
+def shadow_stats(n_days: int = 30, *, trade_recorder=None) -> dict:
+    """Rolling expectancy over book='shadow' trades. Neutral (n=0) when none.
+
+    Parameters
+    ----------
+    n_days:
+        Accepted for API stability; v1 aggregates over all shadow trades
+        (a date-window filter is a noted follow-up).
+    trade_recorder:
+        Optional injected TradeRecorder; a fresh one is constructed when None.
+
+    Returns
+    -------
+    dict with keys:
+        n                    — total shadow trades
+        n_closed             — trades with outcome in (win/loss/breakeven)
+        closed_pnl           — sum of pnl_dollars for closed trades
+        open_mtm             — mark-to-market on open trades (0.0 in v1)
+        directional_win_rate — fraction of shadow_directional="correct" over scored trades
+    """
+    if trade_recorder is None:
+        from journal.trade_recorder import TradeRecorder
+        trade_recorder = TradeRecorder()
+
+    shadow = [t for t in trade_recorder.get_all_trades() if t.get("book") == SHADOW_BOOK]
+    closed = [t for t in shadow if t.get("outcome") in ("win", "loss", "breakeven")]
+    closed_pnl = round(sum(t.get("pnl_dollars") or 0.0 for t in closed), 2)
+    scored = [t for t in shadow if t.get("shadow_directional") in ("correct", "wrong")]
+    correct = sum(1 for t in scored if t.get("shadow_directional") == "correct")
+    win_rate = round(correct / len(scored), 3) if scored else 0.0
+    return {
+        "n":                    len(shadow),
+        "n_closed":             len(closed),
+        "closed_pnl":           closed_pnl,
+        "open_mtm":             0.0,
+        "directional_win_rate": win_rate,
+    }

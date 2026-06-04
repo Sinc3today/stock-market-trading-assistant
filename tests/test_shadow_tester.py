@@ -85,3 +85,42 @@ def test_run_shadow_disabled_returns_none(monkeypatch):
                          recommendation="SKIP — trend too extended", reasons=[], metrics={})
     assert run_shadow(rr, spot=760.0, ivr=55.0, options_layer=object(),
                       trade_recorder=object()) is None
+
+
+# ── Task 3: shadow_stats ──────────────────────────────────────────────────────
+
+def test_shadow_stats_aggregates_shadow_book(monkeypatch, tmp_path):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from journal.trade_recorder import TradeRecorder
+    from learning.shadow_tester import shadow_stats
+    rec = TradeRecorder()
+    # two closed shadow trades (1 win, 1 loss) + one disciplined (ignored)
+    rec.log_entry(ticker="SPY", entry_price=1.2, size=1, trade_type="credit_spread",
+                  strategy="credit_spread", book="shadow", source="auto-paper",
+                  legs=[{"action": "SELL", "type": "put", "strike": 755}])
+    rec.log_entry(ticker="SPY", entry_price=1.0, size=1, trade_type="credit_spread",
+                  strategy="credit_spread", book="shadow", source="auto-paper",
+                  legs=[{"action": "SELL", "type": "put", "strike": 750}])
+    rec.log_entry(ticker="SPY", entry_price=1.0, size=1, trade_type="iron_condor",
+                  strategy="iron_condor", book="disciplined", source="auto-paper")
+    # close the two shadow trades with known P&L + stamp directional
+    trades = rec.get_all_trades()
+    sh = [t for t in trades if t["book"] == "shadow"]
+    sh[0]["outcome"] = "win";  sh[0]["pnl_dollars"] = 80.0;  sh[0]["shadow_directional"] = "correct"
+    sh[1]["outcome"] = "loss"; sh[1]["pnl_dollars"] = -40.0; sh[1]["shadow_directional"] = "wrong"
+    rec._save(trades)
+
+    s = shadow_stats(n_days=3650, trade_recorder=rec)
+    assert s["n"] == 2
+    assert s["closed_pnl"] == 40.0                 # 80 - 40
+    assert s["directional_win_rate"] == 0.5        # 1 of 2 correct
+
+
+def test_shadow_stats_empty_is_neutral(monkeypatch, tmp_path):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from journal.trade_recorder import TradeRecorder
+    from learning.shadow_tester import shadow_stats
+    s = shadow_stats(n_days=30, trade_recorder=TradeRecorder())
+    assert s["n"] == 0 and s["closed_pnl"] == 0.0 and s["directional_win_rate"] == 0.0
