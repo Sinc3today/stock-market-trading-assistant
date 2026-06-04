@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import date as _date
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -17,9 +18,6 @@ import config
 from signals.regime_detector import Regime
 
 SHADOW_BOOK = "shadow"
-
-
-from datetime import date as _date
 
 
 def _is_extension_skip(regime_result) -> bool:
