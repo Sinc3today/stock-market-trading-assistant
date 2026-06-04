@@ -33,8 +33,32 @@ from signals.morning_briefer    import MorningBriefer
 from journal.plan_logger         import PlanLogger
 from data.earnings_calendar     import EarningsCalendar
 from data.earnings_history      import EarningsHistory
+from signals.regime_detector    import RegimeResult, Regime
+from signals.options_layer      import OptionsLayer
+from data.options_chain         import OptionsChain
+from journal.trade_recorder     import TradeRecorder
+from learning.shadow_tester     import run_shadow
 
 ET = pytz.timezone("US/Eastern")
+
+
+# ─────────────────────────────────────────
+# SHADOW-TEST HELPER
+# ─────────────────────────────────────────
+
+def _run_daily_shadow(regime_result, *, spot: float, ivr: float) -> None:
+    """Invoke the extension-gate shadow-test, fully isolated so a shadow
+    failure can never disturb the real daily play (Standing Rule #10)."""
+    try:
+        run_shadow(
+            regime_result,
+            spot          = spot,
+            ivr           = ivr,
+            options_layer = OptionsLayer(options_chain=OptionsChain()),
+            trade_recorder= TradeRecorder(),
+        )
+    except Exception as e:
+        logger.warning(f"shadow-test failed (ignored): {e}")
 
 
 # ─────────────────────────────────────────
@@ -79,6 +103,25 @@ def job_spy_premarket(
             earnings_history  = EarningsHistory(polygon_client=polygon_client),
         )
         brief = briefer.build_today()
+
+        # ── Extension-gate shadow-test ──────────────────────────────
+        # Reconstruct RegimeResult from the serialized brief so run_shadow
+        # can inspect regime/tradeable/play. brief["metrics"] carries the
+        # real spy_close + ivr values computed by SPYDailyStrategy.
+        _brief_metrics = brief.get("metrics") or {}
+        _regime_result = RegimeResult(
+            regime     = Regime(brief.get("regime", "unknown")),
+            tradeable  = bool(brief.get("tradeable", False)),
+            play       = brief.get("play", ""),
+            confidence = float(brief.get("confidence") or 0.0),
+            reasons    = list(brief.get("reasons") or []),
+            metrics    = _brief_metrics,
+        )
+        _run_daily_shadow(
+            _regime_result,
+            spot = float(_brief_metrics.get("spy_close") or 0.0),
+            ivr  = float(_brief_metrics.get("ivr") or 0.0),
+        )
 
         # Plan is saved inside briefer; just post to Discord here.
         if post_fn:
