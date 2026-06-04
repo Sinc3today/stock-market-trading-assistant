@@ -51,7 +51,7 @@ TUNABLE_PARAMS = {
     ("signals.regime_detector", "ADX_TREND_MIN"):            {"type": "float", "min": 15.0, "max": 35.0},
     ("signals.regime_detector", "VIX_CALM_MAX"):             {"type": "float", "min": 12.0, "max": 22.0},
     ("signals.regime_detector", "MIN_TREND_SEPARATION_PCT"): {"type": "float", "min": 0.5,  "max": 3.0},
-    ("signals.regime_detector", "EXTENDED_TREND_MAX_PCT"):   {"type": "float", "min": 5.0,  "max": 15.0},
+    ("signals.regime_detector", "EXTENDED_TREND_MAX_PCT"):   {"type": "float", "min": 9.0,  "max": 15.0},
     ("signals.options_layer",   "MIN_CREDIT_SPREAD_RR"):     {"type": "float", "min": 0.20, "max": 0.75},
     ("learning.exit_manager",   "PROFIT_TARGET_PCT"):        {"type": "float", "min": 0.40, "max": 0.90},
     ("learning.exit_manager",   "DTE_CLOSE_THRESHOLD"):      {"type": "int",   "min": 7,    "max": 30},
@@ -84,6 +84,15 @@ TUNABLE_PARAMS = {
     ("config", "STOP_PCT_0DTE_CALL"):            {"type": "float", "min": 0.50, "max": 0.90},
     ("config", "STOP_PCT_0DTE_PUT"):             {"type": "float", "min": 0.50, "max": 0.90},
 }
+
+def shadow_under_pressure(stats: dict) -> bool:
+    """True when the extension gate is under disconfirming pressure: the
+    shadow book it skips has positive closed P&L AND a winning directional
+    rate over at least SHADOW_MIN_DAYS recorded trades."""
+    return (stats.get("n", 0) >= config.SHADOW_MIN_DAYS
+            and (stats.get("closed_pnl") or 0.0) > 0
+            and (stats.get("directional_win_rate") or 0.0) >= config.SHADOW_MIN_WINRATE)
+
 
 ENGINE_SYSTEM = """You are the trading assistant's hypothesis-generation module.
 
@@ -136,6 +145,8 @@ class HypothesisEngine:
         today     = today or date.today()
         today_str = today.isoformat()
 
+        from learning.shadow_tester import shadow_stats
+        _sh = shadow_stats()
         ctx = {
             "date":             today_str,
             "rolling_accuracy": self.preds.accuracy(n=60, by_substrategy=True),
@@ -143,7 +154,16 @@ class HypothesisEngine:
             "recent_plans":     self.plans.get_recent(days=30),
             "kb_stats":         self.kb.stats(),
             "tunable_params":   self._tunable_payload(),
+            "shadow_stats":     _sh,
         }
+        if shadow_under_pressure(_sh):
+            ctx["shadow_directive"] = (
+                "The extension gate (EXTENDED_TREND_MAX_PCT) is under "
+                "disconfirming pressure: the shadow book it skips is profitable "
+                f"({_sh['closed_pnl']:+.0f}, win-rate {_sh['directional_win_rate']:.0%} "
+                f"over {_sh['n']}). You MAY propose RAISING EXTENDED_TREND_MAX_PCT "
+                "within its tunable band."
+            )
 
         reply = self._call_claude(self._build_prompt(ctx))
         parsed, parse_err = self._parse_reply(reply)
@@ -189,6 +209,14 @@ class HypothesisEngine:
         ]
 
     def _build_prompt(self, ctx: dict) -> str:
+        shadow_section = ""
+        if "shadow_stats" in ctx:
+            shadow_section = (
+                f"EXTENSION-GATE SHADOW STATS:\n"
+                f"{json.dumps(ctx['shadow_stats'], indent=2)}\n\n"
+            )
+        if "shadow_directive" in ctx:
+            shadow_section += f"SHADOW DIRECTIVE: {ctx['shadow_directive']}\n\n"
         return (
             f"DATE: {ctx['date']}\n\n"
             f"TUNABLE PARAMETERS (you must pick from this list):\n"
@@ -199,6 +227,7 @@ class HypothesisEngine:
             f"{json.dumps(ctx['recent_kb'], indent=2)}\n\n"
             f"RECENT PLANS (last 30 days, summarised):\n"
             f"{json.dumps(self._summarise_plans(ctx['recent_plans']), indent=2)}\n\n"
+            f"{shadow_section}"
             f"Propose now."
         )
 
