@@ -22,3 +22,12 @@ def test_tradeable_day_not_extension_skip():
 def test_other_skip_reason_not_extension_skip():
     rr = _rr(Regime.UNKNOWN, False, "SKIP — SPY too close to 200MA, direction unclear")
     assert _is_extension_skip(rr) is False
+
+
+def test_extension_skip_detected_via_play_field():
+    """Covers the REAL RegimeResult shape (.play, no .recommendation) — guards
+    the production path so the feature can't silently no-op live."""
+    rr = SimpleNamespace(regime=Regime.TRENDING_UP_CALM, tradeable=False,
+                         play="SKIP — trend too extended (wait for pullback)",
+                         reasons=[], metrics={})
+    assert _is_extension_skip(rr) is True
