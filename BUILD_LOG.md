@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-06-03 — Extension-gate shadow-test: third "shadow" book, daily-path falsification
+
+**Spec:** `docs/superpowers/specs/2026-06-03-extension-gate-shadow-test-design.md`
+**Plan:** `docs/superpowers/plans/2026-06-03-extension-gate-shadow-test.md`
+**Branch:** `extension-gate-shadow-test` (merged → main `34b9980`) — subagent-driven, 6 tasks each spec+quality reviewed + final whole-branch review.
+
+The daily extension gate (`EXTENDED_TREND_MAX_PCT = 9.0`, skips when SPY >9% over its 200-MA) has 5yr backtest support but fired ~14 straight sessions in the current grinding uptrend — possibly leaving money on the table. We never recorded what it skipped, so we couldn't tell. This is the daily-path analogue of the intraday learning-book sandbox: on each extension-skip day, record + score the counterfactual bull trade the gate refused, and let the evidence — not a prior — decide whether the cap should move.
+
+**New `learning/shadow_tester.py`:** `run_shadow(...)` fires ONLY on the extension-skip regime (`TRENDING_UP_CALM & not tradeable & reason mentions "extended"`), builds the would-be bull structure via the same `OptionsLayer.analyze(...)` the daily play uses, and records a 1-contract paper trade tagged `book="shadow"`, `source="auto-paper"` + `entry_spy`. The existing exit-manager/expiry-resolver lifecycle manages and closes it automatically (picked up by `is_auto_paper`). `shadow_stats()` gives rolling expectancy; `n=0` neutral when none. Fully dependency-injected — no live clients inside.
+
+**Two distinct metrics, per spec:** directional (did SPY close up — the bull bet's *direction*) is stamped at EOD by the existing 16:05 `outcome_resolver` (`_stamp_shadow_directional`, reuses `_score`, no new job, doesn't touch the real prediction's skip status); shadow-book P&L is the multi-day structure's realized lifecycle P&L.
+
+**Honesty fix (final review caught it):** `trade_recorder.get_summary_stats()` now derives from a `book != "shadow"` filtered list, so shadow P&L never leaks into the headline `/trades` win-rate / total / open-count. The shadow book is a counterfactual the user never traded — it must not pollute the real-money-proxy stats (spec Key Decision 2). `get_all_trades()` left untouched so the lifecycle still sees shadow trades.
+
+**Hypothesis-engine surface:** `("signals.regime_detector","EXTENDED_TREND_MAX_PCT")` added to `TUNABLE_PARAMS` as **raise-only** (min 9.0 → max 15.0; never below the backtested floor). When `shadow_under_pressure(stats)` clears the floor (`closed_pnl>0 & directional_win_rate≥SHADOW_MIN_WINRATE & n≥SHADOW_MIN_DAYS`), the engine may propose raising the cap → `hypothesis_runner` backtests → human promotes. No auto-edit of source (loop rule 13). `regime_detector.py` is byte-for-byte unchanged.
+
+**Config:** `SHADOW_TEST_ENABLED=True` (kill switch), `SHADOW_MIN_DAYS=10`, `SHADOW_MIN_WINRATE=0.55`.
+
+**Tests:** 997 passed (two flaky live-FRED network tests deselected), 0 regressions. Final review: "sound" after the one Important stats-leak fix.
+
+**Deploy:** merged + pushed + `smta.service` restarted — `NRestarts=0`, active/running, no tracebacks, "✅ All systems running", Pushover play-only.
+
+**Follow-ups (noted):** gate `shadow_under_pressure` on `n_closed` (not just `n`) so thin closed samples can't trip it; generalize the shadow-test to other daily SKIP gates (separation, downtrend); a "shadow book" dashboard view; surface shadow expectancy in the falsificationist reflector's daily KB.
+
+---
+
 ## 2026-06-02 (pm) — Notification curation: Pushover urgent-only, Discord removed
 
 **Spec:** `docs/superpowers/specs/2026-06-02-notification-curation-design.md`
