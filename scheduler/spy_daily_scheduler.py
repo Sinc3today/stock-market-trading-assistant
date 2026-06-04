@@ -33,8 +33,57 @@ from signals.morning_briefer    import MorningBriefer
 from journal.plan_logger         import PlanLogger
 from data.earnings_calendar     import EarningsCalendar
 from data.earnings_history      import EarningsHistory
+from signals.regime_detector    import RegimeResult, Regime
+from signals.options_layer      import OptionsLayer
+from data.options_chain         import OptionsChain
+from journal.trade_recorder     import TradeRecorder
+from learning.shadow_tester     import run_shadow
 
 ET = pytz.timezone("US/Eastern")
+
+
+# ─────────────────────────────────────────
+# SHADOW-TEST HELPERS
+# ─────────────────────────────────────────
+
+def _regime_and_levels_from_brief(brief: dict) -> "tuple[RegimeResult, float, float]":
+    """Reconstruct a RegimeResult (plus spot and ivr floats) from a serialized
+    morning-brief dict.
+
+    The brief is produced by ``MorningBriefer.build_today()`` which in turn
+    calls ``asdict(PlayCard)``. ``regime`` is stored as the enum *value*
+    (e.g. ``"trending_up_calm"``), so we re-wrap it with ``Regime()``.
+
+    Returns ``(regime_result, spot, ivr)`` — a pure data transform with no
+    side-effects; easy to unit-test in isolation.
+    """
+    metrics = brief.get("metrics") or {}
+    regime_result = RegimeResult(
+        regime     = Regime(brief.get("regime", "unknown")),
+        tradeable  = bool(brief.get("tradeable", False)),
+        play       = brief.get("play", ""),
+        confidence = float(brief.get("confidence") or 0.0),
+        reasons    = list(brief.get("reasons") or []),
+        metrics    = metrics,
+    )
+    spot = float(metrics.get("spy_close") or 0.0)
+    ivr  = float(metrics.get("ivr") or 0.0)
+    return regime_result, spot, ivr
+
+
+def _run_daily_shadow(regime_result, *, spot: float, ivr: float) -> None:
+    """Invoke the extension-gate shadow-test, fully isolated so a shadow
+    failure can never disturb the real daily play (Standing Rule #10)."""
+    try:
+        run_shadow(
+            regime_result,
+            spot          = spot,
+            ivr           = ivr,
+            options_layer = OptionsLayer(options_chain=OptionsChain()),
+            trade_recorder= TradeRecorder(),
+        )
+    except Exception as e:
+        logger.warning(f"shadow-test failed (ignored): {e}")
 
 
 # ─────────────────────────────────────────
@@ -79,6 +128,13 @@ def job_spy_premarket(
             earnings_history  = EarningsHistory(polygon_client=polygon_client),
         )
         brief = briefer.build_today()
+
+        # ── Extension-gate shadow-test ──────────────────────────────
+        # Reconstruct RegimeResult from the serialized brief so run_shadow
+        # can inspect regime/tradeable/play. brief["metrics"] carries the
+        # real spy_close + ivr values computed by SPYDailyStrategy.
+        _regime_result, _spot, _ivr = _regime_and_levels_from_brief(brief)
+        _run_daily_shadow(_regime_result, spot=_spot, ivr=_ivr)
 
         # Plan is saved inside briefer; just post to Discord here.
         if post_fn:

@@ -394,3 +394,15 @@ def is_trading_day(d) -> bool:
         return False
     return True
 REGIME_DRIFT_PRIOR_DAYS              = 60    # prior-N trading days for comparison
+
+
+# ─────────────────────────────────────────────────────────────
+# Extension-gate shadow-test
+# ─────────────────────────────────────────────────────────────
+# On extension-skip days, paper-trade the bull play the gate refused
+# (book="shadow") + score the directional counterfactual. The hypothesis
+# engine proposes relaxing EXTENDED_TREND_MAX_PCT when the shadow beats
+# the gate over SHADOW_MIN_DAYS at >= SHADOW_MIN_WINRATE.
+SHADOW_TEST_ENABLED = True
+SHADOW_MIN_DAYS     = 10
+SHADOW_MIN_WINRATE  = 0.55

@@ -186,3 +186,97 @@ def test_summary_stats_mixed_strategies(recorder):
     assert stats["win_rate"] == 100.0
     print(f"\n✅ Mixed strategy stats: {stats['wins']} wins | "
           f"Total P&L ${stats['total_pnl']}")
+
+
+# ─────────────────────────────────────────
+# SHADOW BOOK EXCLUSION (Key Decision 2)
+# ─────────────────────────────────────────
+
+def test_shadow_closed_win_excluded_from_summary_stats(recorder):
+    """
+    A closed book='shadow' trade MUST NOT affect get_summary_stats().
+    Shadow trades are counterfactual; they were never actually traded.
+    Spec: Key Decision 2 — excluded from disciplined/learning stats.
+    """
+    # Establish a baseline with one real disciplined closed win
+    t_real = recorder.log_entry("SPY", 2.40, 1, strategy="iron_condor",
+                                 book="disciplined")
+    recorder.log_exit(t_real, 0.60)   # win: P&L = (2.40-0.60)*100 = $180
+
+    baseline = recorder.get_summary_stats()
+    assert baseline["closed"]    == 1
+    assert baseline["wins"]      == 1
+    assert baseline["total_pnl"] == 180.0
+    assert baseline["win_rate"]  == 100.0
+
+    # Now add a closed shadow win — should change nothing in summary stats
+    t_shadow = recorder.log_entry("AAPL", 170.0, 10, strategy="stock",
+                                   book="shadow")
+    recorder.log_exit(t_shadow, 182.0)  # win: P&L = $120
+
+    after = recorder.get_summary_stats()
+    assert after["closed"]    == baseline["closed"],    \
+        f"closed count changed: {baseline['closed']} -> {after['closed']}"
+    assert after["wins"]      == baseline["wins"],      \
+        f"wins count changed: {baseline['wins']} -> {after['wins']}"
+    assert after["total_pnl"] == baseline["total_pnl"], \
+        f"total_pnl changed: {baseline['total_pnl']} -> {after['total_pnl']}"
+    assert after["win_rate"]  == baseline["win_rate"],  \
+        f"win_rate changed: {baseline['win_rate']} -> {after['win_rate']}"
+    print(f"\n✅ Shadow closed win correctly excluded from summary stats")
+
+
+def test_shadow_open_trade_excluded_from_summary_open_count(recorder):
+    """
+    An open book='shadow' trade MUST NOT inflate the 'open' count in
+    get_summary_stats — it is not a real position the user holds.
+    """
+    # One real open trade
+    recorder.log_entry("SPY", 450.0, 5, strategy="stock", book="disciplined")
+    # One shadow open trade (never closed — stays open)
+    recorder.log_entry("AAPL", 170.0, 10, strategy="stock", book="shadow")
+
+    stats = recorder.get_summary_stats()
+    assert stats["open"] == 1, \
+        f"Expected 1 open (disciplined only), got {stats['open']}"
+    print(f"\n✅ Shadow open trade excluded from summary open count")
+
+
+def test_shadow_loss_excluded_from_summary_stats(recorder):
+    """
+    A shadow loss must not drag down win_rate or total_pnl.
+    """
+    t_real = recorder.log_entry("SPY", 2.40, 1, strategy="iron_condor",
+                                 book="disciplined")
+    recorder.log_exit(t_real, 0.60)   # win
+
+    baseline = recorder.get_summary_stats()
+
+    # Add a shadow loss
+    t_shadow_loss = recorder.log_entry("SPY", 2.40, 1, strategy="iron_condor",
+                                        book="shadow")
+    recorder.log_exit(t_shadow_loss, 5.00)   # loss: P&L = (2.40-5.00)*100 = -$260
+
+    after = recorder.get_summary_stats()
+    assert after["closed"]    == baseline["closed"]
+    assert after["wins"]      == baseline["wins"]
+    assert after["losses"]    == baseline["losses"]
+    assert after["total_pnl"] == baseline["total_pnl"]
+    assert after["win_rate"]  == baseline["win_rate"]
+    print(f"\n✅ Shadow loss correctly excluded from summary stats")
+
+
+def test_shadow_get_all_trades_still_includes_shadow(recorder):
+    """
+    get_all_trades() must still return shadow trades — the exit-manager
+    lifecycle must keep managing them.  Only get_summary_stats excludes them.
+    """
+    recorder.log_entry("SPY",  450.0, 5, strategy="stock", book="disciplined")
+    recorder.log_entry("AAPL", 170.0, 10, strategy="stock", book="shadow")
+
+    all_trades = recorder.get_all_trades()
+    assert len(all_trades) == 2
+
+    shadow_trades = [t for t in all_trades if t.get("book") == "shadow"]
+    assert len(shadow_trades) == 1
+    print(f"\n✅ get_all_trades() still includes shadow trades for lifecycle management")

@@ -119,6 +119,7 @@ class OutcomeResolver:
             # standing down was the right call.
             self.predictions.mark_resolved(today_str, spy_close or 0.0, "skip", today_str)
             self._snapshot_open_paper_trades(today_str, spy_close)
+            self._stamp_shadow_directional(today_str, spy_close)
             return {"date": today_str, "resolved": True, "outcome": "skip"}
 
         if spy_close is None:
@@ -197,3 +198,28 @@ class OutcomeResolver:
                 t["notes_entry"] = (t.get("notes_entry") or "") + line
         self.trades._save(all_trades)  # idempotent overwrite
         logger.info(f"OutcomeResolver: snapshotted {len(open_auto)} open paper trade(s)")
+
+    # ── SHADOW DIRECTIONAL STAMP ──────────────────────
+
+    def _stamp_shadow_directional(self, today_str: str, spy_close: float | None) -> None:
+        """On an extension-skip day, score the shadow trade's bullish
+        counterfactual (SPY close vs entry_spy). Reuses _score; does not touch
+        the real prediction's skip status."""
+        if spy_close is None:
+            return
+        trades = self.trades.get_all_trades()
+        changed = False
+        for t in trades:
+            if t.get("book") != "shadow":
+                continue
+            if t.get("shadow_directional"):
+                continue
+            if (t.get("entry_date") or "")[:10] != today_str:
+                continue
+            entry_spy = t.get("entry_spy")
+            if not isinstance(entry_spy, (int, float)):
+                continue
+            t["shadow_directional"] = self._score("bullish", entry_spy, spy_close)
+            changed = True
+        if changed:
+            self.trades._save(trades)

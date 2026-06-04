@@ -377,13 +377,23 @@ class TradeRecorder:
         return [t for t in self._load() if t.get("ticker") == ticker.upper()]
 
     def get_summary_stats(self) -> dict:
-        """Aggregate win rate, P&L, and breakdown across all closed trades."""
-        all_trades = self._load()
-        closed     = [t for t in all_trades if t.get("outcome") not in ("open", "void")]
-        open_t     = [t for t in all_trades if t.get("outcome") == "open"]
+        """Aggregate win rate, P&L, and breakdown across all closed trades.
+
+        Shadow-book trades (book='shadow') are excluded from ALL aggregations
+        here — they are counterfactual positions the user never actually traded
+        and must not inflate or deflate headline win-rate / total P&L.
+        (Key Decision 2: shadow excluded from disciplined/learning stats.)
+
+        Note: get_all_trades() is intentionally NOT filtered — the exit-manager
+        and expiry-resolver lifecycle still needs to see and manage shadow trades.
+        """
+        all_trades  = self._load()
+        disciplined = [t for t in all_trades if t.get("book") != "shadow"]
+        closed      = [t for t in disciplined if t.get("outcome") not in ("open", "void")]
+        open_t      = [t for t in disciplined if t.get("outcome") == "open"]
 
         if not closed:
-            return {"total": len(all_trades), "open": len(open_t),
+            return {"total": len(disciplined), "open": len(open_t),
                     "closed": 0, "wins": 0, "losses": 0,
                     "win_rate": 0.0, "total_pnl": 0.0, "avg_pnl_pct": 0.0}
 
@@ -392,7 +402,7 @@ class TradeRecorder:
         pnl_pcts = [t["pnl_pct"]     for t in closed if t.get("pnl_pct")     is not None]
 
         return {
-            "total":       len(all_trades),
+            "total":       len(disciplined),
             "open":        len(open_t),
             "closed":      len(closed),
             "wins":        len(wins),
