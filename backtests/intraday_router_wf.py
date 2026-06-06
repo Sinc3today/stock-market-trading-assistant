@@ -379,6 +379,68 @@ def replay_arms(trade: dict, mark_key: str = "") -> dict:
     return out
 
 
+def _combo_key(t):
+    return f"{t['strategy']}|{t['dte_bucket']}"
+
+
+def arm_verdicts(trades: list[dict]) -> dict:
+    """Per-(strategy,dte_bucket): for each ARM, n / total / mean / win-rate over
+    the deduped trade list (real mark)."""
+    by_combo: dict[str, list[dict]] = {}
+    for t in trades:
+        by_combo.setdefault(_combo_key(t), []).append(t)
+
+    out = {}
+    for combo, ts in by_combo.items():
+        replayed = [replay_arms(t) for t in ts]
+        arm_stats = {}
+        for arm in ARMS:
+            pnls = [r[arm]["pnl_exit"] for r in replayed]
+            n = len(pnls)
+            arm_stats[arm] = {
+                "n": n,
+                "total_pnl": round(sum(pnls), 2),
+                "mean_pnl": round(sum(pnls) / n, 2) if n else 0.0,
+                "win_rate": round(sum(1 for p in pnls if p > 0) / n, 3) if n else 0.0,
+                "mean_exit_quality": round(
+                    sum(r[arm]["exit_quality"] for r in replayed) / n, 2) if n else 0.0,
+            }
+        out[combo] = arm_stats
+    return out
+
+
+def parity_divergence(trades: list[dict]) -> dict:
+    """Per-(strategy,dte_bucket,arm): how often the BS-off-spot mark reproduces
+    the real-mark exit decision, and whether the combo passes the parity gate."""
+    by_combo: dict[str, list[dict]] = {}
+    for t in trades:
+        by_combo.setdefault(_combo_key(t), []).append(t)
+
+    out = {}
+    for combo, ts in by_combo.items():
+        real = [replay_arms(t, mark_key="") for t in ts]
+        bsm  = [replay_arms(t, mark_key="_bs") for t in ts]
+        arm_rows = {}
+        for arm in ARMS:
+            if arm == "baseline":
+                continue
+            agree = sum(1 for a, b in zip(real, bsm)
+                        if a[arm]["exit_reason"] == b[arm]["exit_reason"]
+                        and a[arm]["fired_at"] == b[arm]["fired_at"])
+            n = len(ts)
+            agree_frac = agree / n if n else 0.0
+            gap = (sum(abs(a[arm]["pnl_exit"] - b[arm]["pnl_exit"])
+                       for a, b in zip(real, bsm)) / n) if n else 0.0
+            arm_rows[arm] = {
+                "agree_frac": round(agree_frac, 3),
+                "mean_pnl_gap": round(gap, 2),
+                "passes": bool(agree_frac >= config.EXIT_PARITY_MIN_AGREE
+                               and gap < config.EXIT_PARITY_MAX_PNL_GAP),
+            }
+        out[combo] = arm_rows
+    return out
+
+
 def _path_emit_row(outcome: dict, strategy: str, dte_bucket: str) -> dict:
     """Build one wf_trade_paths.jsonl row from a treatment trade outcome.
 
