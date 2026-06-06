@@ -4,6 +4,35 @@
 
 ---
 
+## 2026-06-06 — Intraday time-exit model: built A+D, walk-forward DISPROVED the time-stop → ships INERT
+
+**Spec:** `docs/superpowers/specs/2026-06-05-intraday-time-exit-model-design.md`
+**Plan:** `docs/superpowers/plans/2026-06-05-intraday-time-exit-model.md`
+**Branch:** `intraday-time-exit-model` — subagent-driven, T1–T6 each spec+quality reviewed.
+
+The 06-03 loss-attribution showed put_debit_spread 0DTE loses on **exit timing, not direction** (64% of trades drifted to EOD at −$102.70 each). Hypothesis: a time-based exit (hard-close@T or scratch@T θ) cuts the EOD drift. Built the falsification machinery to test it honestly before any live change.
+
+**What shipped (carries no live risk, always delivered):**
+- **T1 `eb2f957`** — `signals/intraday_exit_rules.py`: one shared stateless `evaluate_intraday_exit()` (order: target → stop → scratch → hard-close), used by BOTH backtest and (future) live so the WF validates the exact function live would run. Mirrors the Phase-4b pricer seam.
+- **T2 `ed7e64d`** — config kill-switch (`INTRADAY_TIME_EXIT_ENABLED`) + per-combo param dicts; exit rules surface scratch/hard-close uniformly.
+- **T3 `20ebe56`** — backtest records each trade's full 5-min path with BOTH marks: the real option-bar mark (truth) and the BS-off-spot mark (what live sees). Real-mark exit behavior proven byte-unchanged.
+- **T4 `a70f1df`** — `signals/exit_counterfactual.py`: `exit_quality = pnl_exit − pnl_hold` (cut-winner vs saved-loser), aggregated per (strategy,dte_bucket,exit_reason).
+- **T5 `7bf4c86`+`eb86bdf`** — offline arm-replay over recorded paths; max_profit/max_loss sourced straight from the sims (single source of truth, no drift).
+- **T6 `9791dc6`** — per-arm WF verdicts + live/backtest parity-divergence gate.
+
+**T7 decision gate (the verdict): the time-exit ships INERT.** Walk-forward 2024-25, 251 deduped trades. **No arm cleared the WF for any combo**, and **every arm failed the parity gate**:
+- put_debit_spread 0DTE — best arm scratch@12:00 trimmed mean −$21.49 → −$17.20/trade (still deeply negative; no time-stop flips it positive). Parity: agree ≤0.851 (<0.90), mean P&L gap ~$27 (≫$10).
+- iron_condor 0DTE — parity worse (agree 0.40–0.54, gap ~$54).
+- 1-3DTE combos too thin to read (n=3/6/10).
+
+The killer is **C (live marking)**: the BS-off-intraday-spot mark cannot reproduce real-option-bar exits (Starter plan has no intraday option quotes). Even if an arm had a real-mark edge, live couldn't act on it within tolerance. This is the spec's anticipated "WF finds nothing → ships inert" branch, and a clean falsification: my own exit-timing hypothesis didn't survive OOS.
+
+**Decision (user):** finish the branch inert. `config.SCRATCH_TIME`/`HARD_CLOSE_TIME` left **empty by decision** (annotated in config). Live wiring **T8–T10 deferred** (BS-off-spot live mark, shared-evaluator delegation, EOD exit-quality counterfactual) — they carry standalone value (T9 also fixes a latent `forced_close_time`-unenforced bug) but earn nothing while parity fails. KB: disconfirming `backtest_result` entry `f98d21c092`.
+
+**Re-open path:** real/delayed intraday OPTION aggregates that close the parity gap. Verify whether the Starter plan exposes delayed option aggs; if so, re-run the same arm-replay — the infra (A+D) is already in place to evaluate it instantly.
+
+---
+
 ## 2026-06-03 — Extension-gate shadow-test: third "shadow" book, daily-path falsification
 
 **Spec:** `docs/superpowers/specs/2026-06-03-extension-gate-shadow-test-design.md`
