@@ -319,6 +319,116 @@ import math
 import statistics
 from collections import Counter
 
+from datetime import datetime as _dt
+from signals.intraday_exit_rules import evaluate_intraday_exit
+from signals.exit_counterfactual import exit_quality as _exit_quality
+
+# Candidate arms. baseline = today's behavior (no time rule). Coarse grid only.
+ARMS = {
+    "baseline":          {"scratch_time": None, "scratch_theta": 0.0, "hard_close_time": None},
+    "hard_close@12:00":  {"scratch_time": None, "scratch_theta": 0.0, "hard_close_time": "12:00"},
+    "hard_close@13:00":  {"scratch_time": None, "scratch_theta": 0.0, "hard_close_time": "13:00"},
+    "hard_close@14:00":  {"scratch_time": None, "scratch_theta": 0.0, "hard_close_time": "14:00"},
+    "scratch@12:00,0":   {"scratch_time": "12:00", "scratch_theta": 0.0, "hard_close_time": None},
+    "scratch@13:00,0":   {"scratch_time": "13:00", "scratch_theta": 0.0, "hard_close_time": None},
+    "scratch@14:00,0":   {"scratch_time": "14:00", "scratch_theta": 0.0, "hard_close_time": None},
+    "scratch@13:00,.10": {"scratch_time": "13:00", "scratch_theta": 0.10, "hard_close_time": None},
+}
+
+
+def _bar_time(hhmm: str):
+    h, m = hhmm.split(":")
+    return _dt.min.replace(hour=int(h), minute=int(m)).time()
+
+
+def replay_arms(trade: dict, mark_key: str = "") -> dict:
+    """Apply every ARM to one trade's recorded path. mark_key='' uses the real
+    mark (pnl/exit_price); mark_key='_bs' uses the BS-off-spot mark
+    (pnl_bs/exit_price_bs) — used by the parity check.
+
+    Returns {arm_name: {pnl_exit, exit_reason, fired_at, exit_quality}}.
+    """
+    pnl_field   = "pnl_bs" if mark_key == "_bs" else "pnl"
+    price_field = "exit_price_bs" if mark_key == "_bs" else "exit_price"
+    position = {"strategy": trade["strategy"], "dte_bucket": trade["dte_bucket"],
+                "max_profit": trade["max_profit"], "max_loss": trade["max_loss"]}
+    pnl_hold = trade["pnl_hold"]
+    out = {}
+    for name, time_rule in ARMS.items():
+        rule = {"profit_target_pct": trade.get("profit_target_pct"),
+                "stop_pct": trade.get("stop_pct"), **time_rule}
+        fired = None
+        for row in trade["path"]:
+            mark = {"pnl": row[pnl_field], "exit_price": row[price_field]}
+            d = evaluate_intraday_exit(position, mark, _bar_time(row["t"]), rule)
+            if d is not None:
+                fired = (row[pnl_field], d.reason, d.fired_at)
+                break
+        if fired is None:
+            last = trade["path"][-1]
+            fired = (last[pnl_field], "eod", "")
+        pnl_exit, reason, fired_at = fired
+        out[name] = {"pnl_exit": round(pnl_exit, 2), "exit_reason": reason,
+                     "fired_at": fired_at,
+                     "exit_quality": _exit_quality(pnl_exit, pnl_hold)}
+    return out
+
+
+def _max_pl_for(strategy: str, entry_spot: float, entry_px: float
+                ) -> tuple[float, float]:
+    """Reconstruct (max_profit, max_loss) in DOLLARS for a trade, replicating the
+    formula the simulators use. The sim returns the PnL path + entry_px but NOT
+    max_profit/max_loss, so we recompute them here from the post-slippage entry
+    and the spread width (leg selection is pure/deterministic). Debit and credit
+    spreads are mirror images:
+      debit  : max_loss = entry_px*100,            max_profit = (width-entry_px)*100
+      credit : max_profit = entry_px*100,          max_loss   = (width-entry_px)*100
+    Returns (0.0, 0.0) if the structure can't be reconstructed."""
+    from signals.intraday_structure_builder import select_legs
+    structure = _strategy_to_structure(strategy, "")
+    if structure is STRATEGY_NOT_SUPPORTED:
+        return (0.0, 0.0)
+    legs = select_legs(structure, entry_spot)
+    if not legs or len(legs) < 2:
+        return (0.0, 0.0)
+    width = abs(legs[0]["strike"] - legs[1]["strike"])
+    if structure == "iron_condor":            # credit
+        return (entry_px * 100, (width - entry_px) * 100)
+    return ((width - entry_px) * 100, entry_px * 100)   # debit
+
+
+def _path_emit_row(outcome: dict, strategy: str, dte_bucket: str) -> dict:
+    """Build one wf_trade_paths.jsonl row from a treatment trade outcome.
+
+    Carries exactly the keys replay_arms needs to run offline later:
+      date, strategy, dte_bucket, entry_spot, max_profit, max_loss,
+      profit_target_pct, stop_pct, path, pnl_hold.
+
+    profit_target_pct/stop_pct come from the SAME exit rule the sim used
+    (learning.exit_manager.exit_rule_for). max_profit/max_loss are not in the
+    outcome dict, so they're recomputed from entry_spot/entry_px (see
+    _max_pl_for). path/pnl_hold come straight from the outcome (Task 3)."""
+    from learning.exit_manager import exit_rule_for
+    rule = exit_rule_for(strategy, dte_bucket)
+    entry_spot = outcome.get("entry_spot")
+    entry_px   = outcome.get("entry_px")
+    if entry_spot is not None and entry_px is not None:
+        max_profit, max_loss = _max_pl_for(strategy, entry_spot, entry_px)
+    else:
+        max_profit, max_loss = 0.0, 0.0
+    return {
+        "date":              outcome.get("date"),
+        "strategy":          strategy,
+        "dte_bucket":        dte_bucket,
+        "entry_spot":        entry_spot,
+        "max_profit":        round(max_profit, 2),
+        "max_loss":          round(max_loss, 2),
+        "profit_target_pct": rule.get("profit_target_pct"),
+        "stop_pct":          rule.get("stop_pct"),
+        "path":              outcome.get("path"),
+        "pnl_hold":          outcome.get("pnl_hold"),
+    }
+
 
 def _sharpe(pnls: list[float]) -> float:
     """Per-trade Sharpe: mean / stdev. Returns 0.0 when n<2 (undefined stdev)."""
@@ -530,6 +640,7 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
     trades_T: list[dict] = []
     trades_B: list[dict] = []
     rows_T: list[dict] = []   # flat per-treatment-trade rows for loss attribution
+    paths_T: list[dict] = []  # per-treatment-trade recorded paths for offline arm-replay
     skip_reasons: Counter = Counter()
 
     for day in _iter_trading_days(*test_range):
@@ -613,6 +724,16 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
                     "outcome":     outcome.get("outcome"),
                     "exit_reason": outcome.get("exit_reason"),
                 })
+                # Accumulate the recorded PnL path + the inputs replay_arms needs
+                # to apply candidate exit arms OFFLINE (no re-run). Only emitted
+                # when the trade actually carries a path (Task 3); skipped
+                # silently otherwise so this stays best-effort and non-breaking.
+                # NOTE: overlapping walk-forward windows repeat the same calendar
+                # days, so these rows DUPLICATE across windows — downstream
+                # analysis dedups by (date, strategy, dte_bucket, entry_spot).
+                if outcome.get("path"):
+                    paths_T.append(
+                        _path_emit_row(outcome, setup.strategy, sd["dte_bucket"]))
                 broker_T.record_open(strategy=setup.strategy, dte_bucket=sd["dte_bucket"])
             if day_failed:
                 break
@@ -643,6 +764,7 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
         "skip_reasons": dict(skip_reasons),
         "verdict":      window_verdict(stats),
         "rows_T":       rows_T,
+        "paths_T":      paths_T,
     }
 
 
@@ -700,9 +822,12 @@ def run_walk_forward(start: date, end: date,
     # DUPLICATE across overlapping windows by design — the analysis dedups by
     # (date, strategy, dte_bucket, entry_spot).
     all_rows_T: list[dict] = []
+    all_paths_T: list[dict] = []
     for r in results:
         all_rows_T.extend(r.get("rows_T", []))
-    return {"windows": results, "aggregate": agg, "rows_T": all_rows_T}
+        all_paths_T.extend(r.get("paths_T", []))
+    return {"windows": results, "aggregate": agg,
+            "rows_T": all_rows_T, "paths_T": all_paths_T}
 
 
 if __name__ == "__main__":
@@ -733,10 +858,27 @@ if __name__ == "__main__":
             rf.write(json.dumps(row) + "\n")
     logger.info(f"router_wf: wrote {len(rows_T)} treatment rows to {rows_out}")
 
-    # Strip the per-window rows_T copies from the JSON report (they're already
-    # captured in the JSONL above; keeping them would bloat the report).
+    # Write the recorded per-trade PATHS to a sibling JSONL for OFFLINE
+    # arm-replay (backtests.intraday_router_wf.replay_arms). Each row carries
+    # exactly the keys replay_arms needs: date, strategy, dte_bucket, entry_spot,
+    # max_profit, max_loss, profit_target_pct, stop_pct, path, pnl_hold.
+    # Best-effort: emitted only for treatment trades that recorded a path.
+    # NOTE: overlapping walk-forward windows repeat the same calendar days, so
+    # these rows DUPLICATE across windows — any analysis MUST dedup by
+    # (date, strategy, dte_bucket, entry_spot).
+    paths_out = os.path.join(os.path.dirname(args.out) or ".", "wf_trade_paths.jsonl")
+    paths_T = report.pop("paths_T", [])
+    with open(paths_out, "w") as pf:
+        for row in paths_T:
+            pf.write(json.dumps(row) + "\n")
+    logger.info(f"router_wf: wrote {len(paths_T)} treatment paths to {paths_out}")
+
+    # Strip the per-window rows_T / paths_T copies from the JSON report (they're
+    # already captured in the JSONL files above; keeping them would bloat the
+    # report).
     for w in report.get("windows", []):
         w.pop("rows_T", None)
+        w.pop("paths_T", None)
 
     # Serialize: convert date tuples to ISO strings, Counters already dict.
     def _ser(obj):
