@@ -247,6 +247,10 @@ def _simulate_short_dte_with_expiration(day, expiry,
 
     width      = abs(legs[0]["strike"] - legs[1]["strike"]) if len(legs) >= 2 else 0
     max_profit = entry_px * 100 if credit else (width - entry_px) * 100
+    # max_loss is the mirror of max_profit (same width/entry_px the sim uses).
+    # debit  : risk == the premium paid  -> entry_px*100
+    # credit : risk == width minus credit -> (width-entry_px)*100
+    max_loss   = (width - entry_px) * 100 if credit else entry_px * 100
     commission = COMMISSION_PER_LEG * len(legs) * 2
 
     # Walk the session, mark the spread, exit on target / stop / session close.
@@ -307,6 +311,7 @@ def _simulate_short_dte_with_expiration(day, expiry,
     return {
         "date": day.isoformat(), "structure": structure,
         "entry_spot": round(entry_spot, 2), "entry_px": round(entry_px, 2),
+        "max_profit": round(max_profit, 2), "max_loss": round(max_loss, 2),
         "pnl_dollars": round(pnl, 2),
         "outcome": "win" if pnl > 0 else "loss" if pnl < 0 else "breakeven",
         "exit_reason": exit_reason,
@@ -374,29 +379,6 @@ def replay_arms(trade: dict, mark_key: str = "") -> dict:
     return out
 
 
-def _max_pl_for(strategy: str, entry_spot: float, entry_px: float
-                ) -> tuple[float, float]:
-    """Reconstruct (max_profit, max_loss) in DOLLARS for a trade, replicating the
-    formula the simulators use. The sim returns the PnL path + entry_px but NOT
-    max_profit/max_loss, so we recompute them here from the post-slippage entry
-    and the spread width (leg selection is pure/deterministic). Debit and credit
-    spreads are mirror images:
-      debit  : max_loss = entry_px*100,            max_profit = (width-entry_px)*100
-      credit : max_profit = entry_px*100,          max_loss   = (width-entry_px)*100
-    Returns (0.0, 0.0) if the structure can't be reconstructed."""
-    from signals.intraday_structure_builder import select_legs
-    structure = _strategy_to_structure(strategy, "")
-    if structure is STRATEGY_NOT_SUPPORTED:
-        return (0.0, 0.0)
-    legs = select_legs(structure, entry_spot)
-    if not legs or len(legs) < 2:
-        return (0.0, 0.0)
-    width = abs(legs[0]["strike"] - legs[1]["strike"])
-    if structure == "iron_condor":            # credit
-        return (entry_px * 100, (width - entry_px) * 100)
-    return ((width - entry_px) * 100, entry_px * 100)   # debit
-
-
 def _path_emit_row(outcome: dict, strategy: str, dte_bucket: str) -> dict:
     """Build one wf_trade_paths.jsonl row from a treatment trade outcome.
 
@@ -405,24 +387,21 @@ def _path_emit_row(outcome: dict, strategy: str, dte_bucket: str) -> dict:
       profit_target_pct, stop_pct, path, pnl_hold.
 
     profit_target_pct/stop_pct come from the SAME exit rule the sim used
-    (learning.exit_manager.exit_rule_for). max_profit/max_loss are not in the
-    outcome dict, so they're recomputed from entry_spot/entry_px (see
-    _max_pl_for). path/pnl_hold come straight from the outcome (Task 3)."""
+    (learning.exit_manager.exit_rule_for). max_profit/max_loss come straight
+    from the simulator's own result dict — the sim is the single source of truth
+    so the arm thresholds (profit_target_pct*max_profit, scratch_theta*max_profit)
+    can never drift from the math the sim ran. path/pnl_hold come from the
+    outcome too (Task 3). max_profit/max_loss default to 0.0 only if a (legacy)
+    outcome predates the sim carrying them."""
     from learning.exit_manager import exit_rule_for
     rule = exit_rule_for(strategy, dte_bucket)
-    entry_spot = outcome.get("entry_spot")
-    entry_px   = outcome.get("entry_px")
-    if entry_spot is not None and entry_px is not None:
-        max_profit, max_loss = _max_pl_for(strategy, entry_spot, entry_px)
-    else:
-        max_profit, max_loss = 0.0, 0.0
     return {
         "date":              outcome.get("date"),
         "strategy":          strategy,
         "dte_bucket":        dte_bucket,
-        "entry_spot":        entry_spot,
-        "max_profit":        round(max_profit, 2),
-        "max_loss":          round(max_loss, 2),
+        "entry_spot":        outcome.get("entry_spot"),
+        "max_profit":        outcome.get("max_profit", 0.0),
+        "max_loss":          outcome.get("max_loss", 0.0),
         "profit_target_pct": rule.get("profit_target_pct"),
         "stop_pct":          rule.get("stop_pct"),
         "path":              outcome.get("path"),

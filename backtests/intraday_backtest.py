@@ -234,6 +234,10 @@ def simulate_0dte_day(day: date, structure: str, spy_intraday, options_history,
         return None
     width      = abs(legs[0]["strike"] - legs[1]["strike"]) if len(legs) >= 2 else 0
     max_profit = entry_px * 100 if credit else (width - entry_px) * 100
+    # max_loss is the mirror of max_profit (same width/entry_px the sim uses).
+    # debit  : risk == the premium paid  -> entry_px*100
+    # credit : risk == width minus credit -> (width-entry_px)*100
+    max_loss   = (width - entry_px) * 100 if credit else entry_px * 100
     n_legs     = len(legs)
     commission = COMMISSION_PER_LEG * n_legs * 2
 
@@ -294,6 +298,7 @@ def simulate_0dte_day(day: date, structure: str, spy_intraday, options_history,
     return {
         "date": day.isoformat(), "structure": structure,
         "entry_spot": round(entry_spot, 2), "entry_px": round(entry_px, 2),
+        "max_profit": round(max_profit, 2), "max_loss": round(max_loss, 2),
         "pnl_dollars": round(pnl, 2),
         "outcome": "win" if pnl > 0 else "loss" if pnl < 0 else "breakeven",
         "exit_reason": exit_reason,
