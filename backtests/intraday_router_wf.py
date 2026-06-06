@@ -249,19 +249,56 @@ def _simulate_short_dte_with_expiration(day, expiry,
     max_profit = entry_px * 100 if credit else (width - entry_px) * 100
     commission = COMMISSION_PER_LEG * len(legs) * 2
 
+    # Walk the session, mark the spread, exit on target / stop / session close.
+    # Also record the full per-bar PnL path with BOTH the real-option-bar mark
+    # and a Black-Scholes-off-the-intraday-spot mark (mirrors the live
+    # ExitManager view — used later for an arm-replay parity check).
+    from learning.exit_manager import bs_price
+    # VIX proxy: no live VIX in the backtest; fixed sigma matching the live
+    # convention (sigma = vix/100). 0.15 ~ VIX 15, the calm regime these trades
+    # fire in. Documented approximation.
+    BS_SIGMA = 0.15
+    t_years = max((expiry - day).days, 0) / 365.0
+
+    def _bs_spread_mark(spot_now, legs, structure):
+        long_v = short_v = 0.0
+        for leg in legs:
+            otype = "call" if str(leg["cp"]).lower().startswith("c") else "put"
+            p = bs_price(otype, spot_now, leg["strike"], t_years, BS_SIGMA)
+            if leg["action"] == "BUY":
+                long_v += p
+            else:
+                short_v += p
+        return max(0.0, (short_v - long_v) if credit else (long_v - short_v))
+
     exit_reason = "session_close"
     pnl = -commission
+    path = []
     for ts in session.index:
         m = marks_at(ts)
         if m is None:
             continue
         val = _spread_value(m, structure)
         if credit:
-            cost = val + SLIPPAGE
-            pnl  = (entry_px - cost) * 100 - commission
+            pnl = (entry_px - (val + SLIPPAGE)) * 100 - commission
+            exit_px_bar = round(val + SLIPPAGE, 2)
         else:
-            proceeds = max(0.0, val - SLIPPAGE)
-            pnl      = (proceeds - entry_px) * 100 - commission
+            pnl = (max(0.0, val - SLIPPAGE) - entry_px) * 100 - commission
+            exit_px_bar = round(max(0.0, val - SLIPPAGE), 2)
+
+        spot_now = float(spy.loc[ts]["close"]) if ts in spy.index else entry_spot
+        val_bs = _bs_spread_mark(spot_now, legs, structure)
+        if credit:
+            pnl_bs = (entry_px - (val_bs + SLIPPAGE)) * 100 - commission
+            exit_px_bs = round(val_bs + SLIPPAGE, 2)
+        else:
+            pnl_bs = (max(0.0, val_bs - SLIPPAGE) - entry_px) * 100 - commission
+            exit_px_bs = round(max(0.0, val_bs - SLIPPAGE), 2)
+
+        path.append({"t": ts.strftime("%H:%M"), "pnl": round(pnl, 2),
+                     "exit_price": exit_px_bar, "pnl_bs": round(pnl_bs, 2),
+                     "exit_price_bs": exit_px_bs})
+
         if max_profit > 0 and pnl >= PROFIT_TARGET_PCT * max_profit:
             exit_reason = "target"; break
         if STOP_MULT is not None and pnl <= -STOP_MULT * max_profit:
@@ -273,6 +310,8 @@ def _simulate_short_dte_with_expiration(day, expiry,
         "pnl_dollars": round(pnl, 2),
         "outcome": "win" if pnl > 0 else "loss" if pnl < 0 else "breakeven",
         "exit_reason": exit_reason,
+        "path": path,
+        "pnl_hold": path[-1]["pnl"] if path else round(pnl, 2),
     }
 
 
