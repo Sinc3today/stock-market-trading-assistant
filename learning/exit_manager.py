@@ -70,6 +70,17 @@ _STRUCTURE_KEY = {
 }
 
 
+def _time_exit_params(strategy: str | None, bucket: str) -> dict:
+    """Look up the WF-earned scratch/hard-close params for this combo. Empty
+    config dicts => all None (the unearned default)."""
+    key = f"{strategy}_{bucket}"
+    return {
+        "scratch_time":    config.SCRATCH_TIME.get(key),
+        "scratch_theta":   config.SCRATCH_THETA.get(key, 0.0),
+        "hard_close_time": config.HARD_CLOSE_TIME.get(key),
+    }
+
+
 def _exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
     """Return the exit-rule dict for the given (strategy, dte_bucket).
     Untagged trades (dte_bucket=None) default to 45DTE rules — the only thing
@@ -101,6 +112,9 @@ def _exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
             "condor_short_strike_touch":          False,
             "forced_close_time":                   None,
             "forced_close_minutes_before_expiry":  None,
+            "scratch_time":                        None,
+            "scratch_theta":                       0.0,
+            "hard_close_time":                     None,
         }
 
     if bucket == "1-3DTE":
@@ -120,6 +134,7 @@ def _exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
                 and config.CONDOR_SHORT_STRIKE_TOUCH_EXIT_1_3DTE),
             "forced_close_time":                   None,
             "forced_close_minutes_before_expiry":  config.FORCED_CLOSE_MINUTES_BEFORE_EXPIRY_1_3DTE,
+            **_time_exit_params(strategy, bucket),
         }
 
     if bucket == "0DTE":
@@ -141,6 +156,7 @@ def _exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
                 and config.CONDOR_SHORT_STRIKE_TOUCH_EXIT_0DTE),
             "forced_close_time":                   forced_time,
             "forced_close_minutes_before_expiry":  None,
+            **_time_exit_params(strategy, bucket),
         }
 
     # Unknown bucket — defensive default (treat as 45DTE).

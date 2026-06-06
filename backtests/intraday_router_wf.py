@@ -247,21 +247,62 @@ def _simulate_short_dte_with_expiration(day, expiry,
 
     width      = abs(legs[0]["strike"] - legs[1]["strike"]) if len(legs) >= 2 else 0
     max_profit = entry_px * 100 if credit else (width - entry_px) * 100
+    # max_loss is the mirror of max_profit (same width/entry_px the sim uses).
+    # debit  : risk == the premium paid  -> entry_px*100
+    # credit : risk == width minus credit -> (width-entry_px)*100
+    max_loss   = (width - entry_px) * 100 if credit else entry_px * 100
     commission = COMMISSION_PER_LEG * len(legs) * 2
+
+    # Walk the session, mark the spread, exit on target / stop / session close.
+    # Also record the full per-bar PnL path with BOTH the real-option-bar mark
+    # and a Black-Scholes-off-the-intraday-spot mark (mirrors the live
+    # ExitManager view — used later for an arm-replay parity check).
+    from learning.exit_manager import bs_price
+    # VIX proxy: no live VIX in the backtest; fixed sigma matching the live
+    # convention (sigma = vix/100). 0.15 ~ VIX 15, the calm regime these trades
+    # fire in. Documented approximation.
+    BS_SIGMA = 0.15
+    t_years = max((expiry - day).days, 0) / 365.0
+
+    def _bs_spread_mark(spot_now, legs, structure):
+        long_v = short_v = 0.0
+        for leg in legs:
+            otype = "call" if str(leg["cp"]).lower().startswith("c") else "put"
+            p = bs_price(otype, spot_now, leg["strike"], t_years, BS_SIGMA)
+            if leg["action"] == "BUY":
+                long_v += p
+            else:
+                short_v += p
+        return max(0.0, (short_v - long_v) if credit else (long_v - short_v))
 
     exit_reason = "session_close"
     pnl = -commission
+    path = []
     for ts in session.index:
         m = marks_at(ts)
         if m is None:
             continue
         val = _spread_value(m, structure)
         if credit:
-            cost = val + SLIPPAGE
-            pnl  = (entry_px - cost) * 100 - commission
+            pnl = (entry_px - (val + SLIPPAGE)) * 100 - commission
+            exit_px_bar = round(val + SLIPPAGE, 2)
         else:
-            proceeds = max(0.0, val - SLIPPAGE)
-            pnl      = (proceeds - entry_px) * 100 - commission
+            pnl = (max(0.0, val - SLIPPAGE) - entry_px) * 100 - commission
+            exit_px_bar = round(max(0.0, val - SLIPPAGE), 2)
+
+        spot_now = float(spy.loc[ts]["close"]) if ts in spy.index else entry_spot
+        val_bs = _bs_spread_mark(spot_now, legs, structure)
+        if credit:
+            pnl_bs = (entry_px - (val_bs + SLIPPAGE)) * 100 - commission
+            exit_px_bs = round(val_bs + SLIPPAGE, 2)
+        else:
+            pnl_bs = (max(0.0, val_bs - SLIPPAGE) - entry_px) * 100 - commission
+            exit_px_bs = round(max(0.0, val_bs - SLIPPAGE), 2)
+
+        path.append({"t": ts.strftime("%H:%M"), "pnl": round(pnl, 2),
+                     "exit_price": exit_px_bar, "pnl_bs": round(pnl_bs, 2),
+                     "exit_price_bs": exit_px_bs})
+
         if max_profit > 0 and pnl >= PROFIT_TARGET_PCT * max_profit:
             exit_reason = "target"; break
         if STOP_MULT is not None and pnl <= -STOP_MULT * max_profit:
@@ -270,15 +311,164 @@ def _simulate_short_dte_with_expiration(day, expiry,
     return {
         "date": day.isoformat(), "structure": structure,
         "entry_spot": round(entry_spot, 2), "entry_px": round(entry_px, 2),
+        "max_profit": round(max_profit, 2), "max_loss": round(max_loss, 2),
         "pnl_dollars": round(pnl, 2),
         "outcome": "win" if pnl > 0 else "loss" if pnl < 0 else "breakeven",
         "exit_reason": exit_reason,
+        "path": path,
+        "pnl_hold": path[-1]["pnl"] if path else round(pnl, 2),
     }
 
 
 import math
 import statistics
 from collections import Counter
+
+from datetime import datetime as _dt
+from signals.intraday_exit_rules import evaluate_intraday_exit
+from signals.exit_counterfactual import exit_quality as _exit_quality
+
+# Candidate arms. baseline = today's behavior (no time rule). Coarse grid only.
+ARMS = {
+    "baseline":          {"scratch_time": None, "scratch_theta": 0.0, "hard_close_time": None},
+    "hard_close@12:00":  {"scratch_time": None, "scratch_theta": 0.0, "hard_close_time": "12:00"},
+    "hard_close@13:00":  {"scratch_time": None, "scratch_theta": 0.0, "hard_close_time": "13:00"},
+    "hard_close@14:00":  {"scratch_time": None, "scratch_theta": 0.0, "hard_close_time": "14:00"},
+    "scratch@12:00,0":   {"scratch_time": "12:00", "scratch_theta": 0.0, "hard_close_time": None},
+    "scratch@13:00,0":   {"scratch_time": "13:00", "scratch_theta": 0.0, "hard_close_time": None},
+    "scratch@14:00,0":   {"scratch_time": "14:00", "scratch_theta": 0.0, "hard_close_time": None},
+    "scratch@13:00,.10": {"scratch_time": "13:00", "scratch_theta": 0.10, "hard_close_time": None},
+}
+
+
+def _bar_time(hhmm: str):
+    h, m = hhmm.split(":")
+    return _dt.min.replace(hour=int(h), minute=int(m)).time()
+
+
+def replay_arms(trade: dict, mark_key: str = "") -> dict:
+    """Apply every ARM to one trade's recorded path. mark_key='' uses the real
+    mark (pnl/exit_price); mark_key='_bs' uses the BS-off-spot mark
+    (pnl_bs/exit_price_bs) — used by the parity check.
+
+    Returns {arm_name: {pnl_exit, exit_reason, fired_at, exit_quality}}.
+    """
+    pnl_field   = "pnl_bs" if mark_key == "_bs" else "pnl"
+    price_field = "exit_price_bs" if mark_key == "_bs" else "exit_price"
+    position = {"strategy": trade["strategy"], "dte_bucket": trade["dte_bucket"],
+                "max_profit": trade["max_profit"], "max_loss": trade["max_loss"]}
+    pnl_hold = trade["pnl_hold"]
+    out = {}
+    for name, time_rule in ARMS.items():
+        rule = {"profit_target_pct": trade.get("profit_target_pct"),
+                "stop_pct": trade.get("stop_pct"), **time_rule}
+        fired = None
+        for row in trade["path"]:
+            mark = {"pnl": row[pnl_field], "exit_price": row[price_field]}
+            d = evaluate_intraday_exit(position, mark, _bar_time(row["t"]), rule)
+            if d is not None:
+                fired = (row[pnl_field], d.reason, d.fired_at)
+                break
+        if fired is None:
+            last = trade["path"][-1]
+            fired = (last[pnl_field], "eod", "")
+        pnl_exit, reason, fired_at = fired
+        out[name] = {"pnl_exit": round(pnl_exit, 2), "exit_reason": reason,
+                     "fired_at": fired_at,
+                     "exit_quality": _exit_quality(pnl_exit, pnl_hold)}
+    return out
+
+
+def _combo_key(t):
+    return f"{t['strategy']}|{t['dte_bucket']}"
+
+
+def arm_verdicts(trades: list[dict]) -> dict:
+    """Per-(strategy,dte_bucket): for each ARM, n / total / mean / win-rate over
+    the deduped trade list (real mark)."""
+    by_combo: dict[str, list[dict]] = {}
+    for t in trades:
+        by_combo.setdefault(_combo_key(t), []).append(t)
+
+    out = {}
+    for combo, ts in by_combo.items():
+        replayed = [replay_arms(t) for t in ts]
+        arm_stats = {}
+        for arm in ARMS:
+            pnls = [r[arm]["pnl_exit"] for r in replayed]
+            n = len(pnls)
+            arm_stats[arm] = {
+                "n": n,
+                "total_pnl": round(sum(pnls), 2),
+                "mean_pnl": round(sum(pnls) / n, 2) if n else 0.0,
+                "win_rate": round(sum(1 for p in pnls if p > 0) / n, 3) if n else 0.0,
+                "mean_exit_quality": round(
+                    sum(r[arm]["exit_quality"] for r in replayed) / n, 2) if n else 0.0,
+            }
+        out[combo] = arm_stats
+    return out
+
+
+def parity_divergence(trades: list[dict]) -> dict:
+    """Per-(strategy,dte_bucket,arm): how often the BS-off-spot mark reproduces
+    the real-mark exit decision, and whether the combo passes the parity gate."""
+    by_combo: dict[str, list[dict]] = {}
+    for t in trades:
+        by_combo.setdefault(_combo_key(t), []).append(t)
+
+    out = {}
+    for combo, ts in by_combo.items():
+        real = [replay_arms(t, mark_key="") for t in ts]
+        bsm  = [replay_arms(t, mark_key="_bs") for t in ts]
+        arm_rows = {}
+        for arm in ARMS:
+            if arm == "baseline":
+                continue
+            agree = sum(1 for a, b in zip(real, bsm)
+                        if a[arm]["exit_reason"] == b[arm]["exit_reason"]
+                        and a[arm]["fired_at"] == b[arm]["fired_at"])
+            n = len(ts)
+            agree_frac = agree / n if n else 0.0
+            gap = (sum(abs(a[arm]["pnl_exit"] - b[arm]["pnl_exit"])
+                       for a, b in zip(real, bsm)) / n) if n else 0.0
+            arm_rows[arm] = {
+                "agree_frac": round(agree_frac, 3),
+                "mean_pnl_gap": round(gap, 2),
+                "passes": bool(agree_frac >= config.EXIT_PARITY_MIN_AGREE
+                               and gap < config.EXIT_PARITY_MAX_PNL_GAP),
+            }
+        out[combo] = arm_rows
+    return out
+
+
+def _path_emit_row(outcome: dict, strategy: str, dte_bucket: str) -> dict:
+    """Build one wf_trade_paths.jsonl row from a treatment trade outcome.
+
+    Carries exactly the keys replay_arms needs to run offline later:
+      date, strategy, dte_bucket, entry_spot, max_profit, max_loss,
+      profit_target_pct, stop_pct, path, pnl_hold.
+
+    profit_target_pct/stop_pct come from the SAME exit rule the sim used
+    (learning.exit_manager.exit_rule_for). max_profit/max_loss come straight
+    from the simulator's own result dict — the sim is the single source of truth
+    so the arm thresholds (profit_target_pct*max_profit, scratch_theta*max_profit)
+    can never drift from the math the sim ran. path/pnl_hold come from the
+    outcome too (Task 3). max_profit/max_loss default to 0.0 only if a (legacy)
+    outcome predates the sim carrying them."""
+    from learning.exit_manager import exit_rule_for
+    rule = exit_rule_for(strategy, dte_bucket)
+    return {
+        "date":              outcome.get("date"),
+        "strategy":          strategy,
+        "dte_bucket":        dte_bucket,
+        "entry_spot":        outcome.get("entry_spot"),
+        "max_profit":        outcome.get("max_profit", 0.0),
+        "max_loss":          outcome.get("max_loss", 0.0),
+        "profit_target_pct": rule.get("profit_target_pct"),
+        "stop_pct":          rule.get("stop_pct"),
+        "path":              outcome.get("path"),
+        "pnl_hold":          outcome.get("pnl_hold"),
+    }
 
 
 def _sharpe(pnls: list[float]) -> float:
@@ -491,6 +681,7 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
     trades_T: list[dict] = []
     trades_B: list[dict] = []
     rows_T: list[dict] = []   # flat per-treatment-trade rows for loss attribution
+    paths_T: list[dict] = []  # per-treatment-trade recorded paths for offline arm-replay
     skip_reasons: Counter = Counter()
 
     for day in _iter_trading_days(*test_range):
@@ -574,6 +765,16 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
                     "outcome":     outcome.get("outcome"),
                     "exit_reason": outcome.get("exit_reason"),
                 })
+                # Accumulate the recorded PnL path + the inputs replay_arms needs
+                # to apply candidate exit arms OFFLINE (no re-run). Only emitted
+                # when the trade actually carries a path (Task 3); skipped
+                # silently otherwise so this stays best-effort and non-breaking.
+                # NOTE: overlapping walk-forward windows repeat the same calendar
+                # days, so these rows DUPLICATE across windows — downstream
+                # analysis dedups by (date, strategy, dte_bucket, entry_spot).
+                if outcome.get("path"):
+                    paths_T.append(
+                        _path_emit_row(outcome, setup.strategy, sd["dte_bucket"]))
                 broker_T.record_open(strategy=setup.strategy, dte_bucket=sd["dte_bucket"])
             if day_failed:
                 break
@@ -604,6 +805,7 @@ def run_window(*, train_range, test_range, get_setup, get_pnl) -> dict:
         "skip_reasons": dict(skip_reasons),
         "verdict":      window_verdict(stats),
         "rows_T":       rows_T,
+        "paths_T":      paths_T,
     }
 
 
@@ -661,9 +863,12 @@ def run_walk_forward(start: date, end: date,
     # DUPLICATE across overlapping windows by design — the analysis dedups by
     # (date, strategy, dte_bucket, entry_spot).
     all_rows_T: list[dict] = []
+    all_paths_T: list[dict] = []
     for r in results:
         all_rows_T.extend(r.get("rows_T", []))
-    return {"windows": results, "aggregate": agg, "rows_T": all_rows_T}
+        all_paths_T.extend(r.get("paths_T", []))
+    return {"windows": results, "aggregate": agg,
+            "rows_T": all_rows_T, "paths_T": all_paths_T}
 
 
 if __name__ == "__main__":
@@ -694,10 +899,27 @@ if __name__ == "__main__":
             rf.write(json.dumps(row) + "\n")
     logger.info(f"router_wf: wrote {len(rows_T)} treatment rows to {rows_out}")
 
-    # Strip the per-window rows_T copies from the JSON report (they're already
-    # captured in the JSONL above; keeping them would bloat the report).
+    # Write the recorded per-trade PATHS to a sibling JSONL for OFFLINE
+    # arm-replay (backtests.intraday_router_wf.replay_arms). Each row carries
+    # exactly the keys replay_arms needs: date, strategy, dte_bucket, entry_spot,
+    # max_profit, max_loss, profit_target_pct, stop_pct, path, pnl_hold.
+    # Best-effort: emitted only for treatment trades that recorded a path.
+    # NOTE: overlapping walk-forward windows repeat the same calendar days, so
+    # these rows DUPLICATE across windows — any analysis MUST dedup by
+    # (date, strategy, dte_bucket, entry_spot).
+    paths_out = os.path.join(os.path.dirname(args.out) or ".", "wf_trade_paths.jsonl")
+    paths_T = report.pop("paths_T", [])
+    with open(paths_out, "w") as pf:
+        for row in paths_T:
+            pf.write(json.dumps(row) + "\n")
+    logger.info(f"router_wf: wrote {len(paths_T)} treatment paths to {paths_out}")
+
+    # Strip the per-window rows_T / paths_T copies from the JSON report (they're
+    # already captured in the JSONL files above; keeping them would bloat the
+    # report).
     for w in report.get("windows", []):
         w.pop("rows_T", None)
+        w.pop("paths_T", None)
 
     # Serialize: convert date tuples to ISO strings, Counters already dict.
     def _ser(obj):

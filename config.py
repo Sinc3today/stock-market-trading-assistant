@@ -279,6 +279,33 @@ CONDOR_SHORT_STRIKE_TOUCH_EXIT_0DTE = True
 FORCED_CLOSE_TIME_0DTE_DEBIT    = "15:30"    # ET, HH:MM
 FORCED_CLOSE_TIME_0DTE_CONDOR   = "15:00"    # ET — gamma into the bell
 
+# ── Intraday time-exit model (2026-06-05) ───────────────────────────────────
+# Global kill-switch: when False the live ExitManager skips ALL scratch/hard-close
+# time rules (falls back to today's target/stop/forced-close behavior).
+INTRADAY_TIME_EXIT_ENABLED = True
+
+# Per-(strategy, dte_bucket) time-exit params. None until a walk-forward arm
+# EARNS the combo (Task 7). Keyed "STRATEGY_BUCKET". Only 0DTE/1-3DTE are managed.
+# scratch_theta is a fraction of max_profit: pnl below it at scratch_time => bail.
+#
+# DECISION 2026-06-06 — SHIPS INERT. The T7 walk-forward (2024-25, 251 deduped
+# trades) cleared NO arm for ANY combo: no time-stop flipped a loser positive
+# (best put_debit_spread 0DTE arm scratch@12:00 trimmed -$21.49 -> -$17.20/trade,
+# still deeply negative), AND every arm FAILED the parity gate — the BS-off-spot
+# live mark cannot reproduce the real-option-bar exits (agree <=0.85 < 0.90,
+# mean pnl gap ~$27 >> $10; iron_condor 0DTE worse, agree 0.40-0.54). These stay
+# empty by decision, not omission. Re-open only behind real/delayed intraday
+# OPTION aggregates that close the parity gap (Starter plan has none today).
+SCRATCH_TIME      = {}   # e.g. {"put_debit_spread_0DTE": "13:00"}
+SCRATCH_THETA     = {}   # e.g. {"put_debit_spread_0DTE": 0.0}
+HARD_CLOSE_TIME   = {}   # e.g. {"put_debit_spread_0DTE": "14:00"}
+
+# Live/backtest parity gate (Task 6). B ships for a combo only if the BS-off-spot
+# mark reproduces the real-mark exits on >= MIN_AGREE of trades AND the per-trade
+# mean pnl gap between the two marks' arms is < MAX_PNL_GAP dollars.
+EXIT_PARITY_MIN_AGREE   = 0.90
+EXIT_PARITY_MAX_PNL_GAP = 10.0
+
 
 # ─────────────────────────────────────────
 # PHASE 3: INTRADAY ENTRY PIPELINE
