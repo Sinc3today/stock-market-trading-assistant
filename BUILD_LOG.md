@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-06-07 (pm) — Dip-buy forward paper-test wired LIVE (candidate book)
+
+**Spec:** `docs/superpowers/specs/2026-06-07-dipbuy-forward-test-design.md`
+**Plan:** `docs/superpowers/plans/2026-06-07-dipbuy-forward-test.md` · **Branch:** `dipbuy-forward`.
+
+The decisive test for the promising oversold dip-buy edge (in-sample only) is forward paper-trading on unseen data — now wired into the live bot.
+
+- **New `candidate` book** — excluded from the `/trades` headline stats (`get_summary_stats` now filters `book not in ("shadow","candidate")`); it's a research forward-test, not a real-money-proxy position.
+- **`learning/dipbuy_forward.py` (new, isolated):** `maybe_open_dipbuy` records a 1-ct bull-call debit (~21 DTE, via the same `OptionsLayer` live bull plays use) on each **fresh RSI<30 cross**, idempotent per day, kill-switch `DIPBUY_FORWARD_ENABLED`. `resolve_candidates` marks daily (BS off SPY close + VIX) and closes at **50%-of-max-profit OR 10 trading-day hold**. Reuses the validated study's RSI trigger + `exit_manager.bs_price`. **Core ExitManager untouched.**
+- **Wiring:** daily entry hook in the 09:15 play job (beside the shadow hook), a new **16:12 ET resolver job** (`learning_dipbuy_resolver`), and the **16:20 EOD digest** extended with a labeled "📕 Forward-test (candidate)" section. All try/except (Standing Rule #10).
+- **Adoption:** accrue ≥10–15 unseen trades, then review vs the study's ~68% / +$135 → promote (separate spec) or shelve. No auto-promotion.
+
+**Tests:** 1065 passed (15 new), 0 regressions. **Deploy:** required (adds two live daily jobs) → restart `trader.service`.
+
+---
+
 ## 2026-06-07 — Dip-buy directional study: FIRST validated new edge (oversold RSI<30)
 
 **Spec:** `docs/superpowers/specs/2026-06-07-dipbuy-directional-study-design.md`
