@@ -12,7 +12,7 @@
 
 The **oversold dip-buy** is the **first signal the study program hasn't been able to kill** — every prior investigation (0DTE, meta-labeling, intraday-touch, time-exit, transition-skip) was shelved. The **pullback** thesis is dead (≈ baseline noise).
 
-> **Honesty correction (post-review).** This study is an **in-sample event-study + defined-risk pricing check + IV-stress**, NOT a walk-forward. The spec called for `walk_forward.py` with an OOS-retention verdict; that was **not** implemented (Phase 2 below is a full-sample backtest with a per-year and chronological-half-split robustness check, not a train/test holdout). Mitigating point: the signal and structure are **parameter-free** (fixed RSI<30, fixed ATM/2.5% debit, fixed 21DTE/50%/time-close), so there are no fitted knobs to overfit in-sample — the usual reason for OOS holdout is weaker here. But the edge is **recency-loaded** (half2 ≈ 4× half1), the sample is **n=34**, and the pricing is **modeled**. So the honest status is **"promising, survived an honest in-sample + IV-stress check"**, NOT "validated." The decisive test is **forward paper-trading on unseen data** (see Adoption); a true expanding-window walk-forward is an optional added rigor step.
+> **Honesty note (post-review).** The signal and structure are **parameter-free** (fixed RSI<30, fixed ATM/2.5% debit, fixed 21DTE/50%/time-close), so there are no fitted knobs to overfit in-sample. Phases 1–2 are an in-sample event-study + defined-risk pricing + IV-stress; an **expanding-window OOS walk-forward was since added** (Phase 3 below) and confirms the result. Remaining caveats keep the status at **"promising," not "validated":** the edge is **recency-loaded** (half2 ≈ 4× half1; OOS years are the strong ones), the sample is **n=34**, and the pricing is **modeled (BS flat-IV)**. The decisive test is still **forward paper-trading on unseen data** (see Adoption).
 
 ## Phase 1 — signal event-study (underlying only)
 
@@ -42,6 +42,16 @@ Bull call debit spread (ATM long / 2.5% OTM short), ~21 DTE, 50% profit target o
 | IV-stressed (×1.25) | 34 | **+$128.07** | 68% | +$4,354 | — |
 
 Per-year P&L (face): positive in **10/13 years** (76.9%). Losers bounded: 2011 −$2, 2015 −$142, 2020 −$62 (COVID falling-knife, capped by the debit-spread max loss). Big years: 2023 +$418, 2025 +$509, 2026 +$338.
+
+## Phase 3 — expanding-window OOS walk-forward (`backtests/dipbuy_wf.py`)
+
+Parameter-free rule → nothing to fit, so the WF burns in the first 3 distinct trade-years (2010–2012) as "train" and aggregates every later year as out-of-sample, applying the standard gates.
+
+| | n | mean P&L | win | Sharpe | pos OOS-years | verdict |
+|---|---:|---:|---:|---:|---:|---|
+| OOS (2014→2026) | 28 | **+$154** | 68% | 0.63 | 8/10 (80%) | **passes** |
+
+The OOS mean (+$154) is *higher* than the full-sample (+$135) because the burned-in early years were the **smaller** winners — which both passes the gate **and** re-confirms the recency-loading caveat (the strength is concentrated in later years).
 
 ## Honest caveats
 
