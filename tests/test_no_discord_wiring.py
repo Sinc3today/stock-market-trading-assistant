@@ -7,6 +7,11 @@ def _src(path):
         return f.read()
 
 
+def test_discord_bot_module_is_deleted():
+    path = os.path.join(os.path.dirname(__file__), "..", "alerts", "discord_bot.py")
+    assert not os.path.exists(path), "alerts/discord_bot.py must stay deleted (Discord removed)"
+
+
 def test_main_does_not_import_or_start_discord_bot():
     src = _src("main.py")
     assert "discord_bot" not in src, "main.py must not import alerts.discord_bot"

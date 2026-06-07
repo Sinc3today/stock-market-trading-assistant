@@ -43,12 +43,10 @@ class NewsScanner:
     # MAIN RUN
     # ─────────────────────────────────────────
 
-    def run(self, briefing_type: str = "morning", post_to_discord: bool = True) -> dict:
+    def run(self, briefing_type: str = "morning") -> dict:
         """Build a briefing of type 'morning' | 'midday' | 'eod'.
 
-        post_to_discord is DEPRECATED (Discord removed 2026-06-02) and ignored.
         Briefings are persisted to news_briefings.json via _save_briefing().
-        The param is kept for call-site back-compat only.
         """
         now_est = datetime.now(self.eastern).strftime("%I:%M %p EST")
         logger.info(f"📰 {briefing_type.upper()} news briefing starting at {now_est}")

@@ -72,11 +72,8 @@ class EarningsCalendar:
         cache_ttl_days: int  = 1,
         fetcher              = None,    # injectable in tests: fn(ticker) -> "YYYY-MM-DD" | None
     ):
-        # polygon_client is retained so existing callsites don't break
-        # but the module uses yfinance. self.polygon is what the
-        # "no fetcher available" path checks — we mirror that semantics
-        # via self._fetcher below.
-        self.polygon         = polygon_client    # legacy attr, unused
+        # polygon_client is accepted (and ignored) so existing callsites
+        # don't break; this module fetches via yfinance through self._fetcher.
         self.watchlist_path  = watchlist_path or config.WATCHLIST_PATH
         self.cache_ttl_days  = cache_ttl_days
         self._fetcher        = fetcher           # if None, real yfinance is used

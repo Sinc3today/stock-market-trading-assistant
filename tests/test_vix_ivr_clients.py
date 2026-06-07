@@ -104,6 +104,43 @@ class TestVIXClientUnit:
         assert len(df) > 0
         print(f"\n✅ VIX history: {len(df)} rows, range {df['close'].min():.1f}–{df['close'].max():.1f}")
 
+    def test_polygon_latest_skipped_when_flag_off(self):
+        """With VIX_USE_POLYGON False, _fetch_polygon_latest returns None
+        WITHOUT instantiating the Polygon client (no guaranteed-403 call)."""
+        client = VIXClient()
+        with patch("config.VIX_USE_POLYGON", False), \
+             patch("polygon.RESTClient") as mock_rest:
+            result = client._fetch_polygon_latest()
+        assert result is None
+        mock_rest.assert_not_called()
+        print("\n✅ Polygon VIX latest skipped when flag off")
+
+    def test_polygon_history_skipped_when_flag_off(self):
+        """With VIX_USE_POLYGON False, _fetch_polygon_history returns None
+        WITHOUT instantiating the Polygon client."""
+        client = VIXClient()
+        with patch("config.VIX_USE_POLYGON", False), \
+             patch("polygon.RESTClient") as mock_rest:
+            result = client._fetch_polygon_history(252)
+        assert result is None
+        mock_rest.assert_not_called()
+        print("\n✅ Polygon VIX history skipped when flag off")
+
+    def test_polygon_latest_attempts_when_flag_on(self):
+        """With VIX_USE_POLYGON True, _fetch_polygon_latest DOES reach the
+        Polygon client (gate is off)."""
+        client = VIXClient()
+        client.polygon_key = "fake-key"
+        mock_agg = MagicMock()
+        mock_agg.close = 18.5
+        with patch("config.VIX_USE_POLYGON", True), \
+             patch("polygon.RESTClient") as mock_rest:
+            mock_rest.return_value.get_aggs.return_value = [mock_agg]
+            result = client._fetch_polygon_latest()
+        mock_rest.assert_called_once()
+        assert result == 18.5
+        print("\n✅ Polygon VIX latest attempted when flag on")
+
     def test_get_history_falls_back_when_polygon_fails(self):
         """Polygon failure should silently use CBOE."""
         import data.vix_client as _vix_mod

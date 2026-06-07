@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-06-06 (pm) — Step 4 cleanup: dead Discord transport, deprecated params, I:VIX gate
+
+**Branch:** `step4-cleanup` (merged → main locally). The final item of the 4-step plan — housekeeping, no behavior change to the running bot.
+
+- **Discord hard-delete.** The notification-curation work (06-02) unwired Discord but left `alerts/discord_bot.py` (603 lines) sitting dead — nothing imports it (main.py wires `notifier.message`; only stale docstrings mentioned it). Deleted the module, stripped `DISCORD_BOT_TOKEN` + `DISCORD_CHANNEL_ID_*` from config, fixed the `spy_daily_scheduler` docstring, and added a test asserting the module file stays gone.
+- **Deprecated params.** Removed `news_scanner.run(post_to_discord=...)` (ignored since 06-02, no caller passes it) and the unused legacy `self.polygon` attr on `EarningsCalendar` (the `polygon_client` param is still accepted for callsite back-compat).
+- **I:VIX skip.** Polygon `"I:VIX"` is NOT_AUTHORIZED on the Starter plan, so every VIX fetch fired a guaranteed-failing call before falling back to CBOE. Both Polygon fetchers are now gated behind `config.VIX_USE_POLYGON` (default False) → straight to CBOE. Capability kept dormant (flip via `.env`) for a future plan upgrade. Updated the module docstring (CBOE is now primary). TDD: 3 new tests (skip-when-off, attempt-when-on).
+
+**Decisions:** kept the vestigial `set_discord_fn` name (live, wired to notifier across 5 scanners — rename was pure churn); gated I:VIX rather than hard-removing the Polygon methods (keeps the capability).
+
+**Tests:** 1025 passed (4 new), 0 regressions. Smoke-checked imports + `VIX_USE_POLYGON=False` skip path. **Not deployed** — zero runtime behavior change (dead-code removal + a default-off flag); the running `smta.service` is unaffected until the next routine restart.
+
+---
+
 ## 2026-06-06 — Intraday time-exit model: built A+D, walk-forward DISPROVED the time-stop → ships INERT
 
 **Spec:** `docs/superpowers/specs/2026-06-05-intraday-time-exit-model-design.md`
