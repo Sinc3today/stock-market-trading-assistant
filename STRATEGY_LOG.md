@@ -30,8 +30,11 @@ with **fewer knobs**, and is **shelved/inert if it shows no OOS edge**. We activ
 
 - **Calm chop → iron condor.** The edge. Trade it.
 - **Transition chop (VIX 18–22) → half-size condor.** Split into its own `CHOPPY_TRANSITION`
-  label 2026-06-06; the split exposed it as a **−$2,950 / 5yr net loser**. Open question:
-  skip it entirely (pending a WF/hypothesis check — not yet changed).
+  label 2026-06-06; the split exposed a **−$2,950 / 5yr net** result. Walk-forward (2026-06-07):
+  **bimodal, NOT a clean loser** — positive in 3/5 yrs (~83% win) and concentrated in 2 bad
+  yrs (2023 −$3,650, 2025 −$2,010). Blanket-skip **fails walk-forward** (OOS benefit flips sign
+  by window). Kept as-is; the real question is the sub-condition that separates good vs bad
+  transition years (see open thread).
 - **Trending up/down calm → directional debit/credit.** Weak/unproven under the synthetic
   payoff model. Bull ~51%; bear ~nil/negative. Both now carry symmetric separation +
   extension guardrails (bear side gained them 2026-06-06).
@@ -68,6 +71,8 @@ with **fewer knobs**, and is **shelved/inert if it shows no OOS edge**. We activ
 1. **Directional walk-forward (the keystone):** does a *real-priced* dip-buy / trend-follow
    beat the weak ~51% bull / ~nil bear baseline **out-of-sample**? Needs an IV-stress arm
    (flat-VIX BS understates crash-time option cost).
-2. **Skip the transition zone?** WF/hypothesis check on dropping the −$2,950 half-size condor.
+2. **Transition-zone sub-condition.** Blanket-skip already failed WF (bimodal). Find what
+   separates the ~83%-win transition years (2022/24/26) from the ~43% ones (2023/25) —
+   rising-vs-falling VIX, position in the 18–22 band, trend proximity — for a surgical fix.
 3. **Shadow extension** to trending-down skips (cheap); dip/high-vol regimes need a defined
    strategy from (1) before they can be counterfactually shadowed.

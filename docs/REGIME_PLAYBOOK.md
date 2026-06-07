@@ -15,14 +15,16 @@
 | Regime | Trigger | Action | Days | Win% | P&L (1-ct) | Edge basis |
 |---|---|---|---:|---:|---:|---|
 | **Choppy Low Vol** (calm) | not trending (ADX<32) & VIX<18 | **iron condor** | 265 | **82.3%** | **+$18,000** | ✅ **Validated, and STRONGER than thought** — once the transition zone is split out, the true calm edge is 82.3% / +$18,000 (was masked at 74% / +$15,050 by the blended bucket). |
-| **Choppy Transition** | not trending & VIX 18–22 | half-size condor | 120 | 55.8% | **−$2,950** | ❌ **Hidden LOSER, now exposed.** Was buried inside Choppy Low Vol. Confidence hardcoded 0.50, no backtest. **Strong candidate to SKIP** rather than trade half-size (see Findings). |
+| **Choppy Transition** | not trending & VIX 18–22 | half-size condor | 120 | 55.8% | **−$2,950** | ⚠️ **BIMODAL, not a clean loser.** Net-negative but +ve in 3/5 yrs (2022/24/26 ~83% win) and badly −ve in 2 (2023 −$3,650, 2025 −$2,010). Blanket-skip **fails walk-forward** (helps ~half the OOS windows, hurts the other half). Needs a *sub-condition* fix, not a toggle. |
 | Trending Up Calm | ADX≥32, >200MA, VIX<22 | bull debit (52% skip) | 366 | 51.1% | +$6,720 | ⚠️ **Weak/soft.** ~Coin-flip win rate; rests on the synthetic payoff model. Guardrails are backtested; the play itself isn't real-priced. |
 | Trending Down Calm | ADX≥32, <200MA, VIX<22 | bear debit | 15 | 40.0% | **−$390** | ❌ **No edge.** With the new symmetric guardrails the sample is 15 trades (extremes now skipped); still negative. The "downtrend/dip" play has no validated edge. |
 | Choppy High Vol | not trending & VIX≥22 | **skip** | 125 | — | $0 | ✅ Skip validated ("condor poison" in vol expansion). |
 | Trending High Vol | ADX≥32 & VIX≥22 | **skip** | 115 | — | $0 | ✅ Skip validated by a *prior* trade-it experiment (19% win, −$4,600 / 5yr). $0 just means it's currently skipped. |
 | Unknown | <200 bars, or trend <1.5% from MA (either side) | **skip** | 26 | — | $0 | Safety fallback (now includes too-close-to-MA *down*-trends too). |
 
-> **Headline finding from the split:** the transition-zone condor (VIX 18–22) lost **−$2,950 over 5 years** while hiding inside the calm-condor bucket. Removing it reveals the true calm-condor edge is **82.3% / +$18,000** — materially better than the previously-reported blend. Skipping the transition zone is the single highest-value strategy change this scorecard suggests; it should go through a walk-forward/hypothesis check, not a silent edit.
+> **Headline finding from the split:** the transition-zone condor (VIX 18–22) lost **−$2,950 over 5 years** while hiding inside the calm-condor bucket. Removing it reveals the true calm-condor edge is **82.3% / +$18,000** — materially better than the previously-reported blend.
+>
+> **Walk-forward follow-up (2026-06-07):** blanket-skipping the transition zone **does NOT survive walk-forward.** The loss is bimodal — positive in 3/5 years (2022/24/26, ~83% win) and concentrated in 2 bad years (2023 −$3,650, 2025 −$2,010). Because transition days are independent, the OOS benefit of skipping each year is exactly minus that year's transition P&L, which flips sign across windows (helps 2023/25, hurts 2022/24/26). So the "easy win" is a mirage of the net number. The real, harder question: **what sub-condition separates the ~83%-win transition years from the ~43% ones?** (rising-vs-falling VIX, position within the 18–22 band, etc.) — folded into thread ②.
 
 ## By-year reality check
 
