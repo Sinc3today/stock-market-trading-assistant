@@ -49,6 +49,7 @@ class Regime(str, Enum):
     TRENDING_UP_CALM   = "trending_up_calm"
     TRENDING_DOWN_CALM = "trending_down_calm"
     CHOPPY_LOW_VOL     = "choppy_low_vol"
+    CHOPPY_TRANSITION  = "choppy_transition"   # VIX 18–22 chop → half-size condor
     CHOPPY_HIGH_VOL    = "choppy_high_vol"
     TRENDING_HIGH_VOL  = "trending_high_vol"
     EVENT_DAY          = "event_day"
@@ -232,7 +233,7 @@ class RegimeDetector:
                 "Half-size condor or sit out — vol direction unclear",
             ]
             return RegimeResult(
-                Regime.CHOPPY_LOW_VOL, True,
+                Regime.CHOPPY_TRANSITION, True,
                 "REDUCED IRON CONDOR — half size, tighter wings",
                 0.50, reasons, metrics,
             )
@@ -326,6 +327,38 @@ class RegimeDetector:
                     "SKIP — trending into elevated vol, no edge",
                     0.9, reasons, metrics,
                 )
+
+            # Bear-side guards — symmetric mirror of the up-trend branch, which
+            # the down branch previously lacked (the less-validated side was the
+            # less-protected one). ma_dist_pct is NEGATIVE below the MA, so we
+            # gate on its absolute distance.
+            down_dist = abs(ma_dist_pct)
+            # Skip-check 1: trend hasn't separated from MA200 — no directional edge.
+            if down_dist < MIN_TREND_SEPARATION_PCT:
+                reasons.append(
+                    f"SPY only {ma_dist_pct:+.1f}% below 200MA — below "
+                    f"{MIN_TREND_SEPARATION_PCT}% separation, no edge"
+                )
+                return RegimeResult(
+                    Regime.UNKNOWN, False,
+                    "SKIP — SPY too close to 200MA, direction unclear",
+                    0.4, reasons, metrics,
+                )
+            # Skip-check 2: over-extension guard — an over-extended selloff
+            # mean-reverts (bounce risk), same negative expectancy the bull cap
+            # addresses on the upside.
+            if down_dist > EXTENDED_TREND_MAX_PCT:
+                reasons.append(
+                    f"SPY {ma_dist_pct:+.1f}% below 200MA exceeds "
+                    f"{EXTENDED_TREND_MAX_PCT:.1f}% extension cap — "
+                    f"over-extended downside, negative expectancy; wait for bounce"
+                )
+                return RegimeResult(
+                    Regime.TRENDING_DOWN_CALM, False,
+                    "SKIP — downtrend too extended (wait for bounce)",
+                    0.6, reasons, metrics,
+                )
+
             want_credit = ivr_current >= 50 and not config.PREFER_DEBIT_OVER_CREDIT
             if want_credit:
                 play = "BEAR CALL CREDIT SPREAD — IVR elevated, sell the call side"

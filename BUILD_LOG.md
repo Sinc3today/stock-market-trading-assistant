@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-06-06 (eve) — Regime playbook scorecard + 4 defect fixes
+
+**Docs:** `docs/REGIME_PLAYBOOK.md` (new), `STRATEGY_LOG.md` (new). **Branch:** `regime-defects` (merged → main).
+
+Cross-regime learning kickoff. First produced an honest per-regime **scorecard** from the 5yr local backtest (2022-2026): the calm-market iron condor is the only robust edge; directional plays are weak-to-absent. Then knocked out the 4 defects the scorecard surfaced:
+
+- **D1 — split the transition-zone condor** (VIX 18-22) into its own `CHOPPY_TRANSITION` label (behavior preserved). **The split exposed a hidden loser:** the half-size transition condor lost **−$2,950 / 5yr** while buried inside the calm bucket. Removing it shows the true calm-condor edge is **82.3% / +$18,000** (vs the masked 74% / +$15,050). Strongest follow-up candidate: *skip* the transition zone (pending WF/hypothesis check — not silently changed). Downstream updated: `spy_daily_backtest._regime_to_play`, `feature_builder`.
+- **D2 — bear-side guardrails:** mirrored the up-trend separation (1.5%) and extension (9%) caps onto the trending-down branch via `abs(ma_dist_pct)`. Live impact: skips a few marginal bear entries (no edge anyway); 5yr bear sample 29→15 trades, −$390 (noise).
+- **D3 — removed dead `config.REGIME_FILTER_ENABLED`** (read nowhere).
+- **D4 — created `STRATEGY_LOG.md`** (the reasoning doc CLAUDE.md references but that never existed).
+
+**Tests:** 1033 passed (4 new regime tests), 0 regressions. Smoke-tested imports + wiring. **Deploy:** needed — D2 changes live regime behavior (and D1 changes emitted regime labels). Next thread: ② directional walk-forward.
+
+---
+
 ## 2026-06-06 (pm) — Notification audit + exit-digest consolidation
 
 **Branch:** `notif-exit-digest` (merged → main locally).

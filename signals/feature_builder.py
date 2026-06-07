@@ -36,7 +36,10 @@ def build_features(regime: str, metrics: dict,
         "ma200_dist_pct": float(metrics.get("ma200_dist_%", 0.0)),
         "regime_trending_up":    1 if regime == "trending_up_calm" else 0,
         "regime_trending_down":  1 if regime == "trending_down_calm" else 0,
-        "regime_choppy_low_vol": 1 if regime == "choppy_low_vol" else 0,
+        # transition-zone chop is a (half-size) condor regime — keep it under
+        # the same feature it had before the label split, so meta features are
+        # unchanged for the (currently disabled) meta-labeler.
+        "regime_choppy_low_vol": 1 if regime in ("choppy_low_vol", "choppy_transition") else 0,
     }
     if include_fvg and spy_df is not None:
         f.update(fvg_features(spy_df, float(metrics.get("spy_close", 0.0))))

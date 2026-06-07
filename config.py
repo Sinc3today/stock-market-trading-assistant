@@ -7,7 +7,6 @@ v2 changes (SPY Options Focus):
   MIN_RISK_REWARD_RATIO:  2.0 → 1.5 (debit spreads have defined risk)
   VOLUME_SPIKE_MULTIPLIER: 1.5 → 1.2
   SPY_SPREAD_WIDTH:        $5 → $10 (SPY at $700 — $10 wide = better R/R)
-  REGIME_FILTER_ENABLED:   False    (keep off until alerts confirmed flowing)
 """
 
 import json
@@ -141,12 +140,6 @@ IC_RSI_HIGH = 60
 # DTE recommendations
 DTE_SWING_RECOMMENDED    = 21   # 21 DTE for swing SPY plays
 DTE_INTRADAY_RECOMMENDED = 7    # 7 DTE for intraday SPY plays
-
-# ─────────────────────────────────────────
-# REGIME FILTER
-# ─────────────────────────────────────────
-# Keep False until alert flow is confirmed working
-REGIME_FILTER_ENABLED = False
 
 # ─────────────────────────────────────────
 # TIMEFRAME SETTINGS

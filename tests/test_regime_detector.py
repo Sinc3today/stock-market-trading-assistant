@@ -298,12 +298,74 @@ def test_choppy_high_vol_skips(detector, flat_df):
 
 
 def test_choppy_transition_zone_half_size(detector, flat_df):
-    """VIX 18–22 chop → reduced condor, lower confidence."""
+    """VIX 18–22 chop → reduced condor under its OWN label CHOPPY_TRANSITION
+    (split out so its stats aren't hidden inside the calm-condor bucket).
+    Behavior preserved: still tradeable, still a reduced/half condor."""
     result = detector.classify(flat_df, vix_current=20.0, ivr_current=40)
+    assert result.regime    == Regime.CHOPPY_TRANSITION
     assert result.tradeable is True
     assert result.confidence <= 0.6
     assert "REDUCED" in result.play.upper() or "HALF" in result.play.upper()
-    print(f"\n✅ Transition zone → {result.play} (conf {result.confidence:.0%})")
+    print(f"\n✅ Transition zone → {result.regime.value}: {result.play} (conf {result.confidence:.0%})")
+
+
+def test_choppy_calm_is_not_transition(detector, flat_df):
+    """VIX < 18 chop stays CHOPPY_LOW_VOL — not relabeled to transition."""
+    result = detector.classify(flat_df, vix_current=14.0, ivr_current=30)
+    assert result.regime == Regime.CHOPPY_LOW_VOL
+
+
+# ─────────────────────────────────────────
+# BEAR-SIDE GUARDRAILS (symmetry with the up-trend guards)
+# ─────────────────────────────────────────
+
+def _make_extended_downtrend_df(bars: int = 250, drift: float = 0.9) -> pd.DataFrame:
+    """Steep downtrend that sits well BELOW the 200MA (mirror of the extended
+    uptrend fixture), ADX comfortably above the trending threshold."""
+    rng    = np.random.default_rng(42)
+    closes = 600 - np.cumsum(rng.normal(drift, 1.2, bars))
+    return pd.DataFrame({
+        "open":   closes - 0.5,
+        "high":   closes + 1.0,
+        "low":    closes - 1.0,
+        "close":  closes,
+        "volume": rng.integers(50_000_000, 100_000_000, bars),
+    })
+
+
+def test_extended_downtrend_skips(detector):
+    """Downtrend > 9% BELOW 200MA → SKIP (over-extended downside, wait for
+    bounce) — mirror of the bull over-extension cap which the bear side lacked."""
+    df     = _make_extended_downtrend_df()
+    result = detector.classify(df, vix_current=14.0, ivr_current=20)
+    assert result.metrics["ma200_dist_%"] < -9.0
+    assert result.regime    == Regime.TRENDING_DOWN_CALM
+    assert result.tradeable is False
+    assert "extended" in result.play.lower() or "bounce" in result.play.lower()
+    print(f"\n✅ Extended downtrend blocked → {result.play}")
+
+
+def test_downtrend_too_close_to_ma200_skips(detector, down_df, monkeypatch):
+    """Trending down but |ma_dist_%| < separation floor → SKIP — mirror of the
+    up-trend too-close guard the bear side lacked."""
+    from signals import regime_detector as rd
+    baseline = detector.classify(down_df, vix_current=14.0, ivr_current=20)
+    monkeypatch.setattr(rd, "MIN_TREND_SEPARATION_PCT",
+                        abs(baseline.metrics["ma200_dist_%"]) + 1.0)
+    result = detector.classify(down_df, vix_current=14.0, ivr_current=20)
+    assert result.regime    == Regime.UNKNOWN
+    assert result.tradeable is False
+    assert "200MA" in result.play
+    print(f"\n✅ Too-close-to-MA200 (down) skip fired: {result.play}")
+
+
+def test_normal_downtrend_still_trades(detector, down_df):
+    """A 1.5–9%-below-MA calm downtrend still trades bear — guards don't over-fire."""
+    result = detector.classify(down_df, vix_current=15.0, ivr_current=20)
+    assert -9.0 < result.metrics["ma200_dist_%"] < -1.5
+    assert result.regime    == Regime.TRENDING_DOWN_CALM
+    assert result.tradeable is True
+    assert "BEAR" in result.play.upper()
 
 
 # ─────────────────────────────────────────
