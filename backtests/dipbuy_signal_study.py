@@ -49,3 +49,30 @@ def pullback_triggers(close: pd.Series, ma20: pd.Series, ma200: pd.Series) -> pd
     below20    = close < ma20
     prev_above = ~(close.shift(1) < ma20.shift(1))
     return (uptrend & below20 & prev_above).fillna(False)
+
+
+# ── Forward returns + edge vs baseline ──────────────────────────────────────
+
+def forward_returns(close: pd.Series, horizon: int) -> pd.Series:
+    """Close-to-close % return `horizon` trading days ahead; NaN where unavailable."""
+    fwd = close.shift(-horizon)
+    return (fwd - close) / close * 100.0
+
+
+def edge_vs_baseline(fwd: pd.Series, trig: pd.Series) -> dict:
+    """Conditional (trigger-day) vs unconditional forward-return stats. Both
+    restricted to days where the forward return is defined (not NaN)."""
+    valid = fwd.notna()
+    base  = fwd[valid]
+    cond  = fwd[valid & trig.reindex(fwd.index, fill_value=False)]
+    n = int(len(cond))
+    cond_mean = float(cond.mean()) if n else 0.0
+    base_mean = float(base.mean()) if len(base) else 0.0
+    return {
+        "n":             n,
+        "cond_mean":     round(cond_mean, 4),
+        "cond_median":   round(float(cond.median()), 4) if n else 0.0,
+        "pct_positive":  round(float((cond > 0).mean()) * 100, 1) if n else 0.0,
+        "baseline_mean": round(base_mean, 4),
+        "edge":          round(cond_mean - base_mean, 4),
+    }

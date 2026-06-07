@@ -44,3 +44,25 @@ def test_pullback_triggers_require_uptrend_and_fresh_dip():
     ma200 = pd.Series([100, 100, 100], dtype=float)
     trig  = pullback_triggers(close, ma20, ma200)
     assert list(trig) == [False, False, True]
+
+
+# ── forward returns + edge ───────────────────────────────────
+
+def test_forward_returns_close_to_close_pct():
+    from backtests.dipbuy_signal_study import forward_returns
+    close = pd.Series([100.0, 101.0, 102.0, 104.0], dtype=float)
+    fr = forward_returns(close, horizon=2)
+    assert fr.iloc[0] == pytest.approx(2.0)
+    assert fr.iloc[1] == pytest.approx(2.970297, rel=1e-4)
+    assert pd.isna(fr.iloc[2]) and pd.isna(fr.iloc[3])
+
+
+def test_edge_vs_baseline_subtracts_unconditional_mean():
+    from backtests.dipbuy_signal_study import forward_returns, edge_vs_baseline
+    close = pd.Series([100, 101, 100, 101, 100, 101, 100, 101], dtype=float)
+    fr    = forward_returns(close, horizon=1)
+    trig  = pd.Series([False, True, False, True, False, True, False, False])
+    res   = edge_vs_baseline(fr, trig)
+    assert res["n"] == 3
+    assert "cond_mean" in res and "baseline_mean" in res and "edge" in res
+    assert res["edge"] == pytest.approx(res["cond_mean"] - res["baseline_mean"])
