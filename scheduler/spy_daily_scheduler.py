@@ -38,6 +38,7 @@ from signals.options_layer      import OptionsLayer
 from data.options_chain         import OptionsChain
 from journal.trade_recorder     import TradeRecorder
 from learning.shadow_tester     import run_shadow
+from learning.dipbuy_forward     import maybe_open_dipbuy
 
 ET = pytz.timezone("US/Eastern")
 
@@ -84,6 +85,26 @@ def _run_daily_shadow(regime_result, *, spot: float, ivr: float) -> None:
         )
     except Exception as e:
         logger.warning(f"shadow-test failed (ignored): {e}")
+
+
+def _run_daily_dipbuy(polygon_client, *, spot: float, ivr: float) -> None:
+    """Invoke the dip-buy forward paper-test, fully isolated (Standing Rule #10).
+    Fetches SPY daily history for the RSI(14) trigger and records a candidate
+    bull-debit on a fresh RSI<30 cross."""
+    try:
+        df = polygon_client.get_bars(
+            "SPY", timeframe=config.SWING_PRIMARY_TIMEFRAME, limit=80, days_back=130)
+        if df is None or len(df) < 30:
+            return
+        maybe_open_dipbuy(
+            df,
+            spot          = spot,
+            ivr           = ivr,
+            options_layer = OptionsLayer(options_chain=OptionsChain()),
+            recorder      = TradeRecorder(),
+        )
+    except Exception as e:
+        logger.warning(f"dipbuy forward-test failed (ignored): {e}")
 
 
 # ─────────────────────────────────────────
@@ -135,6 +156,9 @@ def job_spy_premarket(
         # real spy_close + ivr values computed by SPYDailyStrategy.
         _regime_result, _spot, _ivr = _regime_and_levels_from_brief(brief)
         _run_daily_shadow(_regime_result, spot=_spot, ivr=_ivr)
+
+        # ── Dip-buy forward paper-test (oversold RSI<30) ────────────
+        _run_daily_dipbuy(polygon_client, spot=_spot, ivr=_ivr)
 
         # Plan is saved inside briefer; just post to Discord here.
         if post_fn:

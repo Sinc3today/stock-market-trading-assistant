@@ -369,6 +369,16 @@ DIPBUY_MIN_OOS_YEAR_FRAC    = 0.60         # min fraction of trigger-years with 
 DIPBUY_MIN_TOTAL_TRIGGERS   = 20           # min total triggers for a verdict (else inconclusive)
 DIPBUY_IV_STRESS_MULT       = 1.25         # Phase 2: IV bump on down-tape entries
 
+# ── Dip-buy forward paper-test (2026-06-07) — LIVE, paper-only ───────────────
+# Records a 1-ct bull-debit on each fresh RSI<30 cross into the 'candidate' book
+# (excluded from headline stats) to confirm/kill the in-sample edge on unseen
+# data. Managed daily: 50%-of-max-profit or 10-trading-day hold. Kill-switch.
+DIPBUY_FORWARD_ENABLED     = os.getenv("DIPBUY_FORWARD_ENABLED", "true").lower() == "true"
+DIPBUY_FORWARD_DTE         = 21     # bull-call debit expiry (calendar days) at entry
+DIPBUY_FORWARD_TARGET_PCT  = 0.50   # close at 50% of max profit
+DIPBUY_FORWARD_MAX_HOLD_TD = 10     # ... or after 10 trading days held
+DIPBUY_FORWARD_BOOK        = "candidate"
+
 # ─────────────────────────────────────────────────────────────
 # Phase 4a — Learning Loop Hygiene
 # ─────────────────────────────────────────────────────────────

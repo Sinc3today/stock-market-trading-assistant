@@ -114,28 +114,67 @@ def job_exit_digest(play_fn=None):
 
     Reads today's DISCIPLINED closures from the journal (covering intraday,
     45DTE, and expiry exits alike) and sends ONE push with a net-P&L summary.
-    Learning-book exits stay silent — matching how opens are already filtered.
-    No closures today -> no push.
+    Also appends a clearly-labeled CANDIDATE (dip-buy forward-test) section when
+    candidate trades closed today. Learning-book exits stay silent. No closures
+    of either kind -> no push.
     """
     if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
         logger.info("exit_digest: non-trading day, skipping")
         return
     try:
-        today  = datetime.now(pytz.timezone("US/Eastern")).strftime("%Y-%m-%d")
-        closed = [
-            t for t in TradeRecorder().get_closed_trades()
-            if (t.get("exit_date") or "").startswith(today)
-            and t.get("book") == "disciplined"
-        ]
-        logger.info(f"learning.exit_digest -> {len(closed)} disciplined closes today")
-        if closed and play_fn:
-            try:
-                play_fn(title=format_exit_digest_title(closed),
-                        body=format_exit_message(closed))
-            except Exception as e:
-                logger.warning(f"exit_digest play notify failed: {e}")
+        today    = datetime.now(pytz.timezone("US/Eastern")).strftime("%Y-%m-%d")
+        closed_today = [t for t in TradeRecorder().get_closed_trades()
+                        if (t.get("exit_date") or "").startswith(today)]
+        disc = [t for t in closed_today if t.get("book") == "disciplined"]
+        cand = [t for t in closed_today if t.get("book") == "candidate"]
+        logger.info(f"learning.exit_digest -> {len(disc)} disciplined, "
+                    f"{len(cand)} candidate closes today")
+        if not (disc or cand) or not play_fn:
+            return
+        sections = []
+        if disc:
+            sections.append(format_exit_message(disc))
+        if cand:
+            sections.append("**📕 Forward-test (candidate) — not real money**\n"
+                            + format_exit_message(cand))
+        title = (format_exit_digest_title(disc) if disc
+                 else f"📕 Forward-test exits: {len(cand)} closed")
+        try:
+            play_fn(title=title, body="\n\n".join(sections))
+        except Exception as e:
+            logger.warning(f"exit_digest play notify failed: {e}")
     except Exception as e:
         logger.exception(f"learning.exit_digest failed: {e}")
+
+
+def job_dipbuy_resolver(polygon_client, vix_client=None):
+    """Daily ~16:12 ET: mark + close open dip-buy 'candidate' forward-test
+    trades (50%-of-max-profit or 10-trading-day hold). Isolated from the core
+    ExitManager; wrapped per Standing Rule #10."""
+    if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
+        logger.info("dipbuy_resolver: non-trading day, skipping")
+        return
+    try:
+        from learning.dipbuy_forward import resolve_candidates
+        spy_close = None
+        if polygon_client is not None:
+            df = polygon_client.get_bars(
+                "SPY", timeframe=config.SWING_PRIMARY_TIMEFRAME, limit=3, days_back=3)
+            if df is not None and len(df):
+                spy_close = float(df["close"].iloc[-1])
+        if spy_close is None:
+            logger.warning("dipbuy_resolver: no SPY close — skipping today")
+            return
+        vix = 16.0
+        if vix_client is not None:
+            try:
+                vix = float(vix_client.get_current())
+            except Exception:
+                pass
+        closed = resolve_candidates(TradeRecorder(), spy_close=spy_close, vix=vix)
+        logger.info(f"learning.dipbuy_resolver -> {len(closed)} candidate closes")
+    except Exception as e:
+        logger.exception(f"learning.dipbuy_resolver failed: {e}")
 
 
 def job_reflector(post_fn=None):
@@ -243,6 +282,17 @@ def register_learning_jobs(
 
     # 16:20 ET — one consolidated, disciplined-only exit digest for the day,
     # after the 16:08 (45DTE), intraday, and 16:10 (expiry) closes have run.
+    # 16:12 ET — dip-buy forward-test resolver (before the 16:20 digest picks
+    # up its closes). Isolated from the core exit manager.
+    scheduler.add_job(
+        job_dipbuy_resolver,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=12, timezone=eastern),
+        kwargs={"polygon_client": polygon_client, "vix_client": vix_client},
+        id="learning_dipbuy_resolver",
+        name="Learning: dip-buy forward-test resolver",
+        replace_existing=True,
+    )
+
     scheduler.add_job(
         job_exit_digest,
         CronTrigger(day_of_week="mon-fri", hour=16, minute=20, timezone=eastern),
