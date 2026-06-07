@@ -37,7 +37,10 @@ from learning.hypothesis_engine import HypothesisEngine
 from learning.hypothesis_runner import HypothesisRunner
 from learning.off_hours_learner import OffHoursLearner
 from learning.expiry_resolver   import ExpiryResolver, format_expiry_message
-from learning.exit_manager      import ExitManager, format_exit_message
+from learning.exit_manager      import (
+    ExitManager, format_exit_message, format_exit_digest_title,
+)
+from journal.trade_recorder     import TradeRecorder
 
 
 # ── JOB WRAPPERS ──────────────────────────────────────
@@ -87,11 +90,9 @@ def job_exit_manager(polygon_client, vix_client=None, post_fn=None,
             polygon_client=polygon_client, vix_client=vix_client,
         ).manage_open(dte_buckets=dte_buckets)
         logger.info(f"learning.exit_manager [{dte_buckets or 'all'}] -> {len(closed)} closed")
-        if closed and play_fn:
-            try:
-                play_fn(title="⚠️ Exit — target/stop hit", body=format_exit_message(closed))
-            except Exception as e:
-                logger.warning(f"exit_manager play notify failed: {e}")
+        # No per-run push: exits are consolidated into the EOD digest
+        # (job_exit_digest) so the phone gets one disciplined-only summary
+        # instead of a buzz per 5-min closure.
     except Exception as e:
         logger.exception(f"learning.exit_manager failed: {e}")
 
@@ -103,13 +104,38 @@ def job_expiry_resolver(polygon_client, post_fn=None, play_fn=None):
     try:
         closed = ExpiryResolver(polygon_client=polygon_client).resolve_expired()
         logger.info(f"learning.expiry_resolver -> {len(closed)} closed")
-        if closed and play_fn:
-            try:
-                play_fn(title="⏱️ Expiry close", body=format_expiry_message(closed))
-            except Exception as e:
-                logger.warning(f"expiry play notify failed: {e}")
+        # No per-run push: folded into the EOD digest (job_exit_digest).
     except Exception as e:
         logger.exception(f"learning.expiry_resolver failed: {e}")
+
+
+def job_exit_digest(play_fn=None):
+    """End-of-day consolidated exit notification.
+
+    Reads today's DISCIPLINED closures from the journal (covering intraday,
+    45DTE, and expiry exits alike) and sends ONE push with a net-P&L summary.
+    Learning-book exits stay silent — matching how opens are already filtered.
+    No closures today -> no push.
+    """
+    if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
+        logger.info("exit_digest: non-trading day, skipping")
+        return
+    try:
+        today  = datetime.now(pytz.timezone("US/Eastern")).strftime("%Y-%m-%d")
+        closed = [
+            t for t in TradeRecorder().get_closed_trades()
+            if (t.get("exit_date") or "").startswith(today)
+            and t.get("book") == "disciplined"
+        ]
+        logger.info(f"learning.exit_digest -> {len(closed)} disciplined closes today")
+        if closed and play_fn:
+            try:
+                play_fn(title=format_exit_digest_title(closed),
+                        body=format_exit_message(closed))
+            except Exception as e:
+                logger.warning(f"exit_digest play notify failed: {e}")
+    except Exception as e:
+        logger.exception(f"learning.exit_digest failed: {e}")
 
 
 def job_reflector(post_fn=None):
@@ -212,6 +238,17 @@ def register_learning_jobs(
         kwargs={"polygon_client": polygon_client, "post_fn": post_fn, "play_fn": play_fn},
         id="learning_expiry_resolver",
         name="Learning: expiry resolver",
+        replace_existing=True,
+    )
+
+    # 16:20 ET — one consolidated, disciplined-only exit digest for the day,
+    # after the 16:08 (45DTE), intraday, and 16:10 (expiry) closes have run.
+    scheduler.add_job(
+        job_exit_digest,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=20, timezone=eastern),
+        kwargs={"play_fn": play_fn},
+        id="learning_exit_digest",
+        name="Learning: exit digest (EOD, disciplined-only)",
         replace_existing=True,
     )
 

@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-06-06 (pm) — Notification audit + exit-digest consolidation
+
+**Branch:** `notif-exit-digest` (merged → main locally).
+
+User felt over-notified and that alerts didn't match the book. Audited actual Pushover sends (`grep "Pushover sent"` across the rotated app logs) vs. journal closures. Findings: post-curation only `play()` reaches the phone; exit pushes *did* match closures 1:1, but three real defects made it feel like noise — (1) exits pushed for **every book** incl. the learning sandbox (~38% of weekly exit pushes), while opens were already disciplined-only; (2) the title hardcoded **"target/stop hit"** even on breakevens and the −$136 loss; (3) **no batching** — 06-05 sent 5 separate exit buzzes across the day. (Pre-06-02 scanner-alert noise was already gone after notification-curation.)
+
+**Fix (all three user-selected):** `job_exit_manager`/`job_expiry_resolver` now close trades **silently**; a new **`job_exit_digest` at 16:20 ET** reads today's **disciplined** closures from the journal (unifying intraday + 45DTE + expiry exits) and sends **one** push titled `📕 Today's exits: N closed (±$net)` (`format_exit_digest_title`). Opens stay real-time + disciplined-only. The digest reads by `exit_date.startswith(today)` so it's restart-safe.
+
+**Tests:** 1029 passed (4 new: digest disciplined-only / excludes prior days / silent when nothing / title net-P&L; rewrote the 2 play-routing tests to assert silence). Smoke-tested digest output. **Deploy:** pending (this changes a live notification path — restart `trader.service` to activate).
+
+---
+
 ## 2026-06-06 (pm) — Step 4 cleanup: dead Discord transport, deprecated params, I:VIX gate
 
 **Branch:** `step4-cleanup` (merged → main locally). The final item of the 4-step plan — housekeeping, no behavior change to the running bot.
