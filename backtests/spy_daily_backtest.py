@@ -191,6 +191,7 @@ class SPYBacktest:
         if r.regime == Regime.TRENDING_DOWN_CALM: return 'bear_credit' if want_credit else 'bear_debit'
         if r.regime == Regime.TRENDING_HIGH_VOL:  return 'bull_debit'  if dist >= 0   else 'bear_debit'
         if r.regime == Regime.CHOPPY_LOW_VOL:     return 'iron_condor'
+        if r.regime == Regime.CHOPPY_TRANSITION:  return 'iron_condor'   # half-size condor, same play type
         return 'skip'
 
     def _get_spy_slice(self, idx):

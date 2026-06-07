@@ -10,18 +10,19 @@
 > been validated elsewhere; the directional numbers should be treated as a weak prior
 > pending the real-priced walk-forward study (thread ②).
 
-## Scorecard — the 6 regimes
+## Scorecard — the 7 regimes (post-2026-06-06 label split + bear guards)
 
 | Regime | Trigger | Action | Days | Win% | P&L (1-ct) | Edge basis |
 |---|---|---|---:|---:|---:|---|
-| **Choppy Low Vol** (calm) | not trending (ADX<32) & VIX<18 | **iron condor** | 385 | **74.0%** | **+$15,050** | ✅ **Validated** — the core edge; 69% of all P&L. Corroborated by the 5yr 74.1% condor win rate. |
-| Trending Up Calm | ADX≥32, >200MA, VIX<22 | bull debit (52% skip) | 366 | 51.1% | +$6,720 | ⚠️ **Weak/soft.** ~Coin-flip win rate; rests on the synthetic payoff model. Guardrails (1.5% sep floor, 9% extension cap) are backtested; the play itself isn't real-priced. |
-| Trending Down Calm | ADX≥32, <200MA, VIX<22 | bear debit | 29 | 51.7% | **+$130** | ❌ **Not validated.** 29 trades in 5yr (~$4.5/trade) = statistically meaningless. The "downtrend/dip" play shows **no meaningful edge**. Also missing the guardrails its up-trend mirror has. |
+| **Choppy Low Vol** (calm) | not trending (ADX<32) & VIX<18 | **iron condor** | 265 | **82.3%** | **+$18,000** | ✅ **Validated, and STRONGER than thought** — once the transition zone is split out, the true calm edge is 82.3% / +$18,000 (was masked at 74% / +$15,050 by the blended bucket). |
+| **Choppy Transition** | not trending & VIX 18–22 | half-size condor | 120 | 55.8% | **−$2,950** | ❌ **Hidden LOSER, now exposed.** Was buried inside Choppy Low Vol. Confidence hardcoded 0.50, no backtest. **Strong candidate to SKIP** rather than trade half-size (see Findings). |
+| Trending Up Calm | ADX≥32, >200MA, VIX<22 | bull debit (52% skip) | 366 | 51.1% | +$6,720 | ⚠️ **Weak/soft.** ~Coin-flip win rate; rests on the synthetic payoff model. Guardrails are backtested; the play itself isn't real-priced. |
+| Trending Down Calm | ADX≥32, <200MA, VIX<22 | bear debit | 15 | 40.0% | **−$390** | ❌ **No edge.** With the new symmetric guardrails the sample is 15 trades (extremes now skipped); still negative. The "downtrend/dip" play has no validated edge. |
 | Choppy High Vol | not trending & VIX≥22 | **skip** | 125 | — | $0 | ✅ Skip validated ("condor poison" in vol expansion). |
-| Trending High Vol | ADX≥32 & VIX≥22 | **skip** | 115 | — | $0 | ✅ Skip validated by a *prior* trade-it experiment (19% win, −$4,600 / 5yr). The $0 here just means it's currently skipped. |
-| Unknown | <200 bars, or trending-up but <1.5% from MA | **skip** | 12 | — | $0 | Safety fallback. |
+| Trending High Vol | ADX≥32 & VIX≥22 | **skip** | 115 | — | $0 | ✅ Skip validated by a *prior* trade-it experiment (19% win, −$4,600 / 5yr). $0 just means it's currently skipped. |
+| Unknown | <200 bars, or trend <1.5% from MA (either side) | **skip** | 26 | — | $0 | Safety fallback (now includes too-close-to-MA *down*-trends too). |
 
-*(A 7th hidden branch: the **half-size "transition-zone" condor** at VIX 18–22 is emitted under the `Choppy Low Vol` label with confidence hardcoded to 0.50 — see Defects. Its stats are buried inside the condor bucket and can't be read separately.)*
+> **Headline finding from the split:** the transition-zone condor (VIX 18–22) lost **−$2,950 over 5 years** while hiding inside the calm-condor bucket. Removing it reveals the true calm-condor edge is **82.3% / +$18,000** — materially better than the previously-reported blend. Skipping the transition zone is the single highest-value strategy change this scorecard suggests; it should go through a walk-forward/hypothesis check, not a silent edit.
 
 ## By-year reality check
 
@@ -37,16 +38,17 @@
 
 ## What this says
 
-1. **The iron condor in calm markets is the only robust edge.** 74% win, +$15,050 (69% of total), consistent across years. Everything else is marginal or unproven.
-2. **Directional plays are weak-to-absent under the model.** Bull-debit is a ~51% coin-flip; bear-debit is statistically nothing (29 trades, +$130). The bot has **no validated dip/downtrend edge today** — confirming why thread ② (real-priced directional walk-forward) is the keystone, not a nice-to-have.
-3. **The skips are doing their job.** High-vol and unknown regimes correctly produce $0, not losses.
+1. **The iron condor in *calm* markets is the only robust edge — and it's stronger than we thought.** Splitting out the transition zone reveals 82.3% win, +$18,000 (the real core driver). Everything else is marginal, unproven, or negative.
+2. **The transition-zone condor (VIX 18–22) is a net loser** (−$2,950 / 5yr) that was inflating-then-deflating the headline. Highest-value follow-up: skip it (via WF/hypothesis check).
+3. **Directional plays are weak-to-absent under the model.** Bull-debit ~51% coin-flip; bear-debit is now −$390 on 15 trades after the symmetric guards. The bot has **no validated dip/downtrend edge today** — confirming why thread ② (real-priced directional walk-forward) is the keystone.
+4. **The skips are doing their job.** High-vol and unknown regimes correctly produce $0, not losses.
 
-## Defects surfaced (worth fixing regardless)
+## Defects — STATUS: all fixed 2026-06-06 (branch `regime-defects`)
 
-- **Unvalidated half-size condor (VIX 18–22):** `tradeable=True`, confidence hardcoded 0.50, "or sit out" hedge in its own reasons, no backtest. Hidden inside the `Choppy Low Vol` bucket so it's invisible to the per-regime report. → *Split it into its own regime label so it's measurable.*
-- **Bear-side guardrail asymmetry:** `Trending Down Calm` skips the 1.5% separation floor and 9% extension cap that `Trending Up Calm` has (those live only in the `above_ma` branch). The less-validated side is *less* protected.
-- **Dead flag:** `config.REGIME_FILTER_ENABLED` is defined but read **nowhere** — the detector always runs. Remove or wire it.
-- **Missing doc:** `CLAUDE.md` references `STRATEGY_LOG.md`, which does not exist in the repo.
+- ✅ **Unvalidated half-size condor (VIX 18–22):** split into its own `CHOPPY_TRANSITION` label (behavior preserved). Immediately exposed it as a −$2,950 loser; scorecard above updated.
+- ✅ **Bear-side guardrail asymmetry:** the 1.5% separation floor and 9% extension cap now mirror onto the trending-down branch (using `abs(ma_dist_pct)`).
+- ✅ **Dead flag:** `config.REGIME_FILTER_ENABLED` removed (was read nowhere).
+- ✅ **Missing doc:** `STRATEGY_LOG.md` created.
 
 ## Implications for the next threads
 
