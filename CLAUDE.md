@@ -91,11 +91,22 @@ learning/                   Self-learning loop (paper exec -> reflect -> hypothe
 
 ## Tuned Thresholds (from backtest — do not change without re-running backtest)
 
+Live values below verified against `signals/regime_detector.py` on 2026-06-06.
+(Note: these live in `regime_detector.py`, not `config.py`.)
+
 ```python
-ADX_TREND_MIN    = 25.0   # Was 20 — raised to filter weak trends
-VIX_CALM_MAX     = 17.0   # Was 18 — tightened for condor quality
+ADX_TREND_MIN    = 32.0   # 20 → 25 → 30 → 32. Raised to filter weak trends.
+VIX_CALM_MAX     = 18.0   # 17 → 18 (2026-05-20). Promotes more days to "calm".
+EXTENDED_TREND_MAX_PCT = 9.0   # Skip bull plays when SPY > 9% above 200-MA
+                               # (extension gate; under shadow-test measurement)
 TRENDING_HIGH_VOL tradeable = False   # Confirmed no edge (19% win rate)
 ```
+
+**Timeframe routing (live):** all **0DTE** strategies are gated to the
+**learning sandbox** via `config.INTRADAY_FEASIBILITY` (prohibitive feasibility
+floor) — 0DTE no longer trades in the disciplined/real-money-proxy book (no edge
+as designed). **1-3DTE** (iron condors + debit spreads) and the **45DTE** daily
+SPY play trade in the **disciplined** book.
 
 ## Standing Rules
 
@@ -131,3 +142,16 @@ See TRADING_ASSISTANT.md for current project state and decisions.
 2. Read TRADING_ASSISTANT.md — Active Decisions section
 3. Run `pytest tests/ -v -m "not integration" --tb=short` to confirm baseline
 4. Check git status — never build on uncommitted changes
+
+## Parking Lot
+
+<!-- vault-router: auto-promote target -->
+
+### From `what-demo-tutorial-should-we-do-together-data-apis` — [VERIFIED] · auto-promoted 2026-06-02
+**Insight:** The vault note reviews three financial APIs (Robin Stocks, Alpaca Markets, Public API) directly applicable to the trading bot's data ingestion layer; Alpaca is already used for intraday data, and Robin Stocks or Public API could provide alternative stock/options feeds for the scorer and gates modules.
+**Source:** [Nexus note](Nexus/2026/05/2026-05-12-what-demo-tutorial-should-we-do-together-data-apis.md) · creator: mar_antaya
+**Confidence:** 0.9
+<!-- vault-router: hash=ca7480e9 source=what-demo-tutorial-should-we-do-together-data-apis -->
+
+
+(vault-router will insert auto-promoted ideas here. Manual additions welcome above or below.)
