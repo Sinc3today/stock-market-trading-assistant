@@ -66,6 +66,20 @@ with **fewer knobs**, and is **shelved/inert if it shows no OOS edge**. We activ
 - Local `spy_history.csv` covers ~2021→2026: includes the **2022 bear**, but **not** the
   2020 COVID crash. Any drawdown study is thin on major-bear samples until history is extended.
 
+## Promotion candidates (PROMISING, not yet validated, NOT live)
+
+- **Oversold (RSI<30) dip-buy via bull call debit spread** — 2026-06-07, the first signal
+  the study program hasn't killed. Phase 1 in-sample event-study: +1.3–1.5% forward bounce
+  vs ~0.2–0.5% baseline, positive 11–12/13 yrs. Phase 2 priced backtest + IV-stress:
+  +$135/trade, 68% win, survives IV-stress (+$128/trade), positive 10/13 yrs; 2020
+  falling-knife capped at −$62/trade by the debit-spread max loss. **Status: PROMISING, not
+  validated** — this is in-sample (NOT a walk-forward; the spec's `walk_forward.py` step was
+  not built). Mitigated by the rule being parameter-free (nothing to overfit), but caveats:
+  n=34, recency-loaded (half2 ≈ 4× half1), BS flat-IV modeled pricing. **Next before real
+  money:** forward paper-trade (shadow/learning book) to confirm on unseen data — that is
+  the decisive test — optionally a true expanding-window walk-forward first; then a
+  live-wiring spec. See `docs/DIPBUY_STUDY.md`, KB `5c8665d1d7`.
+
 ## Open threads (next strategy R&D)
 
 1. **Directional walk-forward (the keystone):** does a *real-priced* dip-buy / trend-follow
