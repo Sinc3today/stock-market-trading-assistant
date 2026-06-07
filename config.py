@@ -22,10 +22,12 @@ load_dotenv()
 POLYGON_API_KEY    = os.getenv("POLYGON_API_KEY")
 ALPACA_API_KEY     = os.getenv("ALPACA_API_KEY")
 ALPACA_SECRET_KEY  = os.getenv("ALPACA_SECRET_KEY")
+
+# Polygon "I:VIX" index data is NOT_AUTHORIZED on the current Starter plan
+# (verified 2026-06-06), so VIXClient skips it and uses the free CBOE CSV.
+# Flip to True via .env if the plan ever authorizes index aggregates.
+VIX_USE_POLYGON    = os.getenv("VIX_USE_POLYGON", "false").lower() == "true"
 ALPACA_BASE_URL    = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
-DISCORD_BOT_TOKEN  = os.getenv("DISCORD_BOT_TOKEN")
-DISCORD_CHANNEL_ID_STANDARD        = int(os.getenv("DISCORD_CHANNEL_ID_STANDARD", 0))
-DISCORD_CHANNEL_ID_HIGH_CONVICTION = int(os.getenv("DISCORD_CHANNEL_ID_HIGH_CONVICTION", 0))
 
 # ─────────────────────────────────────────
 # PUSHOVER  (primary alert channel)

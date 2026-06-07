@@ -3,11 +3,13 @@ data/vix_client.py — VIX Data Client
 
 Fetches current and historical VIX values.
 
-Primary source:  Polygon.io  → ticker "I:VIX" (requires Stocks Starter+)
-Fallback source: CBOE CSV    → free, updated daily after market close
+Primary source:  CBOE CSV    → free, updated daily after market close
+Optional source: Polygon.io  → ticker "I:VIX", only when config.VIX_USE_POLYGON
+                                is True (I:VIX is NOT_AUTHORIZED on the current
+                                Starter plan, so it is skipped by default).
 
-The fallback matters because:
-    - Free Polygon tier may not include index data
+CBOE is primary because:
+    - Polygon "I:VIX" index data is not in the Starter plan (403/NOT_AUTHORIZED)
     - We need 52-week high/low to compute IV Rank (used by IVRClient)
 
 Usage:
@@ -134,6 +136,8 @@ class VIXClient:
 
     def _fetch_polygon_latest(self) -> Optional[float]:
         """Fetch latest VIX close from Polygon I:VIX."""
+        if not config.VIX_USE_POLYGON:
+            return None   # I:VIX not authorized on Starter plan — go straight to CBOE
         if not self.polygon_key:
             return None
         try:
@@ -160,6 +164,8 @@ class VIXClient:
 
     def _fetch_polygon_history(self, days: int) -> Optional[pd.DataFrame]:
         """Fetch VIX daily history from Polygon."""
+        if not config.VIX_USE_POLYGON:
+            return None   # I:VIX not authorized on Starter plan — go straight to CBOE
         if not self.polygon_key:
             return None
         try:

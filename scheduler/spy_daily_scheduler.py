@@ -10,10 +10,10 @@ Jobs:
 
 Integration in main.py (see bottom of this file for exact lines):
     from scheduler.spy_daily_scheduler import register_spy_jobs
-    register_spy_jobs(scheduler, polygon_client, discord_channel_id)
+    register_spy_jobs(scheduler, polygon_client, ..., post_fn=notifier.message)
 
-Posting uses post_message_sync() — a thin helper added to discord_bot.py
-that posts a plain string to a channel without requiring an alert dict.
+Posting uses the injected `post_fn(message: str)` — main.py wires this to
+notifier.message (Pushover). It takes a plain string, not an alert dict.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def job_spy_premarket(
     polygon_client,
     vix_client,
     ivr_client,
-    post_fn,              # post_message_sync(message: str) — see discord_bot.py
+    post_fn,              # post_fn(message: str) — main.py wires notifier.message
     event_calendar=None,
 ):
     """
@@ -222,7 +222,7 @@ def register_spy_jobs(
     polygon_client,
     vix_client,
     ivr_client,
-    post_fn,             # post_message_sync from discord_bot.py
+    post_fn,             # post_fn(message: str) — main.py wires notifier.message
     event_calendar=None,
 ):
     """
@@ -233,11 +233,12 @@ def register_spy_jobs(
     ─────────────────────────
         from data.vix_client   import VIXClient
         from data.ivr_client   import IVRClient
-        from alerts.discord_bot import post_message_sync
+        from alerts.notifier   import Notifier
         from scheduler.spy_daily_scheduler import register_spy_jobs
 
         vix_client = VIXClient()
         ivr_client = IVRClient()
+        notifier   = Notifier(pushover)
 
         scheduler = start_scheduler()   # already in main.py
 
@@ -246,7 +247,7 @@ def register_spy_jobs(
             polygon_client = PolygonClient(),
             vix_client     = vix_client,
             ivr_client     = ivr_client,
-            post_fn        = post_message_sync,
+            post_fn        = notifier.message,
             event_calendar = [],   # populate with FOMC/CPI dates
         )
     ─────────────────────────
