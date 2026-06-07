@@ -76,3 +76,47 @@ def edge_vs_baseline(fwd: pd.Series, trig: pd.Series) -> dict:
         "baseline_mean": round(base_mean, 4),
         "edge":          round(cond_mean - base_mean, 4),
     }
+
+
+# ── Per-year consistency + arm verdict ──────────────────────────────────────
+
+def per_year_edges(fwd: pd.Series, trig: pd.Series, min_triggers: int) -> dict:
+    """Edge (cond−baseline) per calendar year. Baseline is that year's
+    unconditional mean. Years with < min_triggers are still returned but
+    flagged via 'n' so the verdict can exclude them."""
+    valid  = fwd.notna()
+    fwd_v  = fwd[valid]
+    trig_v = trig.reindex(fwd.index, fill_value=False)[valid]
+    out: dict[int, dict] = {}
+    for year, mask in fwd_v.groupby(fwd_v.index.year).groups.items():
+        yfwd  = fwd_v.loc[mask]
+        ytrig = trig_v.loc[mask]
+        cond  = yfwd[ytrig]
+        base_mean = float(yfwd.mean()) if len(yfwd) else 0.0
+        n = int(len(cond))
+        out[int(year)] = {
+            "n":    n,
+            "edge": round((float(cond.mean()) - base_mean), 4) if n else 0.0,
+        }
+    return out
+
+
+def arm_verdict(pooled_edge: float, pooled_cond_mean: float, per_year: dict) -> dict:
+    """An arm SURVIVES iff pooled cond mean > 0 AND pooled edge >= the floor AND
+    positive-edge in >= the required fraction of qualifying years (>= 3 of them)."""
+    qualifying = {y: d for y, d in per_year.items()
+                  if d["n"] >= config.DIPBUY_MIN_TRIGGERS_PER_WINDOW}
+    pos  = sum(1 for d in qualifying.values() if d["edge"] > 0)
+    frac = (pos / len(qualifying)) if qualifying else 0.0
+    survives = bool(
+        pooled_cond_mean > 0
+        and pooled_edge >= config.DIPBUY_MIN_EDGE_PCT
+        and frac >= config.DIPBUY_MIN_OOS_YEAR_FRAC
+        and len(qualifying) >= 3
+    )
+    return {
+        "survives":         survives,
+        "pooled_edge":      round(pooled_edge, 4),
+        "pos_year_frac":    round(frac, 3),
+        "qualifying_years": len(qualifying),
+    }

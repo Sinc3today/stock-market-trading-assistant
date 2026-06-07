@@ -66,3 +66,34 @@ def test_edge_vs_baseline_subtracts_unconditional_mean():
     assert res["n"] == 3
     assert "cond_mean" in res and "baseline_mean" in res and "edge" in res
     assert res["edge"] == pytest.approx(res["cond_mean"] - res["baseline_mean"])
+
+
+# ── per-year consistency + verdict ───────────────────────────
+
+def test_per_year_edges_groups_by_calendar_year():
+    from backtests.dipbuy_signal_study import per_year_edges
+    # baseline is ALL days, so triggers must be a SUBSET to show a real edge.
+    # 2010: trigger fwd=3 vs year-baseline mean([3,1])=2 → edge +1.
+    # 2011: trigger fwd=-2 vs year-baseline mean([-2,0])=-1 → edge -1.
+    idx  = pd.to_datetime(["2010-01-04", "2010-06-01", "2011-01-04", "2011-06-01"])
+    fwd  = pd.Series([3.0, 1.0, -2.0, 0.0], index=idx)
+    trig = pd.Series([True, False, True, False], index=idx)
+    pye  = per_year_edges(fwd, trig, min_triggers=1)
+    assert pye[2010]["edge"] > 0 and pye[2011]["edge"] < 0
+
+
+def test_arm_verdict_survives_on_consistent_positive_edge():
+    from backtests.dipbuy_signal_study import arm_verdict
+    pye = {y: {"n": 10, "edge": e} for y, e in
+           zip(range(2010, 2015), [0.5, 0.4, 0.6, -0.1, 0.5])}
+    v = arm_verdict(pooled_edge=0.5, pooled_cond_mean=0.6, per_year=pye)
+    assert v["survives"] is True
+    assert v["pos_year_frac"] == pytest.approx(0.8)
+
+
+def test_arm_verdict_fails_when_inconsistent():
+    from backtests.dipbuy_signal_study import arm_verdict
+    pye = {y: {"n": 10, "edge": e} for y, e in
+           zip(range(2010, 2015), [3.0, -0.5, -0.6, -0.4, 3.0])}
+    v = arm_verdict(pooled_edge=0.9, pooled_cond_mean=1.0, per_year=pye)
+    assert v["survives"] is False
