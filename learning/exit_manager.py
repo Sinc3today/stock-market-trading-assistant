@@ -194,6 +194,18 @@ def bs_price(opt_type: str, spot: float, strike: float, t_years: float,
     return strike * _norm_cdf(-d2) - spot * _norm_cdf(-d1)
 
 
+def format_exit_digest_title(closed: list[dict]) -> str:
+    """Summary title for the end-of-day exit digest: count + net P&L.
+
+    Replaces the old, misleading "Exit — target/stop hit" (which fired even
+    for breakevens and losses). e.g. "📕 Today's exits: 3 closed (+$69)".
+    """
+    n    = len(closed)
+    net  = sum(c.get("pnl_dollars") or 0 for c in closed)
+    sign = "+" if net >= 0 else "-"
+    return f"📕 Today's exits: {n} closed ({sign}${abs(net):,.0f})"
+
+
 def format_exit_message(closed: list[dict]) -> str:
     """One Pushover/Discord line per mid-life exit, plus a header."""
     if not closed:
