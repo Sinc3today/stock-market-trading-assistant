@@ -226,6 +226,25 @@ def test_shadow_closed_win_excluded_from_summary_stats(recorder):
     print(f"\n✅ Shadow closed win correctly excluded from summary stats")
 
 
+def test_candidate_closed_win_excluded_from_summary_stats(recorder):
+    """A closed book='candidate' trade (forward paper-test) MUST NOT affect
+    get_summary_stats() — same headline-exclusion rule as shadow."""
+    t_real = recorder.log_entry("SPY", 2.40, 1, strategy="iron_condor",
+                                 book="disciplined")
+    recorder.log_exit(t_real, 0.60)   # win: $180
+    baseline = recorder.get_summary_stats()
+
+    t_cand = recorder.log_entry("SPY", 4.00, 1, strategy="bull_debit",
+                                book="candidate", dte_bucket="dipbuy")
+    recorder.log_exit(t_cand, 7.00)   # debit win: $300
+    after = recorder.get_summary_stats()
+
+    assert after["closed"]    == baseline["closed"]
+    assert after["wins"]      == baseline["wins"]
+    assert after["total_pnl"] == baseline["total_pnl"]
+    assert after["win_rate"]  == baseline["win_rate"]
+
+
 def test_shadow_open_trade_excluded_from_summary_open_count(recorder):
     """
     An open book='shadow' trade MUST NOT inflate the 'open' count in

@@ -379,16 +379,18 @@ class TradeRecorder:
     def get_summary_stats(self) -> dict:
         """Aggregate win rate, P&L, and breakdown across all closed trades.
 
-        Shadow-book trades (book='shadow') are excluded from ALL aggregations
-        here — they are counterfactual positions the user never actually traded
-        and must not inflate or deflate headline win-rate / total P&L.
-        (Key Decision 2: shadow excluded from disciplined/learning stats.)
+        Shadow-book ('shadow') AND candidate-book ('candidate', the dip-buy
+        forward paper-test) trades are excluded from ALL aggregations here —
+        they are counterfactual / research positions the user never actually
+        traded and must not inflate or deflate headline win-rate / total P&L.
+        (Key Decision 2: excluded from disciplined/learning stats.)
 
-        Note: get_all_trades() is intentionally NOT filtered — the exit-manager
-        and expiry-resolver lifecycle still needs to see and manage shadow trades.
+        Note: get_all_trades() is intentionally NOT filtered — the exit-manager,
+        expiry-resolver, and dip-buy resolver lifecycles still need to see and
+        manage shadow/candidate trades.
         """
         all_trades  = self._load()
-        disciplined = [t for t in all_trades if t.get("book") != "shadow"]
+        disciplined = [t for t in all_trades if t.get("book") not in ("shadow", "candidate")]
         closed      = [t for t in disciplined if t.get("outcome") not in ("open", "void")]
         open_t      = [t for t in disciplined if t.get("outcome") == "open"]
 
