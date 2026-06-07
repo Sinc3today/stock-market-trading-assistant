@@ -13,7 +13,7 @@ def test_config_has_dipbuy_thresholds():
     import config
     assert config.DIPBUY_MIN_EDGE_PCT == 0.25
     assert config.DIPBUY_MIN_OOS_YEAR_FRAC == 0.60
-    assert config.DIPBUY_MIN_TRIGGERS_PER_WINDOW == 5
+    assert config.DIPBUY_MIN_TOTAL_TRIGGERS == 20
     assert config.DIPBUY_IV_STRESS_MULT == 1.25
     assert config.DIPBUY_FWD_HORIZONS == (3, 5, 10)
 
@@ -78,24 +78,44 @@ def test_per_year_edges_groups_by_calendar_year():
     idx  = pd.to_datetime(["2010-01-04", "2010-06-01", "2011-01-04", "2011-06-01"])
     fwd  = pd.Series([3.0, 1.0, -2.0, 0.0], index=idx)
     trig = pd.Series([True, False, True, False], index=idx)
-    pye  = per_year_edges(fwd, trig, min_triggers=1)
+    pye  = per_year_edges(fwd, trig)
     assert pye[2010]["edge"] > 0 and pye[2011]["edge"] < 0
 
 
 def test_arm_verdict_survives_on_consistent_positive_edge():
     from backtests.dipbuy_signal_study import arm_verdict
-    pye = {y: {"n": 10, "edge": e} for y, e in
-           zip(range(2010, 2015), [0.5, 0.4, 0.6, -0.1, 0.5])}
-    v = arm_verdict(pooled_edge=0.5, pooled_cond_mean=0.6, per_year=pye)
+    pye = {y: {"n": 4, "edge": e} for y, e in
+           zip(range(2010, 2015), [0.5, 0.4, 0.6, -0.1, 0.5])}  # 4/5 years positive
+    v = arm_verdict(pooled_edge=0.5, pooled_cond_mean=0.6, per_year=pye,
+                    total_n=30, half_means=(0.5, 0.5))
     assert v["survives"] is True
     assert v["pos_year_frac"] == pytest.approx(0.8)
 
 
 def test_arm_verdict_fails_when_inconsistent():
     from backtests.dipbuy_signal_study import arm_verdict
-    pye = {y: {"n": 10, "edge": e} for y, e in
-           zip(range(2010, 2015), [3.0, -0.5, -0.6, -0.4, 3.0])}
-    v = arm_verdict(pooled_edge=0.9, pooled_cond_mean=1.0, per_year=pye)
+    pye = {y: {"n": 4, "edge": e} for y, e in
+           zip(range(2010, 2015), [3.0, -0.5, -0.6, -0.4, 3.0])}  # net+ but 2/5 years
+    v = arm_verdict(pooled_edge=0.9, pooled_cond_mean=1.0, per_year=pye,
+                    total_n=30, half_means=(1.0, 1.0))
+    assert v["survives"] is False
+
+
+def test_arm_verdict_fails_when_one_half_negative():
+    """Consistent years + big pooled edge but a negative chronological half
+    → one-era fluke → must NOT survive."""
+    from backtests.dipbuy_signal_study import arm_verdict
+    pye = {y: {"n": 4, "edge": 0.5} for y in range(2010, 2015)}  # all years positive
+    v = arm_verdict(pooled_edge=0.8, pooled_cond_mean=0.9, per_year=pye,
+                    total_n=30, half_means=(1.6, -0.2))  # second half negative
+    assert v["survives"] is False
+
+
+def test_arm_verdict_inconclusive_when_too_few_total_triggers():
+    from backtests.dipbuy_signal_study import arm_verdict
+    pye = {y: {"n": 2, "edge": 0.5} for y in range(2010, 2015)}
+    v = arm_verdict(pooled_edge=0.8, pooled_cond_mean=0.9, per_year=pye,
+                    total_n=10, half_means=(0.8, 0.8))  # only 10 < 20
     assert v["survives"] is False
 
 

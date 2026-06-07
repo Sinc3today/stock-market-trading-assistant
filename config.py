@@ -358,11 +358,16 @@ LOG_LEVEL   = os.getenv("LOG_LEVEL", "INFO")
 
 # ── Dip-buy directional study (2026-06-07) ──────────────────────────────────
 # Research thresholds for backtests/dipbuy_signal_study.py. Not live-trading.
-DIPBUY_FWD_HORIZONS            = (3, 5, 10)   # forward trading-day return horizons
-DIPBUY_MIN_EDGE_PCT            = 0.25         # conditional−baseline mean fwd return, %
-DIPBUY_MIN_OOS_YEAR_FRAC       = 0.60         # min fraction of years with positive edge
-DIPBUY_MIN_TRIGGERS_PER_WINDOW = 5            # a year needs >= this many triggers to count
-DIPBUY_IV_STRESS_MULT          = 1.25         # Phase 2: IV bump on down-tape entries
+# Verdict is rare-signal-aware (recalibrated 2026-06-07): the original
+# per-year ">=5 triggers" gate spuriously failed a real but rare signal
+# (RSI<30 fires ~2x/yr). Consistency now counts any year with >=1 trigger,
+# backed by a total-sample floor AND a chronological half-split robustness
+# check (both halves must be positive) so rarity can't hide a one-era fluke.
+DIPBUY_FWD_HORIZONS         = (3, 5, 10)   # forward trading-day return horizons
+DIPBUY_MIN_EDGE_PCT         = 0.25         # conditional−baseline mean fwd return, %
+DIPBUY_MIN_OOS_YEAR_FRAC    = 0.60         # min fraction of trigger-years with positive edge
+DIPBUY_MIN_TOTAL_TRIGGERS   = 20           # min total triggers for a verdict (else inconclusive)
+DIPBUY_IV_STRESS_MULT       = 1.25         # Phase 2: IV bump on down-tape entries
 
 # ─────────────────────────────────────────────────────────────
 # Phase 4a — Learning Loop Hygiene

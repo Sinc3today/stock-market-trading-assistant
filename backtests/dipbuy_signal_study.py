@@ -80,10 +80,10 @@ def edge_vs_baseline(fwd: pd.Series, trig: pd.Series) -> dict:
 
 # ── Per-year consistency + arm verdict ──────────────────────────────────────
 
-def per_year_edges(fwd: pd.Series, trig: pd.Series, min_triggers: int) -> dict:
+def per_year_edges(fwd: pd.Series, trig: pd.Series) -> dict:
     """Edge (cond−baseline) per calendar year. Baseline is that year's
-    unconditional mean. Years with < min_triggers are still returned but
-    flagged via 'n' so the verdict can exclude them."""
+    unconditional mean. Returns {year: {n, edge}} for every year that has data;
+    `n` is the trigger count so the verdict can weight by trigger-years."""
     valid  = fwd.notna()
     fwd_v  = fwd[valid]
     trig_v = trig.reindex(fwd.index, fill_value=False)[valid]
@@ -101,24 +101,38 @@ def per_year_edges(fwd: pd.Series, trig: pd.Series, min_triggers: int) -> dict:
     return out
 
 
-def arm_verdict(pooled_edge: float, pooled_cond_mean: float, per_year: dict) -> dict:
-    """An arm SURVIVES iff pooled cond mean > 0 AND pooled edge >= the floor AND
-    positive-edge in >= the required fraction of qualifying years (>= 3 of them)."""
-    qualifying = {y: d for y, d in per_year.items()
-                  if d["n"] >= config.DIPBUY_MIN_TRIGGERS_PER_WINDOW}
-    pos  = sum(1 for d in qualifying.values() if d["edge"] > 0)
-    frac = (pos / len(qualifying)) if qualifying else 0.0
+def arm_verdict(pooled_edge: float, pooled_cond_mean: float, per_year: dict,
+                total_n: int, half_means: tuple[float, float]) -> dict:
+    """Rare-signal-aware verdict. An arm SURVIVES iff ALL hold:
+      - total triggers >= DIPBUY_MIN_TOTAL_TRIGGERS (else under-powered/inconclusive)
+      - pooled conditional mean forward return > 0
+      - pooled edge vs baseline >= DIPBUY_MIN_EDGE_PCT
+      - positive edge in >= DIPBUY_MIN_OOS_YEAR_FRAC of TRIGGER-years (n>=1)
+      - BOTH chronological halves of the conditional series are positive
+        (a one-era fluke fails even if the pooled number looks great).
+
+    Trigger-years (n>=1) replace the original per-year ">=5 triggers" gate,
+    which spuriously failed rare-but-real signals; the half-split + total-N
+    floor guard against rarity hiding a fluke."""
+    trigger_years = {y: d for y, d in per_year.items() if d["n"] >= 1}
+    pos  = sum(1 for d in trigger_years.values() if d["edge"] > 0)
+    frac = (pos / len(trigger_years)) if trigger_years else 0.0
+    half_ok = min(half_means) > 0
     survives = bool(
-        pooled_cond_mean > 0
+        total_n >= config.DIPBUY_MIN_TOTAL_TRIGGERS
+        and pooled_cond_mean > 0
         and pooled_edge >= config.DIPBUY_MIN_EDGE_PCT
         and frac >= config.DIPBUY_MIN_OOS_YEAR_FRAC
-        and len(qualifying) >= 3
+        and half_ok
     )
     return {
-        "survives":         survives,
-        "pooled_edge":      round(pooled_edge, 4),
-        "pos_year_frac":    round(frac, 3),
-        "qualifying_years": len(qualifying),
+        "survives":      survives,
+        "pooled_edge":   round(pooled_edge, 4),
+        "pos_year_frac": round(frac, 3),
+        "trigger_years": len(trigger_years),
+        "total_n":       int(total_n),
+        "half_means":    (round(half_means[0], 3), round(half_means[1], 3)),
+        "half_ok":       half_ok,
     }
 
 
@@ -153,8 +167,14 @@ def run_arm(df: pd.DataFrame, arm: str) -> dict:
     for h in config.DIPBUY_FWD_HORIZONS:
         fwd   = forward_returns(close, h)
         stats = edge_vs_baseline(fwd, trig)
-        pye   = per_year_edges(fwd, trig, config.DIPBUY_MIN_TRIGGERS_PER_WINDOW)
-        verdicts[h] = arm_verdict(stats["edge"], stats["cond_mean"], pye)
+        pye   = per_year_edges(fwd, trig)
+        # chronological half-split of the conditional (trigger-day) returns
+        cond  = fwd[fwd.notna() & trig.reindex(fwd.index, fill_value=False)]
+        half  = len(cond) // 2
+        half_means = ((float(cond.iloc[:half].mean()) if half else 0.0),
+                      (float(cond.iloc[half:].mean()) if len(cond) - half else 0.0))
+        verdicts[h] = arm_verdict(stats["edge"], stats["cond_mean"], pye,
+                                  total_n=stats["n"], half_means=half_means)
         by_h[h] = {**stats, "per_year": pye, **verdicts[h]}
     survived = {h: v for h, v in verdicts.items() if v["survives"]}
     return {
