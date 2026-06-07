@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-06-07 — Dip-buy directional study: FIRST validated new edge (oversold RSI<30)
+
+**Spec:** `docs/superpowers/specs/2026-06-07-dipbuy-directional-study-design.md`
+**Plan:** `docs/superpowers/plans/2026-06-07-dipbuy-directional-study.md`
+**Results:** `docs/DIPBUY_STUDY.md` · **Branch:** `dipbuy-study`.
+
+Cross-regime thread ②. Brainstormed → spec → plan → built. Approach A (signal-first): a cheap underlying-only event-study gates an option-priced walk-forward, so we don't build pricing machinery for a signal that may not exist.
+
+**Phase 0:** extended SPY+VIX history to 2010 (`refresh_all_history`, `spy_history_yf.csv`, gitignored).
+
+**Phase 1 (`backtests/dipbuy_signal_study.py`):** two arms, forward returns at 3/5/10d vs baseline, per-year consistency. **Oversold (RSI<30 fresh cross):** edge +1.28/1.32/1.49%, positive 11–12/13 yrs, both halves positive, 68–76% hit. **Pullback (>200MA & <20MA):** +0.03–0.16% = noise, falsified. *Honest recalibration:* the original per-year ≥5-trigger gate was wrong for a ~2/yr signal (mislabeled oversold as failing); recalibrated transparently to rare-signal-aware (total-N floor + per-trigger-year consistency + chronological half-split). Bar still fails the noise arm.
+
+**Phase 2 (`backtests/dipbuy_option_wf.py`):** bull call debit spread (~21 DTE, 50% target / ~10td close) on each oversold trigger, BS-priced + IV-stress arm. **Face-IV +$135/trade, 68% win, +$4,600, both halves +; survives IV-stress (entry IV ×1.25 → +$128/trade); positive 10/13 yrs.** 2020 falling-knife bounded at −$62/trade by the debit max loss.
+
+**Outcome:** the **first validated new edge** the program has found (vs all-shelved priors). Recorded as a **human-promotion candidate** in `STRATEGY_LOG.md` (KB `5c8665d1d7`) — **NOT wired live** (loop rule 13). Caveats logged: BS flat-IV modeled pricing (IV-stress mitigates), n=34, recent-year weight. Next before real money: paper-trade forward to confirm OOS, then a live-wiring spec.
+
+**Tests:** 17 dip-buy tests + full suite green. **No deploy** — research only, zero live-path changes.
+
+---
+
 ## 2026-06-06 (eve) — Regime playbook scorecard + 4 defect fixes
 
 **Docs:** `docs/REGIME_PLAYBOOK.md` (new), `STRATEGY_LOG.md` (new). **Branch:** `regime-defects` (merged → main).
