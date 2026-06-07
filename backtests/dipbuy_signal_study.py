@@ -120,3 +120,69 @@ def arm_verdict(pooled_edge: float, pooled_cond_mean: float, per_year: dict) -> 
         "pos_year_frac":    round(frac, 3),
         "qualifying_years": len(qualifying),
     }
+
+
+# ── Loader + arm runner + report ────────────────────────────────────────────
+
+_YF_CSV = os.path.join(os.path.dirname(__file__), "spy_history_yf.csv")
+
+
+def load_spy(path: str = _YF_CSV, start: str = "2010-01-01") -> pd.DataFrame:
+    df = pd.read_csv(path, index_col=0, parse_dates=True).sort_index()
+    df = df[df.index >= pd.Timestamp(start)]
+    if len(df) < 250:
+        raise ValueError(f"insufficient SPY history in {path}: {len(df)} rows")
+    return df
+
+
+def _triggers_for(df: pd.DataFrame, arm: str) -> pd.Series:
+    close = df["close"].astype(float)
+    if arm == "oversold":
+        return oversold_triggers(rsi_series(close, 14), 30.0)
+    if arm == "pullback":
+        ma20  = close.rolling(20).mean()
+        ma200 = close.rolling(200).mean()
+        return pullback_triggers(close, ma20, ma200)
+    raise ValueError(f"unknown arm {arm!r}")
+
+
+def run_arm(df: pd.DataFrame, arm: str) -> dict:
+    close = df["close"].astype(float)
+    trig  = _triggers_for(df, arm)
+    by_h, verdicts = {}, {}
+    for h in config.DIPBUY_FWD_HORIZONS:
+        fwd   = forward_returns(close, h)
+        stats = edge_vs_baseline(fwd, trig)
+        pye   = per_year_edges(fwd, trig, config.DIPBUY_MIN_TRIGGERS_PER_WINDOW)
+        verdicts[h] = arm_verdict(stats["edge"], stats["cond_mean"], pye)
+        by_h[h] = {**stats, "per_year": pye, **verdicts[h]}
+    survived = {h: v for h, v in verdicts.items() if v["survives"]}
+    return {
+        "arm": arm,
+        "by_horizon": by_h,
+        "verdict": {"survives": bool(survived),
+                    "horizons_passed": sorted(survived.keys())},
+    }
+
+
+def main():
+    df = load_spy()
+    print(f"Dip-buy signal study — SPY {df.index.min().date()}..{df.index.max().date()} "
+          f"({len(df)} bars)\n")
+    report = {}
+    for arm in ("oversold", "pullback"):
+        res = report[arm] = run_arm(df, arm)
+        print(f"=== ARM: {arm} ===")
+        print(f"{'h':>3} {'n':>5} {'cond%':>8} {'base%':>8} {'edge%':>8} "
+              f"{'pos_yr':>7} {'survive':>8}")
+        for h, s in res["by_horizon"].items():
+            print(f"{h:>3} {s['n']:>5} {s['cond_mean']:>8.3f} {s['baseline_mean']:>8.3f} "
+                  f"{s['edge']:>8.3f} {s['pos_year_frac']:>7.2f} "
+                  f"{str(s['survives']):>8}")
+        print(f"  → arm survives: {res['verdict']['survives']} "
+              f"(horizons {res['verdict']['horizons_passed']})\n")
+    return report
+
+
+if __name__ == "__main__":
+    main()

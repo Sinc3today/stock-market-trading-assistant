@@ -97,3 +97,20 @@ def test_arm_verdict_fails_when_inconsistent():
            zip(range(2010, 2015), [3.0, -0.5, -0.6, -0.4, 3.0])}
     v = arm_verdict(pooled_edge=0.9, pooled_cond_mean=1.0, per_year=pye)
     assert v["survives"] is False
+
+
+# ── end-to-end runner ────────────────────────────────────────
+
+def test_run_arm_end_to_end_oversold():
+    from backtests.dipbuy_signal_study import run_arm
+    rng = np.random.default_rng(0)
+    n = 600
+    close = pd.Series(400 + np.cumsum(rng.normal(0.05, 1.0, n)),
+                      index=pd.bdate_range("2012-01-02", periods=n))
+    df = pd.DataFrame({"close": close})
+    res = run_arm(df, arm="oversold")
+    assert set(res.keys()) >= {"arm", "by_horizon", "verdict"}
+    assert res["arm"] == "oversold"
+    for h in (3, 5, 10):
+        assert h in res["by_horizon"]
+        assert "edge" in res["by_horizon"][h]
