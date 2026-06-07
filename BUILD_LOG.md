@@ -18,9 +18,11 @@ Cross-regime thread ②. Brainstormed → spec → plan → built. Approach A (s
 
 **Phase 2 (`backtests/dipbuy_option_wf.py`):** bull call debit spread (~21 DTE, 50% target / ~10td close) on each oversold trigger, BS-priced + IV-stress arm. **Face-IV +$135/trade, 68% win, +$4,600, both halves +; survives IV-stress (entry IV ×1.25 → +$128/trade); positive 10/13 yrs.** 2020 falling-knife bounded at −$62/trade by the debit max loss.
 
-**Outcome:** the **first validated new edge** the program has found (vs all-shelved priors). Recorded as a **human-promotion candidate** in `STRATEGY_LOG.md` (KB `5c8665d1d7`) — **NOT wired live** (loop rule 13). Caveats logged: BS flat-IV modeled pricing (IV-stress mitigates), n=34, recent-year weight. Next before real money: paper-trade forward to confirm OOS, then a live-wiring spec.
+**Outcome:** the **first signal the program hasn't killed** (vs all-shelved priors). Recorded as a **human-promotion candidate** in `STRATEGY_LOG.md` (KB `5c8665d1d7`) — **NOT wired live** (loop rule 13).
 
-**Tests:** 17 dip-buy tests + full suite green. **No deploy** — research only, zero live-path changes.
+**Honesty correction (final review caught it):** this is an **in-sample event-study + IV-stress**, NOT a walk-forward — the spec's `walk_forward.py`/OOS-retention step was not built, so "validated" was downgraded to **"promising, pending forward test."** Mitigated by the rule being parameter-free (nothing to overfit in-sample); but caveats stand: n=34, recency-loaded (half2 ≈ 4× half1), BS flat-IV modeled pricing. Decisive next test = forward paper-trade on unseen data; a true expanding-window WF is an optional added rigor step.
+
+**Tests:** 17 dip-buy tests + full suite (1050) green. **No deploy** — research only, zero live-path changes.
 
 ---
 

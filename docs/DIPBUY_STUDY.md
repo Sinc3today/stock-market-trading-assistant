@@ -5,12 +5,14 @@
 
 ## Verdict
 
-| Arm | Phase 1 (signal) | Phase 2 (option-priced) | Outcome |
+| Arm | Phase 1 (signal) | Phase 2 (priced + IV-stress) | Outcome |
 |---|---|---|---|
-| **Oversold (RSI<30)** | ✅ survives | ✅ survives (incl. IV-stress) | **VALIDATED edge — promotion candidate** |
+| **Oversold (RSI<30)** | ✅ edge present | ✅ profitable + IV-stress-robust | **PROMISING — pending forward test** |
 | Pullback-in-uptrend (>200MA & <20MA) | ❌ no edge | not run (gated) | Falsified |
 
-The **oversold dip-buy** is the **first validated new edge** the study program has produced — every prior investigation (0DTE, meta-labeling, intraday-touch, time-exit, transition-skip) was shelved. The **pullback** thesis is dead (≈ baseline noise).
+The **oversold dip-buy** is the **first signal the study program hasn't been able to kill** — every prior investigation (0DTE, meta-labeling, intraday-touch, time-exit, transition-skip) was shelved. The **pullback** thesis is dead (≈ baseline noise).
+
+> **Honesty correction (post-review).** This study is an **in-sample event-study + defined-risk pricing check + IV-stress**, NOT a walk-forward. The spec called for `walk_forward.py` with an OOS-retention verdict; that was **not** implemented (Phase 2 below is a full-sample backtest with a per-year and chronological-half-split robustness check, not a train/test holdout). Mitigating point: the signal and structure are **parameter-free** (fixed RSI<30, fixed ATM/2.5% debit, fixed 21DTE/50%/time-close), so there are no fitted knobs to overfit in-sample — the usual reason for OOS holdout is weaker here. But the edge is **recency-loaded** (half2 ≈ 4× half1), the sample is **n=34**, and the pricing is **modeled**. So the honest status is **"promising, survived an honest in-sample + IV-stress check"**, NOT "validated." The decisive test is **forward paper-trading on unseen data** (see Adoption); a true expanding-window walk-forward is an optional added rigor step.
 
 ## Phase 1 — signal event-study (underlying only)
 
@@ -28,7 +30,9 @@ Both chronological halves positive at every horizon. **Pullback (189 triggers):*
 
 > **Verdict recalibration (honest note):** the original Phase-1 gate required ≥5 triggers/year in ≥3 years — inappropriate for a ~2/yr signal, so it initially mislabeled oversold as failing. Recalibrated transparently to a rare-signal-aware test: any year with ≥1 trigger counts, backed by a 20-trigger total floor AND a chronological half-split (both halves must be positive). The bar still cleanly fails the pullback noise arm. Phase 2 is the independent arbiter regardless of Phase-1 wording.
 
-## Phase 2 — option-priced walk-forward (oversold only)
+## Phase 2 — option-priced backtest + IV-stress (oversold only)
+
+*(Not a walk-forward — see the honesty correction above. Full-sample priced backtest with per-year and half-split robustness checks.)*
 
 Bull call debit spread (ATM long / 2.5% OTM short), ~21 DTE, 50% profit target or ~10-trading-day time-close; BS-priced off VIX, with commission + slippage. The **IV-stress arm** bumps entry IV ×1.25 on these down-tape entries (the flat-VIX BS model understates crash-time option cost).
 
