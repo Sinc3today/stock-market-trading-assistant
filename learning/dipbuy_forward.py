@@ -81,3 +81,54 @@ def maybe_open_dipbuy(spy_df, *, spot, ivr, options_layer, recorder, today=None)
     )
     logger.info(f"dipbuy_forward: recorded candidate {tid} (entry_spot={spot})")
     return {"recorded": True, "trade_id": tid}
+
+
+# ── Resolver (50%-of-max-profit / 10-trading-day hold) ──────────────────────
+
+from learning.exit_manager import bs_price
+
+
+def _mark_spread(legs, spot, vix, dte_days) -> float:
+    """Net per-share value of the spread (long legs − short legs), BS off spot.
+    For a bull-call debit this is positive and rises with spot."""
+    sigma = vix / 100.0
+    t = max(dte_days, 0) / 365.0
+    val = 0.0
+    for leg in legs:
+        otype = (leg.get("type") or leg.get("option_type") or "call").lower()
+        p = bs_price(otype, spot, float(leg["strike"]), t, sigma)
+        val += p if leg.get("action") == "BUY" else -p
+    return val
+
+
+def resolve_candidates(recorder, *, spy_close, vix, today=None):
+    """Mark + close open 'candidate' trades: 50%-of-max-profit OR
+    DIPBUY_FORWARD_MAX_HOLD_TD trading days held. The caller wraps this per
+    Standing Rule #10. Returns the list of closed trade dicts."""
+    today = today or _date.today()
+    trades = recorder.get_all_trades()
+    closed, dirty = [], False
+    for t in trades:
+        if t.get("book") != config.DIPBUY_FORWARD_BOOK:
+            continue
+        if t.get("outcome") not in (None, "open"):
+            continue
+        td = int(t.get("td_held", 0)) + 1
+        t["td_held"] = td
+        dirty = True
+        legs = t.get("legs") or []
+        dte_left = max(config.DIPBUY_FORWARD_DTE - td, 1)
+        mark = _mark_spread(legs, spy_close, vix, dte_left)
+        pnl  = (mark - float(t.get("entry_price", 0.0))) * 100 * int(t.get("size", 1))
+        mp   = t.get("max_profit") or 0.0
+        hit_target = mp > 0 and pnl >= config.DIPBUY_FORWARD_TARGET_PCT * mp
+        hit_hold   = td >= config.DIPBUY_FORWARD_MAX_HOLD_TD
+        if hit_target or hit_hold:
+            reason = "target" if hit_target else "time_stop"
+            recorder.log_exit(t["trade_id"], round(mark, 2),
+                              notes=f"[CANDIDATE close {today.isoformat()}] {reason}",
+                              exit_reason=reason)
+            closed.append(t)
+    if dirty:
+        recorder._save(trades)
+    return closed

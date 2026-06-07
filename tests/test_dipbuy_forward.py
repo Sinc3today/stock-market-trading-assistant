@@ -78,3 +78,62 @@ def test_maybe_open_noop_when_disabled(monkeypatch):
                                    options_layer=_FakeLayer(), recorder=rec,
                                    today=pd.Timestamp("2026-03-02").date())
     assert out is None and rec.entries == []
+
+
+# ── resolver ─────────────────────────────────────────────────
+
+_LEGS = [{"action": "BUY", "type": "call", "strike": 450},
+         {"action": "SELL", "type": "call", "strike": 460}]
+
+
+def test_mark_spread_bull_debit_value_rises_with_spot():
+    from learning.dipbuy_forward import _mark_spread
+    low  = _mark_spread(_LEGS, spot=448.0, vix=20.0, dte_days=10)
+    high = _mark_spread(_LEGS, spot=458.0, vix=20.0, dte_days=10)
+    assert high > low and high >= 0.0
+
+
+class _ResRec:
+    def __init__(self, trades):
+        self._trades = trades
+        self.closed = []
+    def get_all_trades(self): return self._trades
+    def log_exit(self, tid, exit_price, notes="", exit_reason=None):
+        self.closed.append((tid, exit_price, exit_reason)); return True
+    def _save(self, t): pass
+
+
+def test_resolve_closes_at_target():
+    from learning import dipbuy_forward as df_mod
+    rec = _ResRec([{"trade_id": "T1", "book": "candidate", "entry_price": 4.0,
+                    "size": 1, "max_profit": 600.0, "td_held": 0, "legs": _LEGS}])
+    # spot well above the short strike (460) → spread near max value → 50% target hit
+    out = df_mod.resolve_candidates(rec, spy_close=485.0, vix=18.0,
+                                    today=pd.Timestamp("2026-03-20").date())
+    assert len(out) == 1 and rec.closed and rec.closed[0][2] == "target"
+
+
+def test_resolve_closes_at_max_hold():
+    from learning import dipbuy_forward as df_mod
+    rec = _ResRec([{"trade_id": "T2", "book": "candidate", "entry_price": 4.0,
+                    "size": 1, "max_profit": 600.0, "td_held": 9, "legs": _LEGS}])
+    out = df_mod.resolve_candidates(rec, spy_close=451.0, vix=18.0,
+                                    today=pd.Timestamp("2026-03-20").date())
+    assert rec.closed and rec.closed[0][2] == "time_stop"
+
+
+def test_resolve_leaves_running_trade_open():
+    from learning import dipbuy_forward as df_mod
+    rec = _ResRec([{"trade_id": "T3", "book": "candidate", "entry_price": 4.0,
+                    "size": 1, "max_profit": 600.0, "td_held": 2, "legs": _LEGS}])
+    out = df_mod.resolve_candidates(rec, spy_close=451.0, vix=18.0,
+                                    today=pd.Timestamp("2026-03-20").date())
+    assert out == [] and rec.closed == []
+
+
+def test_resolve_ignores_non_candidate_books():
+    from learning import dipbuy_forward as df_mod
+    rec = _ResRec([{"trade_id": "D", "book": "disciplined", "outcome": "open"}])
+    out = df_mod.resolve_candidates(rec, spy_close=450.0, vix=18.0,
+                                    today=pd.Timestamp("2026-03-20").date())
+    assert out == [] and rec.closed == []
