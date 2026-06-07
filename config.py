@@ -356,6 +356,14 @@ INTRADAY_FEASIBILITY = {
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 LOG_LEVEL   = os.getenv("LOG_LEVEL", "INFO")
 
+# ── Dip-buy directional study (2026-06-07) ──────────────────────────────────
+# Research thresholds for backtests/dipbuy_signal_study.py. Not live-trading.
+DIPBUY_FWD_HORIZONS            = (3, 5, 10)   # forward trading-day return horizons
+DIPBUY_MIN_EDGE_PCT            = 0.25         # conditional−baseline mean fwd return, %
+DIPBUY_MIN_OOS_YEAR_FRAC       = 0.60         # min fraction of years with positive edge
+DIPBUY_MIN_TRIGGERS_PER_WINDOW = 5            # a year needs >= this many triggers to count
+DIPBUY_IV_STRESS_MULT          = 1.25         # Phase 2: IV bump on down-tape entries
+
 # ─────────────────────────────────────────────────────────────
 # Phase 4a — Learning Loop Hygiene
 # ─────────────────────────────────────────────────────────────
