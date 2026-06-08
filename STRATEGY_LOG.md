@@ -91,6 +91,23 @@ with **fewer knobs**, and is **shelved/inert if it shows no OOS edge**. We activ
 3. **Shadow extension** to trending-down skips (cheap); dip/high-vol regimes need a defined
    strategy from (1) before they can be counterfactually shadowed.
 
+## Directional toolkit (2026-06-07) — beyond condors
+
+Rule (Study C): **calm = mean-reversion, high-vol = momentum.** Four corners:
+
+| Direction | Calm regime | High-vol regime |
+|---|---|---|
+| Long  | ✅ oversold dip-buy (live forward-test) | ❓ trend-follow (NEXT) |
+| Short | ❌ overbought-short (NO edge — see below) | ❓ downtrend-follow |
+
+- **Overbought-short — DONE (negative).** SPY keeps rising after RSI>70 (fwd +0.10/0.06/0.25%
+  at 3/5/10d, only 34-42% down). Mean-reversion is **long-only** on SPY (upward drift: dips
+  bought, rallies not sold). No short edge from overbought. A short edge, if any, must be
+  momentum in downtrends → trend-follow. (`overbought_short_study`, KB.)
+- **Trend-follow (high-vol momentum) — NEXT.** The only remaining directional frontier:
+  Study C showed momentum works when vol is elevated (the regime the bot skips). Test buy
+  confirmed up-trends / sell confirmed down-trends gated to high-vol, at 5+ DTE.
+
 ## Small-TF profit roadmap (2026-06-07) — improving 0DTE→1-3DTE
 
 Root cause (synthesis): the losing small-TF trades are DEBIT spreads entered LATE into a
