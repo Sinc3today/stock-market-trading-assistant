@@ -47,6 +47,21 @@ def test_parse_kb_extracts_dated_calls():
     assert calls[1]["instrument"] == "VIX"
 
 
+def test_parse_kb_skips_template_echo_lines():
+    from backtests.educator_calls_scorer import parse_kb
+    # small models sometimes echo the schema instead of filling it — must be dropped
+    kb = """
+## Echoed Schema Video
+<!--vid:zzz date:2025-01-02--> (100 words)
+CALL | INSTRUMENT | DIRECTION | HORIZON | LEVEL | REASONING
+CALL | instrument (SPY/QQQ/VIX) | direction (up/down) | horizon | - | x
+CALL | SPY | up | days | - | a real one
+"""
+    calls = parse_kb(kb)
+    assert len(calls) == 1                 # only the real filled-in line survives
+    assert calls[0]["instrument"] == "SPY"
+
+
 def test_horizon_to_days():
     from backtests.educator_calls_scorer import horizon_to_days
     assert horizon_to_days("today") == 1

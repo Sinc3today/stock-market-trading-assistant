@@ -82,9 +82,14 @@ def parse_kb(text: str) -> list[dict]:
             # CALL | instrument | direction | horizon | level | reasoning
             if len(parts) < 4:
                 continue
+            inst = parts[1].upper()
+            # skip template/placeholder echoes (small models repeat the schema line)
+            if (not inst or inst in ("INSTRUMENT", "<INSTRUMENT>")
+                    or any(c in parts[1] for c in "(<>/")):
+                continue
             calls.append({
                 "title": title, "vid": vid, "date": date,
-                "instrument": parts[1].upper(),
+                "instrument": inst,
                 "direction": parts[2],
                 "horizon": parts[3],
                 "level": parts[4] if len(parts) > 4 else "-",

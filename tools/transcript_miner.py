@@ -25,9 +25,16 @@ and the things he watches that a pure price/indicator system might MISS.
 The video's recording date is: {DATE}. Treat that as "today" — every forward call is relative
 to it. Output these sections; be concise and faithful to what he actually said.
 
-1) CALLS — every forward-looking, FALSIFIABLE prediction he makes. One per line, pipe-delimited:
-   CALL | instrument (SPY/QQQ/IWM/VIX/bonds/dollar/oil/gold/a ticker/"market") | direction (up/down/range/volatile/risk-off/risk-on) | horizon (today/days/1-2wk/weeks/months) | level-or-trigger (any price/condition he names, else "-") | his reasoning in <=12 words
-   Only include statements that could later be judged right or wrong. If none: "CALLS: none".
+1) CALLS — every forward-looking, FALSIFIABLE prediction he makes, ONE PER LINE, exactly:
+   CALL | INSTRUMENT | DIRECTION | HORIZON | LEVEL | REASONING
+   where INSTRUMENT is one of SPY/QQQ/IWM/VIX/bonds/dollar/oil/gold/a ticker/market;
+   DIRECTION is one of up/down/range/volatile/risk-off/risk-on;
+   HORIZON is one of today/days/1-2wk/weeks/months; LEVEL is a price/condition he names or -;
+   REASONING is his rationale in <=12 words.
+   CONCRETE EXAMPLE (do NOT copy it — fill each field with what HE actually said):
+   CALL | SPY | up | 1-2wk | 620 | dips keep getting bought, breadth firm
+   Output ONLY real filled-in lines. NEVER repeat this format description or the field NAMES as a
+   line. If he makes no falsifiable prediction, output exactly: CALLS: none
 2) MARKET READ — how he characterizes the CURRENT regime in 1-2 lines (e.g. toppy/extended,
    oversold/washed-out, melt-up, risk-off, rotation, breadth weakening, range-bound, trending).
    We will compare this to what our regime classifier computed on the same date.
