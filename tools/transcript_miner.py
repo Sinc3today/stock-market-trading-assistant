@@ -57,14 +57,25 @@ def clean_vtt(path):
 
 
 def fetch_transcript(vid):
+    """Pull the en caption track. Winning recipe (verified 2026-06-08):
+    enable the EJS remote n-challenge solver AND request BOTH manual
+    (--write-subs) and auto (--write-auto-subs) tracks — together this
+    clears YouTube's PO-token wall that otherwise discards web-client
+    auto-captions. ~75% of curated uploads yield subs this way; the rest
+    are members-tier-locked (return ("LOCKED", None) so the caller can
+    count them distinctly from genuine no-caption skips)."""
     tmp = f"/tmp/miner_{vid}"
-    subprocess.run(["yt-dlp", "--cookies", CK, "--write-auto-subs", "--sub-langs", "en",
-                    "--skip-download", "--ignore-no-formats-error", "--sub-format", "vtt",
-                    "-o", tmp + ".%(ext)s", f"https://www.youtube.com/watch?v={vid}"],
-                   capture_output=True, text=True, timeout=180)
+    r = subprocess.run(
+        ["yt-dlp", "--cookies", CK, "--remote-components", "ejs:github",
+         "--write-subs", "--write-auto-subs", "--sub-langs", "en",
+         "--skip-download", "--ignore-no-formats-error", "--sub-format", "vtt",
+         "-o", tmp + ".%(ext)s", f"https://www.youtube.com/watch?v={vid}"],
+        capture_output=True, text=True, timeout=240)
     for f in (f"{tmp}.en.vtt", f"{tmp}.en-orig.vtt"):
         if os.path.exists(f):
             t = clean_vtt(f); os.remove(f); return t
+    if "member" in (r.stdout + r.stderr).lower():
+        return "LOCKED"
     return None
 
 
@@ -83,20 +94,30 @@ def main():
     done = set(re.findall(r"<!--vid:(\S+)-->", open(KB).read())) if os.path.exists(KB) else set()
     vids = [v for v in video_list() if v[0] not in done][:n]
     print(f"[miner] {len(vids)} videos to process ({len(done)} already done)", flush=True)
+    locked = skipped = ok = 0
     for i, (vid, title) in enumerate(vids, 1):
         try:
             t = fetch_transcript(vid)
+            if t == "LOCKED":
+                locked += 1
+                print(f"[{i}/{len(vids)}] LOCKED (members-only) {vid} {title[:50]}", flush=True); continue
             if not t or len(t.split()) < 200:
+                skipped += 1
                 print(f"[{i}/{len(vids)}] SKIP (no/short transcript) {vid} {title[:50]}", flush=True); continue
             c = curate(t)
             with open(KB, "a") as f:
                 f.write(f"\n\n## {title}\n<!--vid:{vid}--> ({len(t.split())} words)\n\n{c}\n")
-            flagged = c.count("TESTABLE RULE:")
-            print(f"[{i}/{len(vids)}] OK {vid} {title[:50]} | testable-rule flags: {flagged}", flush=True)
+            ok += 1
+            # gemma may emit per-line "TESTABLE RULE:" prefixes OR a bulleted
+            # "TESTABLE RULES" header section — flag if it found anything beyond "none"
+            has_rules = ("TESTABLE RULE:" in c) or (
+                "TESTABLE RULES" in c and "TESTABLE RULES: none" not in c
+                and "TESTABLE RULES – " not in c.split("THEMES")[0][:80])
+            print(f"[{i}/{len(vids)}] OK {vid} {title[:50]} | {len(t.split())}w | rules:{has_rules}", flush=True)
         except Exception as e:
             print(f"[{i}/{len(vids)}] ERROR {vid}: {e}", flush=True)
         time.sleep(2)
-    print("[miner] batch complete", flush=True)
+    print(f"[miner] batch done — ok:{ok} locked:{locked} skipped:{skipped} of {len(vids)}", flush=True)
 
 
 if __name__ == "__main__":
