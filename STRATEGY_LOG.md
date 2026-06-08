@@ -90,3 +90,39 @@ with **fewer knobs**, and is **shelved/inert if it shows no OOS edge**. We activ
    rising-vs-falling VIX, position in the 18–22 band, trend proximity — for a surgical fix.
 3. **Shadow extension** to trending-down skips (cheap); dip/high-vol regimes need a defined
    strategy from (1) before they can be counterfactually shadowed.
+
+## Small-TF profit roadmap (2026-06-07) — improving 0DTE→1-3DTE
+
+Root cause (synthesis): the losing small-TF trades are DEBIT spreads entered LATE into a
+move at a rich debit (≥70% width = 9:1 adverse) with no time — direction-correct still
+loses. The condor *wins* at the same timeframe (premium selling). So: small TFs = sell
+premium; directional must zoom out. Four studies (run one at a time, OOS-gated):
+
+- **A. Horizon sweep — DONE.** Edge needs ~5 days; 1-3DTE weak (47-56% win), switches on
+  at 5DTE (68%), best at 21 (76%); 5-7DTE = sweet spot. → directional can't live at
+  0DTE/1-3DTE; a 5-7DTE dip-buy variant is worth a forward-test. (`dipbuy_horizon_sweep`)
+- **B. Opening-range 0DTE** — does the first 15-30min range/gap predict the 0DTE day? The
+  only window a true 0DTE directional edge could exist. Have real 5-min bars + 0DTE option
+  aggregates.
+- **C. Vol/range gate** — does conditioning small-TF directional on VIX≥18 flip it positive?
+- **D. Expand the condor** — highest-confidence: transition-zone sub-condition (#2 above),
+  opening-time entry, calm-regime sizing.
+
+**Cross-asset regime helpers (parking lot, test one-at-a-time, OOS):** data already pulled
+by `refresh_all_history` (TLT/IEF, HYG, UUP, GLD, yields, VIX9D/3M/6M, VVIX). Use as a
+SINGLE causal regime filter, not a kitchen-sink model (meta-labeling already failed OOS).
+Priority: **HYG credit + yield curve (10Y-2Y)** (lead equities) > VIX term structure
+(VIX9D vs VIX3M) > dollar/treasuries (noisier for SPY direction). Highest-value first test:
+a **risk-off filter (HYG blowout) to skip falling-knife dips** — the dip-buy's only bad
+trades (2020 COVID) were exactly those.
+
+**Breakout-confirmation entry (parking lot — from a 2026-06-07 trader transcript):** classic
+Darvas/Donchian range-breakout discipline — confirm resistance is real (volume), DON'T buy
+inside the range (chasing), enter on a **buy-stop above the level only after a CLOSE above**
+(not a wick), trail the stop at the breakout level. It's the disciplined COUNTER to our
+diagnosed "chase mid-move / enter too late" failure, and the inverse of the oversold edge
+(buy confirmed strength vs buy weakness). Maps to existing infra (`indicators/donchian.py`
+breakouts + `volume.py` RVOL + the stock scanner). Worth testing as a directional arm via
+WF — more applicable to the individual-stock scanner than to SPY (an index, not a $5-8
+channel name). Skepticism: promotional newsletter source; breakouts whipsaw (false-breakout
+risk is the whole reason for the close+volume filter); must be OOS-validated like everything.
