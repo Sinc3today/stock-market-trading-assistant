@@ -114,8 +114,14 @@ premium; directional must zoom out. Four studies (run one at a time, OOS-gated):
   but edges still small/thin, not tradeable at 0DTE. The bot already exploits calm-mean-
   reversion (condor + dip-buy); high-vol momentum is the regime it skips (TRENDING_HIGH_VOL)
   — a thin, speculative future thread, not actionable now.
-- **D. Expand the condor — OPEN, highest-confidence:** transition-zone sub-condition (#2
-  above), opening-time entry, calm-regime sizing.
+- **D. Expand the condor — transition sub-condition DONE (no fix):** tested 3 causal
+  sub-conditions (VIX direction, band position, term structure) to rescue the −$2,950
+  transition condor; none robustly works (VIX-direction falsified, band-position a 2023
+  artifact, term-structure too thin). With blanket-skip already failing WF, the transition
+  zone is marginal/noisy — stop rescuing it. Remaining D levers (calm-condor sizing/entry
+  timing) are diminishing-returns since the calm condor is already 82%/+$18k. Higher-value
+  next: the HYG risk-off filter (protects the live dip-buy). (`condor_transition_study`,
+  `docs/CONDOR_TRANSITION_STUDY.md`, KB bd780f1a7d)
 
 **Cross-asset regime helpers (parking lot, test one-at-a-time, OOS):** data already pulled
 by `refresh_all_history` (TLT/IEF, HYG, UUP, GLD, yields, VIX9D/3M/6M, VVIX). Use as a
