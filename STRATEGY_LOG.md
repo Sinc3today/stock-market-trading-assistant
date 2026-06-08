@@ -182,3 +182,21 @@ breakouts + `volume.py` RVOL + the stock scanner). Worth testing as a directiona
 WF — more applicable to the individual-stock scanner than to SPY (an index, not a $5-8
 channel name). Skepticism: promotional newsletter source; breakouts whipsaw (false-breakout
 risk is the whole reason for the close+volume filter); must be OOS-validated like everything.
+
+- **Sector breadth as a risk signal — DONE (promising, in-sample; split decision).** From the
+  YouTube/Substack mining thread, the one formalizable claim ("breadth deterioration = risk")
+  tested directly: % of 11 SPDR sectors above their own 50d MA, SPY 2010-2026. Two clean,
+  opposite-signed findings. **(a) Direction — FALSIFIED:** low/washed-out breadth → SPY forward
+  returns *above* baseline (washout +1.75% vs base +0.51% at 10d, 70% up; deeper washout = bigger
+  bounce). That is **buy-the-dip confirmed through an independent lens** (sector participation, not
+  RSI/price/VIX) — the ~11th confirmation of the long mean-reversion thesis; high breadth (euphoria)
+  underperforms. **(b) Risk — REAL, but for condors:** low/falling breadth carries ~1.5–2× baseline
+  forward realized vol (washout 1.77 vs 0.87) = condor breach risk; high breadth = calm (0.66) =
+  condor-friendly. So breadth maps to the two live edges with **opposite signs**: condor RISK-OFF
+  vs dip-buy GREEN LIGHT — a vol/dip-timing gauge, not a directional avoid. Honest status: in-sample,
+  not WF, not net of costs; low-breadth vol↑ is partly mechanical (vol clusters after selloffs) but
+  the forward-return asymmetry survives. **No source/threshold changed.** Warranted next (one knob,
+  WF-gated): a breadth-vol stand-down gate for the calm condor + a breadth-washout confirmer for the
+  dip-buy. Most promising single regime helper tested so far — it splits by edge instead of being a
+  kitchen-sink predictor. (`backtests/sector_breadth_study.py`, `docs/SECTOR_BREADTH_STUDY.md`,
+  KB cfc2ab1d54)

@@ -58,3 +58,12 @@ backtests/10y_yield_history.csv
 backtests/2y_yield_history.csv
 backtests/3m_yield_history.csv
 backtests/fed_funds_history.csv
+# auth cookie exports (session secrets — NEVER commit)
+*cookies*.txt
+*_cookies.txt
+docs/*.txt
+
+# gated-content research KBs (scraped from member-only YouTube/Substack — local only)
+docs/kb_youtube_*.md
+docs/kb_substack_*.md
+docs/miner.log
