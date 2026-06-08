@@ -200,3 +200,16 @@ risk is the whole reason for the close+volume filter); must be OOS-validated lik
   dip-buy. Most promising single regime helper tested so far — it splits by edge instead of being a
   kitchen-sink predictor. (`backtests/sector_breadth_study.py`, `docs/SECTOR_BREADTH_STUDY.md`,
   KB cfc2ab1d54)
+
+- **Breadth gates walk-forwarded — BOTH FAIL (redundant), 2026-06-08.** The two warranted knobs
+  built + WF-tested. **H1 condor breadth-vol gate (`condor_breadth_gate_wf`):** falsified — on 385
+  calm-condor days, a breadth floor and a not-falling gate both *lowered* OOS win (−3.8pp / −2.2pp)
+  and edge and didn't cut breaches; breadth↔VIX corr −0.39 and the VIX<18 calm gate already removes
+  the breach-prone days. **H2 dip-buy washout confirmer (`dipbuy_breadth_confirm_wf`):** falsified —
+  every oversold (RSI<30) trigger already sits below median breadth, so `+low(≤44%)` is *identical*
+  to baseline (breadth ≡ oversold by construction); `+washout(≤11%)` nudges sharpe 0.63→0.71 / pos-yr
+  80→100% but cuts triggers to 23 (OOS n=19 < the 20 minimum) → fails on sample size, not actionable.
+  **Verdict:** breadth is a real phenomenon but NOT a tradeable gate — redundant with VIX (condor) and
+  RSI (dip-buy), joining the HYG filter + meta-labeling as "overlay adds nothing once the primary
+  signal fired." Stays a dashboard/context gauge only; no source/threshold changed.
+  (`docs/SECTOR_BREADTH_STUDY.md` §Walk-forward verdict, KB 60b8e0ecee)

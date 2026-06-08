@@ -65,3 +65,35 @@ Both are single causal filters, to be walk-forward validated before any wiring �
 as the HYG filter (which failed) and meta-labeling (which failed). Breadth is the most promising
 single regime helper tested so far because it splits cleanly by edge instead of being a
 kitchen-sink predictor.
+
+---
+
+## Walk-forward verdict (2026-06-08) — neither gate survives; breadth is REDUNDANT
+
+Both hypotheses were built (`backtests/condor_breadth_gate_wf.py`,
+`backtests/dipbuy_breadth_confirm_wf.py`) and walk-forward tested. **Both fail**, and for the
+same root reason: as an *added* gate on an *already-selected* subset, breadth carries no
+orthogonal edge — the existing gate already captures it.
+
+**H1 — breadth gate on the calm condor: FALSIFIED.** 385 tradeable CHOPPY_LOW_VOL days, IS/OOS
+60/40. Baseline OOS: 75.3% win, +$84/trade, edge +0.661, breach 3.2%. A breadth floor (≥64%) and
+a "not-falling" gate both *lowered* OOS win (−3.8pp, −2.2pp) and edge (−0.11, −0.10) and nudged
+breach *up*, while discarding 16–23% of days. The tell: breadth↔VIX correlation on condor days is
+−0.39, and the VIX<18 calm gate already removes the high-vol/breach-prone days — by the time a day
+is "calm," residual breadth variation no longer predicts breaches. **Don't gate the condor on
+breadth.**
+
+**H2 — breadth-washout confirmer on the oversold dip-buy: FALSIFIED (redundant).** 34 oversold
+(RSI<30) triggers. The `+low (≤44%)` variant is **identical** to baseline — *every* oversold
+trigger already sits on a below-median-breadth day, so "low breadth" adds literally nothing
+(RSI<30 and low breadth are the same event). The `+washout (≤11%)` variant nudges OOS sharpe
+(0.63→0.71) and pos-years (80%→100%) but cuts triggers 34→23 and **fails the sample-size gate** —
+too thin to act on. A faint hint that the *deepest* washouts are the most consistent dips, but not
+actionable.
+
+**Conclusion:** breadth deterioration is a real phenomenon (the study stands), but it is **not a
+tradeable gate** for either live edge — redundant with VIX (condor) and RSI (dip-buy). This joins
+the HYG filter and meta-labeling: a macro/breadth overlay that looks predictive at the full-sample
+level but adds no discriminating power once the primary signal has already fired. No source or
+threshold changed; breadth stays a dashboard/context gauge (`signals/sector_breadth.py`), not a
+gate. Vindicates "the existing gates already capture what the overlay sees."
