@@ -4,6 +4,41 @@
 
 ---
 
+## 2026-06-08 — Sector-breadth lead (built → walk-forwarded → falsified) + educator-calls pipeline
+
+**What was worked on (plain language):**
+- Chased down whether "market breadth deterioration" — the one formalizable idea from the
+  YouTube/Substack content — is a tradeable signal for SPY. Built the study, then walk-forwarded
+  the two warranted knobs. **Both failed.** Breadth is a real phenomenon but redundant: VIX<18
+  already captures it for the condor, RSI<30 already captures it for the dip-buy. It joins the HYG
+  filter + meta-labeling on the "overlay adds nothing once the primary signal fired" pile. Nothing
+  wired into live; it stays a dashboard/context gauge only.
+- Reframed the gated-content mining (user's steer): the value isn't ready-made rules (there are
+  ~none) — it's their dated, falsifiable FORECASTS, which we can score in hindsight against data we
+  already hold, plus a blind-spot audit of our own system. Built `educator_calls_scorer`
+  (parse → score vs SPY/QQQ/VIX history → hit-rate); proven on real data (2025-06-27 PCE video: 3
+  hit / 1 miss).
+- Cracked YouTube's 2026 anti-bot wall for transcripts (EJS solver + dual sub flags); ~75% of
+  curated uploads accessible, ~25% tier-locked.
+
+**What didn't work / honest gaps:**
+- Both breadth gates falsified (the point — disconfirming evidence, documented).
+- gemma3:4b is too weak for the structured CALL extraction — it echoed the prompt template.
+  Hardened the prompt (few-shot + anti-echo) + parser guard, but UNVALIDATED under nucbox contention.
+- Live educator corpus has 0 usable calls yet; newest 60 videos were 56/60 members-locked
+  (mine oldest-first next time).
+
+**Live trading / learning:** untouched this session — trader.service healthy (5h uptime, no errors,
+all jobs registered incl. dip-buy forward test + full learning loop). All research is inert.
+
+**Tests:** 1131/1131 passing (added sector_breadth, educator_calls_scorer, condor_breadth_gate_wf,
+dipbuy_breadth_confirm_wf + suites).
+
+**Open for next session:** validate the hardened extraction prompt on a clean gemma run (or use
+phi4:14b); mine oldest-first; then the educator blind-spot layer (MARKET READ vs our regime classifier).
+
+---
+
 ## 2026-06-07 (eve) — Directional research arc + 2nd dip-buy trigger deployed
 
 **Research (all committed with module + docs/ + KB + STRATEGY_LOG):** mapped the full directional space for SPY. Negatives: overbought-short (no edge — mean-reversion is long-only), trend-follow both directions (breakouts underperform drift; breakdowns bounce), condor breach-prediction (idiosyncratic), transition-condor sub-conditions (no fix), HYG risk-off filter (credit doesn't discriminate), secular-regime filter (falsified — deeper dips bounce *better*). **Conclusion: SPY is a buy-the-dip (long mean-reversion) instrument; momentum + shorts don't work; deeper dips are better.**
