@@ -104,9 +104,21 @@ Rule (Study C): **calm = mean-reversion, high-vol = momentum.** Four corners:
   at 3/5/10d, only 34-42% down). Mean-reversion is **long-only** on SPY (upward drift: dips
   bought, rallies not sold). No short edge from overbought. A short edge, if any, must be
   momentum in downtrends → trend-follow. (`overbought_short_study`, KB.)
-- **Trend-follow (high-vol momentum) — NEXT.** The only remaining directional frontier:
-  Study C showed momentum works when vol is elevated (the regime the bot skips). Test buy
-  confirmed up-trends / sell confirmed down-trends gated to high-vol, at 5+ DTE.
+- **Trend-follow — DONE (negative both directions).** Donchian breakouts: breakout_up (new
+  50d highs) UNDERPERFORMS baseline drift (−0.26/−0.57% edge — slight reversion); breakout_down
+  (new 50d lows) BOUNCES +1.65/+2.51% (68-70% up, even high-vol n=73) → short loses.
+  Trend-follow + shorts are dead on SPY. (`trend_follow_study`, KB.)
+
+**DIRECTIONAL MAP COMPLETE — SPY is a buy-the-dip (long mean-reversion) instrument, full
+stop.** Every test converges: oversold bounces, 50d-low breakdowns bounce, overbought keeps
+rising (no short), new-high breakouts revert (no momentum). The only directional edge is
+LONG mean-reversion (buy weakness). Momentum and shorts do not work (upward drift +
+mean-reversion). → the dip-buy (live) IS the directional strategy; don't build momentum/short.
+
+**Candidate follow-up (positive):** 50d-low Donchian breakdown is a strong, more-frequent
+buy-weakness trigger (+1.65/2.51%, 68-70% up, n=80) — a possible 2nd dip-buy trigger alongside
+RSI<30. Worth an option-priced/forward-test follow-up (same defined-risk discipline; bull-tape
+caveat).
 
 ## Small-TF profit roadmap (2026-06-07) — improving 0DTE→1-3DTE
 
