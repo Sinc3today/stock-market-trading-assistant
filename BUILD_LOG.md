@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-06-07 (eve) — Directional research arc + 2nd dip-buy trigger deployed
+
+**Research (all committed with module + docs/ + KB + STRATEGY_LOG):** mapped the full directional space for SPY. Negatives: overbought-short (no edge — mean-reversion is long-only), trend-follow both directions (breakouts underperform drift; breakdowns bounce), condor breach-prediction (idiosyncratic), transition-condor sub-conditions (no fix), HYG risk-off filter (credit doesn't discriminate), secular-regime filter (falsified — deeper dips bounce *better*). **Conclusion: SPY is a buy-the-dip (long mean-reversion) instrument; momentum + shorts don't work; deeper dips are better.**
+
+**Positive + DEPLOYED:** the **50d-low Donchian breakdown** vets as a complementary 2nd dip-buy trigger (+$70/trade, 64% win, positive 13/15 yrs; only 14/80 same-day as RSI<30 → ~triples the book to 100 trades, +$9,049). Wired into the live forward-test: `learning/dipbuy_forward.py` now fires on **RSI<30 OR fresh 50d-low breakdown** (`dip_signal`, trigger recorded in the note), config `DIPBUY_BREAKDOWN_WINDOW=50`. No secular gate (the study said don't gate). Candidate book, paper-only, defined-risk — unchanged discipline.
+
+**Tests:** 1092 passed (incl. new breakdown-trigger coverage). **Deploy:** restart `trader.service` (live forward-test now fires on both triggers).
+
 ## 2026-06-07 (pm) — Dip-buy forward paper-test wired LIVE (candidate book)
 
 **Spec:** `docs/superpowers/specs/2026-06-07-dipbuy-forward-test-design.md`

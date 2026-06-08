@@ -378,6 +378,7 @@ DIPBUY_FORWARD_DTE         = 21     # bull-call debit expiry (calendar days) at 
 DIPBUY_FORWARD_TARGET_PCT  = 0.50   # close at 50% of max profit
 DIPBUY_FORWARD_MAX_HOLD_TD = 10     # ... or after 10 trading days held
 DIPBUY_FORWARD_BOOK        = "candidate"
+DIPBUY_BREAKDOWN_WINDOW    = 50     # 2nd dip trigger: fresh close < prior N-day low
 
 # ─────────────────────────────────────────────────────────────
 # Phase 4a — Learning Loop Hygiene

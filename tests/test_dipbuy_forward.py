@@ -45,9 +45,28 @@ def test_is_fresh_oversold_returns_bool():
     assert isinstance(is_fresh_oversold(_declining_df()), bool)
 
 
-def test_maybe_open_records_one_candidate_on_trigger(monkeypatch):
+def test_is_fresh_breakdown_fires_on_new_low():
+    from learning.dipbuy_forward import is_fresh_breakdown
+    closes = [100.0] * 55 + [95.0]   # fresh close below the prior 50d low
+    idx = pd.bdate_range("2026-01-02", periods=len(closes))
+    df = pd.DataFrame({"close": closes}, index=idx)
+    assert is_fresh_breakdown(df, window=50) is True
+
+
+def test_dip_signal_priority_and_none(monkeypatch):
     from learning import dipbuy_forward as df_mod
     monkeypatch.setattr(df_mod, "is_fresh_oversold", lambda d: True)
+    monkeypatch.setattr(df_mod, "is_fresh_breakdown", lambda d, window=None: True)
+    assert df_mod.dip_signal(_declining_df()) == "oversold"   # oversold priority
+    monkeypatch.setattr(df_mod, "is_fresh_oversold", lambda d: False)
+    assert df_mod.dip_signal(_declining_df()) == "breakdown"
+    monkeypatch.setattr(df_mod, "is_fresh_breakdown", lambda d, window=None: False)
+    assert df_mod.dip_signal(_declining_df()) is None
+
+
+def test_maybe_open_records_one_candidate_on_trigger(monkeypatch):
+    from learning import dipbuy_forward as df_mod
+    monkeypatch.setattr(df_mod, "dip_signal", lambda d: "oversold")
     rec = _FakeRec()
     out = df_mod.maybe_open_dipbuy(_declining_df(), spot=450.0, ivr=30.0,
                                    options_layer=_FakeLayer(), recorder=rec,
@@ -58,9 +77,20 @@ def test_maybe_open_records_one_candidate_on_trigger(monkeypatch):
     assert e["book"] == "candidate" and e["size"] == 1 and e["dte_bucket"] == "dipbuy"
 
 
+def test_maybe_open_records_on_breakdown_trigger(monkeypatch):
+    from learning import dipbuy_forward as df_mod
+    monkeypatch.setattr(df_mod, "dip_signal", lambda d: "breakdown")
+    rec = _FakeRec()
+    out = df_mod.maybe_open_dipbuy(_declining_df(), spot=450.0, ivr=30.0,
+                                   options_layer=_FakeLayer(), recorder=rec,
+                                   today=pd.Timestamp("2026-03-02").date())
+    assert out and out["recorded"] is True
+    assert "breakdown" in rec.entries[0]["notes"]   # trigger recorded in the note
+
+
 def test_maybe_open_noop_when_not_triggered(monkeypatch):
     from learning import dipbuy_forward as df_mod
-    monkeypatch.setattr(df_mod, "is_fresh_oversold", lambda d: False)
+    monkeypatch.setattr(df_mod, "dip_signal", lambda d: None)
     rec = _FakeRec()
     out = df_mod.maybe_open_dipbuy(_declining_df(), spot=450.0, ivr=30.0,
                                    options_layer=_FakeLayer(), recorder=rec,
@@ -72,7 +102,7 @@ def test_maybe_open_noop_when_disabled(monkeypatch):
     import config
     from learning import dipbuy_forward as df_mod
     monkeypatch.setattr(config, "DIPBUY_FORWARD_ENABLED", False)
-    monkeypatch.setattr(df_mod, "is_fresh_oversold", lambda d: True)
+    monkeypatch.setattr(df_mod, "dip_signal", lambda d: "oversold")
     rec = _FakeRec()
     out = df_mod.maybe_open_dipbuy(_declining_df(), spot=450.0, ivr=30.0,
                                    options_layer=_FakeLayer(), recorder=rec,
