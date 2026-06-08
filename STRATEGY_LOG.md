@@ -114,6 +114,12 @@ premium; directional must zoom out. Four studies (run one at a time, OOS-gated):
   but edges still small/thin, not tradeable at 0DTE. The bot already exploits calm-mean-
   reversion (condor + dip-buy); high-vol momentum is the regime it skips (TRENDING_HIGH_VOL)
   — a thin, speculative future thread, not actionable now.
+- **D. Condor breach-prediction — DONE (negative).** Can't predict the calm-condor's 47
+  breaches from vol-expansion signals (VIX-RoC/term-structure/VVIX each flag ~21/47 = base
+  rate; VVIX would skip 38% of days for +2pts win = net loss). Breaches are idiosyncratic;
+  defined-risk wings are the protection. Condor already uses IVR≥50 + ~0.20-delta strikes +
+  event blocks → **at achievable edge, stop tinkering.** Fibonacci rejected (subjective;
+  delta-placement is the rigorous version). (`condor_breach_study`, KB.)
 - **D. Expand the condor — transition sub-condition DONE (no fix):** tested 3 causal
   sub-conditions (VIX direction, band position, term structure) to rescue the −$2,950
   transition condor; none robustly works (VIX-direction falsified, band-position a 2023
