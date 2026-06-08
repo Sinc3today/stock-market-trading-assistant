@@ -315,6 +315,9 @@ class OptionsLayer:
             "ticker":        contract.get("ticker"),
             "expiration":    contract.get("expiration"),
             "mid":           mid,
+            "mark":          contract.get("mark"),   # usable price when mid is None
+                                                     # (day close/vwap) — Polygon
+                                                     # snapshot has no quotes
             "delta":         contract.get("delta"),
             "iv":            contract.get("iv"),
             "open_interest": oi,
@@ -689,14 +692,11 @@ class OptionsLayer:
         rec_emoji:   str,
     ) -> str:
         strategy_label = strategy.replace("_", " ").upper()
-        legs_str = "\n".join(
-            f"    {l['action']} {l['option_type']} ${l['strike']} — {l['note']}"
-            for l in legs
-        )
+        legs_str = "\n".join(self._format_leg_line(l) for l in legs)
         return (
             f"\n📋 **OPTIONS — {strategy_label}**\n"
-            f"  Legs:\n{legs_str}\n"
-            f"  DTE:        {dte_rec['dte']} days\n"
+            f"  Legs (entry price per contract):\n{legs_str}\n"
+            f"{self._expiration_line(legs, dte_rec['dte'])}\n"
             f"  IV Rank:    {iv_assess['label']} — {iv_assess['note']}\n"
             f"  Net Cost:   {risk_reward['net_premium']}\n"
             f"  Max Profit: {risk_reward['max_profit']}\n"
@@ -705,6 +705,34 @@ class OptionsLayer:
             f"  Exit Rule:  {self._exit_rule(strategy)}\n"
             f"  {rec_emoji} {rec}\n"
         )
+
+    @staticmethod
+    def _format_leg_line(leg: dict) -> str:
+        """One leg as a copy-ready line: `SELL put $739 @ $2.15` (the @ price is
+        the per-contract entry premium/mid). Falls back to the note when a leg
+        has no strike (theoretical), and omits the price when no mid is known."""
+        strike = leg.get("strike")
+        typ    = leg.get("option_type") or leg.get("type") or ""
+        action = (leg.get("action") or "").upper()
+        if strike is None or not typ:
+            return f"    {leg.get('note', '(leg)')}"
+        # prefer the quote midpoint; fall back to mark (day close/vwap) so a
+        # usable entry price still shows when the snapshot has no quotes.
+        px = leg.get("mid")
+        if not isinstance(px, (int, float)):
+            px = leg.get("mark")
+        price = f" @ ${px:.2f}" if isinstance(px, (int, float)) else ""
+        return f"    {action} {typ} ${strike:g}{price}"
+
+    @staticmethod
+    def _expiration_line(legs: list, dte) -> str:
+        """`  Expiration: 2026-07-17 (45 days)` — the real expiry date (so the
+        play can be copied to a live broker), falling back to DTE days only."""
+        exp = next((l.get("expiration") for l in legs
+                    if l and l.get("expiration")), None)
+        if exp:
+            return f"  Expiration: {str(exp)[:10]} ({dte} days)"
+        return f"  Expiration: ~{dte} days from now"
 
     # ─────────────────────────────────────────
     # HELPERS
