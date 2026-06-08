@@ -25,11 +25,35 @@ from backtests.dipbuy_signal_study import rsi_series, oversold_triggers
 
 def is_fresh_oversold(spy_df) -> bool:
     """True iff the latest daily bar is a FRESH RSI(14)<30 cross (today<30,
-    yesterday>=30) — same trigger the dip-buy study validated."""
+    yesterday>=30) — the validated dip-buy trigger."""
     if spy_df is None or len(spy_df) < 30:
         return False
     trig = oversold_triggers(rsi_series(spy_df["close"].astype(float), 14), 30.0)
     return bool(trig.iloc[-1])
+
+
+def is_fresh_breakdown(spy_df, window: int = None) -> bool:
+    """True iff the latest daily bar FRESHLY closes below the prior `window`-day
+    low (Donchian breakdown) — the validated complementary 'buy weakness' trigger
+    (50d-low breakdowns bounce +1.65/2.51%, see docs/DIPBUY_BREAKDOWN_STUDY.md)."""
+    window = window or config.DIPBUY_BREAKDOWN_WINDOW
+    if spy_df is None or len(spy_df) < window + 1:
+        return False
+    close = spy_df["close"].astype(float)
+    prior_low = close.rolling(window).min().shift(1)
+    beyond = close < prior_low
+    fresh = beyond & ~beyond.shift(1).fillna(False)
+    return bool(fresh.iloc[-1])
+
+
+def dip_signal(spy_df) -> str | None:
+    """Which buy-weakness trigger fired on the latest bar (oversold takes
+    priority), or None. Both are validated dip-buy triggers."""
+    if is_fresh_oversold(spy_df):
+        return "oversold"
+    if is_fresh_breakdown(spy_df):
+        return "breakdown"
+    return None
 
 
 def maybe_open_dipbuy(spy_df, *, spot, ivr, options_layer, recorder, today=None):
@@ -39,7 +63,8 @@ def maybe_open_dipbuy(spy_df, *, spot, ivr, options_layer, recorder, today=None)
     'trade_id': tid} or None."""
     if not config.DIPBUY_FORWARD_ENABLED:
         return None
-    if not is_fresh_oversold(spy_df):
+    sig = dip_signal(spy_df)
+    if sig is None:
         return None
     today = today or _date.today()
     # idempotency: skip if a candidate trade already opened today
@@ -74,7 +99,7 @@ def maybe_open_dipbuy(spy_df, *, spot, ivr, options_layer, recorder, today=None)
         legs=opts.get("legs", []),
         max_profit=opts.get("max_profit"),
         max_loss=opts.get("max_loss"),
-        notes=f"[CANDIDATE {today.isoformat()}] oversold dip-buy forward-test",
+        notes=f"[CANDIDATE {today.isoformat()}] {sig} dip-buy forward-test",
         dte_bucket="dipbuy",
         book=config.DIPBUY_FORWARD_BOOK,
         source=AUTO_SOURCE,
