@@ -8,6 +8,14 @@ import pandas as pd
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _entry_window_open(monkeypatch):
+    """Neutralize the 09:45-15:00 ET entry-window guard so open-logic tests don't
+    depend on wall-clock time. The guard itself is covered by test_entry_window.py."""
+    import config
+    monkeypatch.setattr(config, "ENFORCE_ENTRY_WINDOW", False)
+
+
 def test_config_has_dipbuy_forward_flags():
     import config
     assert config.DIPBUY_FORWARD_ENABLED is True

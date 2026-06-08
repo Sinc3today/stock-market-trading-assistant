@@ -87,15 +87,18 @@ def _run_daily_shadow(regime_result, *, spot: float, ivr: float) -> None:
         logger.warning(f"shadow-test failed (ignored): {e}")
 
 
-def _run_daily_dipbuy(polygon_client, *, spot: float, ivr: float) -> None:
+def _run_daily_dipbuy(polygon_client, *, ivr: float) -> None:
     """Invoke the dip-buy forward paper-test, fully isolated (Standing Rule #10).
     Fetches SPY daily history for the RSI(14) trigger and records a candidate
-    bull-debit on a fresh RSI<30 cross."""
+    bull-debit on a fresh RSI<30 cross. Self-contained: spot = latest daily
+    close (same value the morning brief uses). The OPEN is additionally gated
+    to the entry window inside maybe_open_dipbuy."""
     try:
         df = polygon_client.get_bars(
             "SPY", timeframe=config.SWING_PRIMARY_TIMEFRAME, limit=80, days_back=130)
         if df is None or len(df) < 30:
             return
+        spot = float(df["close"].iloc[-1])
         maybe_open_dipbuy(
             df,
             spot          = spot,
@@ -157,8 +160,8 @@ def job_spy_premarket(
         _regime_result, _spot, _ivr = _regime_and_levels_from_brief(brief)
         _run_daily_shadow(_regime_result, spot=_spot, ivr=_ivr)
 
-        # ── Dip-buy forward paper-test (oversold RSI<30) ────────────
-        _run_daily_dipbuy(polygon_client, spot=_spot, ivr=_ivr)
+        # NOTE: the dip-buy OPEN moved to job_spy_entry at 09:45 ET so it never
+        # fires pre-market (entry-window rule). The 09:15 brief is planning only.
 
         # Plan is saved inside briefer; just post to Discord here.
         if post_fn:
@@ -174,6 +177,23 @@ def job_spy_premarket(
         logger.exception(f"Morning brief job failed: {e}")
         if post_fn:
             post_fn(f"⚠️ **Morning brief error:** {e}")
+
+
+def job_spy_entry(polygon_client, ivr_client):
+    """09:45 ET — open daily entries INSIDE the entry window. Split out from the
+    09:15 brief so opens never fire pre-market (config.within_entry_window).
+    Currently runs the dip-buy forward paper-test; the paper broker (45DTE) is
+    scheduled separately in learning/scheduler at the same 09:45 slot."""
+    logger.info("▶ SPY entry job (09:45) starting")
+    if not config.is_trading_day(datetime.now(ET)):
+        logger.info("spy_entry: non-trading day, skipping")
+        return
+    try:
+        ivr = ivr_client.get_iv_rank("SPY")
+    except Exception as e:
+        logger.warning(f"spy_entry: ivr fetch failed ({e}); defaulting to 0.0")
+        ivr = 0.0
+    _run_daily_dipbuy(polygon_client, ivr=ivr)
 
 
 def job_spy_track_play(polygon_client, vix_client, ivr_client, post_fn,
@@ -301,6 +321,21 @@ def register_spy_jobs(
         replace_existing = True,
     )
 
+    # 09:45 ET — entry job: open daily entries inside the entry window
+    scheduler.add_job(
+        func    = job_spy_entry,
+        trigger = CronTrigger(
+            day_of_week = "mon-fri", hour = 9, minute = 45, timezone = eastern,
+        ),
+        kwargs  = {
+            "polygon_client": polygon_client,
+            "ivr_client":     ivr_client,
+        },
+        id      = "spy_entry",
+        name    = "SPY Entry (dip-buy, entry window)",
+        replace_existing = True,
+    )
+
     # 09:16 ET — additional enabled daily tracks (e.g. 5DTE) as their own
     # alerts. 45DTE is the morning brief above; here we add the other
     # daily-backtestable, enabled tracks. Intraday tracks (0DTE/1DTE) are
@@ -347,6 +382,7 @@ def register_spy_jobs(
 
     logger.info("✅ SPY daily jobs registered:")
     logger.info("   09:15 ET — Pre-market play (45DTE)")
+    logger.info("   09:45 ET — Entry job (dip-buy, entry window)")
     for track in extra:
         logger.info(f"   09:16 ET — {track.name} play")
     logger.info("   16:30 ET — Close snapshot")

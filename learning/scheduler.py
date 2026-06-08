@@ -230,7 +230,9 @@ def register_learning_jobs(
 
     scheduler.add_job(
         job_paper_broker,
-        CronTrigger(day_of_week="mon-fri", hour=9, minute=16, timezone=eastern),
+        # 09:45 ET — inside the entry window (config.ENTRY_WINDOW_START_ET). Was
+        # 09:16 (pre-market); opens must not fire before 15 min after the bell.
+        CronTrigger(day_of_week="mon-fri", hour=9, minute=45, timezone=eastern),
         kwargs={"play_fn": play_fn},
         id="learning_paper_broker",
         name="Learning: paper broker",
@@ -346,7 +348,7 @@ def register_learning_jobs(
     )
 
     logger.info("Learning jobs registered:")
-    logger.info("   09:16 ET (Mon-Fri) - paper broker")
+    logger.info("   09:45 ET (Mon-Fri) - paper broker (entry window)")
     logger.info("   16:05 ET (Mon-Fri) - outcome resolver")
     logger.info("   16:08 ET (Mon-Fri) - exit manager [45DTE daily]")
     logger.info("   every 5 min 9:00-15:55 ET (Mon-Fri) - exit manager [0DTE / 1-3DTE intraday]")

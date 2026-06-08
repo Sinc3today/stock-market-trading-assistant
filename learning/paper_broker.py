@@ -112,6 +112,12 @@ class PaperBroker:
         Scheduler entry point: read today's plan from PlanLogger (saved
         by the 09:15 premarket job) and process it.
         """
+        import config
+        if not config.within_entry_window():
+            logger.info("PaperBroker.execute_today: outside entry window "
+                        "(09:45-15:00 ET) — no open")
+            return {"prediction_date": None, "trade_id": None,
+                    "recorded": False, "skipped": "entry_window"}
         plan = self.plans.get_today()
         if not plan:
             logger.info("PaperBroker.execute_today: no plan for today, nothing to do")
@@ -259,6 +265,11 @@ class PaperBroker:
             "legs":        list[dict],
           }
         """
+        import config
+        if not config.within_entry_window():
+            logger.info("PaperBroker.execute_signal: outside entry window "
+                        "(09:45-15:00 ET) — no open")
+            return {"recorded": False, "skipped": "entry_window"}
         book = setup.get("book", "disciplined")
         cap  = MAX_CONCURRENT_LEARNING if book == "learning" else MAX_CONCURRENT_DISCIPLINED
         open_n = self._open_count_by_book(book)

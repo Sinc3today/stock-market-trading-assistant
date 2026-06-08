@@ -13,8 +13,18 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import pytest
+
 from journal.trade_recorder import TradeRecorder
 from learning.paper_broker import PaperBroker, AUTO_SOURCE, is_auto_paper
+
+
+@pytest.fixture(autouse=True)
+def _entry_window_open(monkeypatch):
+    """Neutralize the 09:45-15:00 ET entry-window guard so open-logic tests don't
+    depend on wall-clock time. The guard itself is covered by test_entry_window.py."""
+    import config
+    monkeypatch.setattr(config, "ENFORCE_ENTRY_WINDOW", False)
 
 
 def test_log_entry_persists_source(tmp_path, monkeypatch):

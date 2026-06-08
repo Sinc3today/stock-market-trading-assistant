@@ -120,6 +120,10 @@ SPY play trade in the **disciplined** book.
 8. `plan_logger.py` for pre-trade plans, `trade_recorder.py` for actual fills — never mix
 9. All thresholds in `config.py` — no magic numbers in scanner/signal code
 10. Wrap new scheduler jobs in try/except so one failure never crashes the bot
+11. **Never OPEN a position outside the entry window** — `config.within_entry_window()`
+    gates 09:45–15:00 ET (no opens in the first 15 min after the bell or the last
+    hour before close). Every open path must call it (paper_broker, dipbuy_forward,
+    intraday). EXITS/management are NOT gated — you must always be able to close.
 
 ## Key Technical Decisions (see STRATEGY_LOG.md for reasoning)
 
@@ -146,6 +150,20 @@ See TRADING_ASSISTANT.md for current project state and decisions.
 ## Parking Lot
 
 <!-- vault-router: auto-promote target -->
+
+### From `the-central-debate-on-wall-street-is-starting-to` — [MOSTLY TRUE] · auto-promoted 2026-06-07
+**Insight:** The note's analysis of market concentration (semiconductors at 18% of S&P 500, AI stocks near 50%), valuations, and sector momentum directly informs the trading bot's regime classifier and scoring thresholds; compare 1999 bubble indicators against current technical setups to refine entry/exit gates.
+**Source:** [Nexus note](Nexus/2026/05/2026-05-13-the-central-debate-on-wall-street-is-starting-to.md) · creator: cnbc
+**Confidence:** 0.75
+<!-- vault-router: hash=8cd204d9 source=the-central-debate-on-wall-street-is-starting-to -->
+
+
+### From `this-kid-is-outtrading-you-stocks-daytrader` — [MOSTLY TRUE] · auto-promoted 2026-06-07
+**Insight:** The note documents a retail trader using Bollinger Bands + RSI strategy with live results and commentary on strategy effectiveness; directly applicable to backtesting new technical indicator combinations and validating signal quality against real market outcomes.
+**Source:** [Nexus note](Nexus/2026/05/2026-05-12-this-kid-is-outtrading-you-stocks-daytrader.md) · creator: thestockguy
+**Confidence:** 0.8
+<!-- vault-router: hash=1175abc8 source=this-kid-is-outtrading-you-stocks-daytrader -->
+
 
 ### From `what-demo-tutorial-should-we-do-together-data-apis` — [VERIFIED] · auto-promoted 2026-06-02
 **Insight:** The vault note reviews three financial APIs (Robin Stocks, Alpaca Markets, Public API) directly applicable to the trading bot's data ingestion layer; Alpaca is already used for intraday data, and Robin Stocks or Public API could provide alternative stock/options feeds for the scorer and gates modules.

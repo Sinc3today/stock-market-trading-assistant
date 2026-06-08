@@ -14,6 +14,14 @@ from learning.paper_broker import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _entry_window_open(monkeypatch):
+    """Neutralize the 09:45-15:00 ET entry-window guard so open-logic tests don't
+    depend on wall-clock time. The guard itself is covered by test_entry_window.py."""
+    import config
+    monkeypatch.setattr(config, "ENFORCE_ENTRY_WINDOW", False)
+
+
 def _tradeable_play(date_str="2026-05-26"):
     return {
         "date":       date_str,

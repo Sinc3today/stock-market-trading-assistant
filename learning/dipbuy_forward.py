@@ -63,6 +63,9 @@ def maybe_open_dipbuy(spy_df, *, spot, ivr, options_layer, recorder, today=None)
     'trade_id': tid} or None."""
     if not config.DIPBUY_FORWARD_ENABLED:
         return None
+    if not config.within_entry_window():
+        logger.info("dipbuy_forward: outside entry window (09:45-15:00 ET) — no open")
+        return None
     sig = dip_signal(spy_df)
     if sig is None:
         return None

@@ -439,6 +439,40 @@ def is_trading_day(d) -> bool:
     if d in US_MARKET_HOLIDAYS:
         return False
     return True
+
+
+# ─────────────────────────────────────────────────────────────
+# Entry-time window — gate when a NEW position may be OPENED.
+# No opens in the first 15 min after the bell (noisy open auction) or the
+# last hour before close. EXITS / position management are NOT gated by this —
+# you must always be able to close. Applies to every open path (paper broker,
+# dip-buy forward, intraday scanner). Set ENFORCE_ENTRY_WINDOW=False to disable.
+# ─────────────────────────────────────────────────────────────
+ENTRY_WINDOW_START_ET = "09:45"   # 15 min after the 09:30 open
+ENTRY_WINDOW_END_ET   = "15:00"   # 1 hour before the 16:00 close
+ENFORCE_ENTRY_WINDOW  = True
+
+
+def within_entry_window(now=None) -> bool:
+    """True iff it is OK to OPEN a new position right now: a trading day and the
+    ET wall-clock is within [ENTRY_WINDOW_START_ET, ENTRY_WINDOW_END_ET) (start
+    inclusive, end exclusive). Returns True unconditionally if
+    ENFORCE_ENTRY_WINDOW is False (kill switch). `now` should be ET-local
+    (tz-aware ET or naive ET wall-clock); defaults to datetime.now(US/Eastern)."""
+    if not ENFORCE_ENTRY_WINDOW:
+        return True
+    from datetime import datetime as _dt, time as _time
+    import pytz as _pytz
+    if now is None:
+        now = _dt.now(_pytz.timezone("US/Eastern"))
+    if not is_trading_day(now):
+        return False
+    sh, sm = (int(x) for x in ENTRY_WINDOW_START_ET.split(":"))
+    eh, em = (int(x) for x in ENTRY_WINDOW_END_ET.split(":"))
+    tod = now.time()
+    return _time(sh, sm) <= tod < _time(eh, em)
+
+
 REGIME_DRIFT_PRIOR_DAYS              = 60    # prior-N trading days for comparison
 
 

@@ -18,6 +18,14 @@ from journal.trade_recorder import TradeRecorder
 from journal.plan_logger    import PlanLogger
 
 
+@pytest.fixture(autouse=True)
+def _entry_window_open(monkeypatch):
+    """Neutralize the 09:45-15:00 ET entry-window guard so open-logic tests don't
+    depend on wall-clock time. The guard itself is covered by test_entry_window.py."""
+    import config
+    monkeypatch.setattr(config, "ENFORCE_ENTRY_WINDOW", False)
+
+
 @pytest.fixture
 def isolated_dirs(tmp_path, monkeypatch):
     import config
