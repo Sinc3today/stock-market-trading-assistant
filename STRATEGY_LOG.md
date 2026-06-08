@@ -101,9 +101,11 @@ premium; directional must zoom out. Four studies (run one at a time, OOS-gated):
 - **A. Horizon sweep — DONE.** Edge needs ~5 days; 1-3DTE weak (47-56% win), switches on
   at 5DTE (68%), best at 21 (76%); 5-7DTE = sweet spot. → directional can't live at
   0DTE/1-3DTE; a 5-7DTE dip-buy variant is worth a forward-test. (`dipbuy_horizon_sweep`)
-- **B. Opening-range 0DTE** — does the first 15-30min range/gap predict the 0DTE day? The
-  only window a true 0DTE directional edge could exist. Have real 5-min bars + 0DTE option
-  aggregates.
+- **B. Opening-range 0DTE — DONE (negative).** OR-breakout/gap signals (500 sessions, 2yr)
+  have only tiny (~0.1%), partly-inconsistent rest-of-day edge — too small to beat 0DTE
+  debit costs; bear OR-break entry is backwards/non-robust; only consistent theme is
+  buy-weakness (reinforces dip-buy). Phase 2 not built. **0DTE directional is closed.**
+  (`opening_range_study`, `docs/OPENING_RANGE_STUDY.md`, KB 200d7288ae)
 - **C. Vol/range gate** — does conditioning small-TF directional on VIX≥18 flip it positive?
 - **D. Expand the condor** — highest-confidence: transition-zone sub-condition (#2 above),
   opening-time entry, calm-regime sizing.
