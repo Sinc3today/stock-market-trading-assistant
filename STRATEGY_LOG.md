@@ -127,9 +127,15 @@ premium; directional must zoom out. Four studies (run one at a time, OOS-gated):
 by `refresh_all_history` (TLT/IEF, HYG, UUP, GLD, yields, VIX9D/3M/6M, VVIX). Use as a
 SINGLE causal regime filter, not a kitchen-sink model (meta-labeling already failed OOS).
 Priority: **HYG credit + yield curve (10Y-2Y)** (lead equities) > VIX term structure
-(VIX9D vs VIX3M) > dollar/treasuries (noisier for SPY direction). Highest-value first test:
-a **risk-off filter (HYG blowout) to skip falling-knife dips** — the dip-buy's only bad
-trades (2020 COVID) were exactly those.
+(VIX9D vs VIX3M) > dollar/treasuries (noisier for SPY direction).
+
+- **HYG risk-off filter for the dip-buy — DONE (negative).** Falsified: credit stress does
+  NOT discriminate dip-buy winners from losers (depth-vs-pnl corr +0.12 ≈ 0; deepest-stress
+  2020 dips were WINNERS, losers scattered across all stress levels). HYG<50dMA flags all 34
+  triggers (correlated with oversold by construction). Do NOT add it — the defined-risk debit
+  spread is the protection. Vindicates "macro overlay = complexity without edge" for a
+  short-horizon bounce. Yield-curve untested, now lower priority. (`dipbuy_hyg_filter`,
+  `docs/DIPBUY_HYG_FILTER_STUDY.md`, KB e58355a9fb)
 
 **Breakout-confirmation entry (parking lot — from a 2026-06-07 trader transcript):** classic
 Darvas/Donchian range-breakout discipline — confirm resistance is real (volume), DON'T buy
