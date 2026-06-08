@@ -53,6 +53,22 @@ Parameter-free rule → nothing to fit, so the WF burns in the first 3 distinct 
 
 The OOS mean (+$154) is *higher* than the full-sample (+$135) because the burned-in early years were the **smaller** winners — which both passes the gate **and** re-confirms the recency-loading caveat (the strength is concentrated in later years).
 
+## Phase 4 — DTE horizon sweep (`backtests/dipbuy_horizon_sweep.py`)
+
+Re-priced the oversold bull-debit at a range of expiries (exit = 50% target or hold-to-expiry) to find the shortest horizon the bounce edge survives — i.e., "can a directional dip-buy work at 1-3DTE?"
+
+| DTE | win% | mean/trade | total |
+|---:|---:|---:|---:|
+| 1 | 47% | $98 | $3,321 |
+| 3 | 56% | $75 | $2,548 |
+| **5** | **68%** | **$150** | $5,099 |
+| 7 | 68% | $143 | $4,873 |
+| 10 | 68% | $106 | $3,593 |
+| 14 | 71% | $155 | $5,274 |
+| 21 | 76% | $166 | $5,653 |
+
+**The edge needs ~5 days.** 1-3DTE is weak/coin-flippy (47-56% win) — 3DTE is the *worst*, confirming the "too short, no time for the bounce" diagnosis. It switches on at **~5DTE (68%)** and improves to 21 (76%). **5-7DTE is the capital-efficient sweet spot** (~90% of the 21-day edge at a third of the hold). Implication: **directional dip-buy cannot live at 0DTE/1-3DTE** — those buckets stay premium-selling (condor); the forward-test's 21DTE is well inside the safe zone, and a future 5-7DTE variant is worth testing. (Same caveats: 34 triggers, in-sample, modeled pricing — the *shape* is robust; per-DTE wiggles are noise.)
+
 ## Honest caveats
 
 - **Modeled pricing, not real chains.** P&L is Black-Scholes off flat VIX-as-IV (no skew/term structure). The IV-stress arm is the mitigation and the edge survived it; the defined-risk debit spread structurally caps the worst case (2020 was only −$62/trade). A real crash IV spike exceeds ×1.25, but max loss is bounded regardless.
