@@ -106,9 +106,16 @@ premium; directional must zoom out. Four studies (run one at a time, OOS-gated):
   debit costs; bear OR-break entry is backwards/non-robust; only consistent theme is
   buy-weakness (reinforces dip-buy). Phase 2 not built. **0DTE directional is closed.**
   (`opening_range_study`, `docs/OPENING_RANGE_STUDY.md`, KB 200d7288ae)
-- **C. Vol/range gate** — does conditioning small-TF directional on VIX≥18 flip it positive?
-- **D. Expand the condor** — highest-confidence: transition-zone sub-condition (#2 above),
-  opening-time entry, calm-regime sizing.
+  - **B deeper (DONE):** VWAP filter is REDUNDANT (break_up_vwap == break_up); OR-breakout
+    edge FLIPS SIGN by window (5/15min + ; 30/60min −) = noise, not robust. (KB bb2bf7718c)
+- **C. Vol/range gate — DONE.** Directional pays more with range: break_up momentum ~4x
+  stronger high-VIX (+0.19% vs +0.05% calm); break_down reverts up hard in CALM (+0.26%).
+  Coherent regime picture: **calm = mean-reversion (buy weakness), high-vol = momentum** —
+  but edges still small/thin, not tradeable at 0DTE. The bot already exploits calm-mean-
+  reversion (condor + dip-buy); high-vol momentum is the regime it skips (TRENDING_HIGH_VOL)
+  — a thin, speculative future thread, not actionable now.
+- **D. Expand the condor — OPEN, highest-confidence:** transition-zone sub-condition (#2
+  above), opening-time entry, calm-regime sizing.
 
 **Cross-asset regime helpers (parking lot, test one-at-a-time, OOS):** data already pulled
 by `refresh_all_history` (TLT/IEF, HYG, UUP, GLD, yields, VIX9D/3M/6M, VVIX). Use as a

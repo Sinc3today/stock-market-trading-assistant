@@ -34,49 +34,83 @@ def _to_et(df: pd.DataFrame) -> pd.DataFrame:
     return d.tz_convert(ET)
 
 
-def daily_features(day_bars: pd.DataFrame, prior_close: float | None) -> dict | None:
+def daily_features(day_bars: pd.DataFrame, prior_close: float | None,
+                   or_minutes: int = OR_MINUTES) -> dict | None:
     """Features for one ET session (5-min bars from 09:30). The opening range is
-    the first OR_MINUTES; the 'decision' is the close of the first bar AFTER the
+    the first `or_minutes`; the 'decision' is the close of the first bar AFTER the
     range (a confirmed close above/below the range high/low — like the breakout
-    transcript). rest_return = decision_close → session close."""
+    transcript). Adds a session VWAP filter through the decision bar (the bot's
+    real entry blend is OR-break AND on the right side of VWAP).
+    rest_return = decision_close → session close."""
     reg = day_bars.between_time("09:30", "15:59")
     if len(reg) < 6:
         return None
+    idx_naive = reg.index.tz_localize(None)
     or_end = (pd.Timestamp(reg.index[0]).normalize()
-              + pd.Timedelta(hours=9, minutes=30 + OR_MINUTES)).tz_localize(None)
-    or_bars = reg[reg.index.tz_localize(None) < or_end]
-    after   = reg[reg.index.tz_localize(None) >= or_end]
+              + pd.Timedelta(hours=9, minutes=30 + or_minutes)).tz_localize(None)
+    or_bars = reg[idx_naive < or_end]
+    after   = reg[idx_naive >= or_end]
     if len(or_bars) == 0 or len(after) == 0:
         return None
     or_high = float(or_bars["high"].max())
     or_low  = float(or_bars["low"].min())
     open_px = float(reg["open"].iloc[0])
-    decision_px = float(after["close"].iloc[0])   # confirmed close just after the OR
+    decision_px   = float(after["close"].iloc[0])   # confirmed close just after the OR
+    decision_time = pd.Timestamp(after.index[0]).tz_localize(None)
     day_close   = float(reg["close"].iloc[-1])
     rest_return = (day_close - decision_px) / decision_px * 100.0
     gap_pct = ((open_px - prior_close) / prior_close * 100.0) if prior_close else 0.0
+    # session VWAP through the decision bar (typical price * volume)
+    upto = reg[idx_naive <= decision_time]
+    tp   = (upto["high"] + upto["low"] + upto["close"]) / 3.0
+    vol  = upto["volume"].replace(0, 1.0)
+    vwap = float((tp * vol).sum() / vol.sum())
+    above_vwap = decision_px > vwap
+    break_up   = decision_px > or_high
+    break_down = decision_px < or_low
     return {
-        "rest_return": rest_return,
-        "gap_pct":     gap_pct,
-        "break_up":    bool(decision_px > or_high),
-        "break_down":  bool(decision_px < or_low),
-        "gap_up":      bool(gap_pct > 0),
-        "gap_down":    bool(gap_pct < 0),
+        "rest_return":    rest_return,
+        "gap_pct":        gap_pct,
+        "break_up":       bool(break_up),
+        "break_down":     bool(break_down),
+        "gap_up":         bool(gap_pct > 0),
+        "gap_down":       bool(gap_pct < 0),
+        "above_vwap":     bool(above_vwap),
+        "break_up_vwap":  bool(break_up and above_vwap),
+        "break_down_vwap": bool(break_down and not above_vwap),
     }
 
 
-def build_day_table(intraday_df: pd.DataFrame) -> pd.DataFrame:
+def build_day_table(intraday_df: pd.DataFrame, or_minutes: int = OR_MINUTES) -> pd.DataFrame:
     """Per-session feature table indexed by date: rest_return + arm booleans."""
     et = _to_et(intraday_df)
     reg = et.between_time("09:30", "15:59")
     rows, prior_close = [], None
     for day, g in reg.groupby(reg.index.date):
-        f = daily_features(g, prior_close)
+        f = daily_features(g, prior_close, or_minutes=or_minutes)
         if f is not None:
             rows.append({"date": pd.Timestamp(day), **f})
         prior_close = float(g["close"].iloc[-1])
     table = pd.DataFrame(rows).set_index("date")
     return table
+
+
+def vix_gate(table: pd.DataFrame, arm: str, threshold: float = 18.0) -> dict:
+    """Split an arm's conditional rest-of-day edge by VIX bucket (calm < threshold
+    vs high >= threshold). Tests whether small-TF directional only pays when there
+    is enough range to move. Requires a 'vix' column on `table`."""
+    out = {}
+    for label, mask in (("calm", table["vix"] < threshold),
+                        ("high", table["vix"] >= threshold)):
+        sub = table[mask]
+        cond = sub.loc[sub[arm].astype(bool), "rest_return"]
+        n = int(len(cond))
+        out[label] = {
+            "n":         n,
+            "cond_mean": round(float(cond.mean()), 4) if n else 0.0,
+            "pct_positive": round(float((cond > 0).mean()) * 100, 1) if n else 0.0,
+        }
+    return out
 
 
 def run_arm(table: pd.DataFrame, arm: str) -> dict:
@@ -88,6 +122,29 @@ def run_arm(table: pd.DataFrame, arm: str) -> dict:
     stats = edge_vs_baseline(fwd, trig)
     pye   = per_year_edges(fwd, trig)
     return {"arm": arm, **stats, "per_year": pye}
+
+
+def sweep_or_windows(intraday_df: pd.DataFrame, windows=(5, 15, 30, 60),
+                     arms=("break_up", "break_down")) -> dict:
+    """{window: {arm: run_arm result}} — tests whether the OR-breakout edge is
+    stable across the (arbitrary) window choice. Sign-flips across windows = noise."""
+    out = {}
+    for w in windows:
+        t = build_day_table(intraday_df, or_minutes=w)
+        out[w] = {a: run_arm(t, a) for a in arms}
+    return out
+
+
+def attach_vix(table: pd.DataFrame, vix_path: str | None = None) -> pd.DataFrame:
+    """Add a 'vix' column to a day table (prior-or-same-day VIX close, ffilled)."""
+    vix_path = vix_path or os.path.join(os.path.dirname(__file__), "vix_history.csv")
+    vix = pd.read_csv(vix_path, index_col=0, parse_dates=True)
+    col = "value" if "value" in vix.columns else vix.columns[0]
+    s = vix[col].sort_index()
+    t = table.copy()
+    t["vix"] = [float(s.reindex(s.index.union([d])).ffill().get(d, float("nan")))
+                for d in t.index]
+    return t
 
 
 def main():
@@ -110,6 +167,19 @@ def main():
                   else "no edge")
         print(f"{arm:>11}{r['n']:>5}{cm:>9.3f}{r['baseline_mean']:>9.3f}"
               f"{r['edge']:>9.3f}{r['pct_positive']:>6.0f}%  {interp}")
+
+    print("\nOR-window stability (break_up cond-mean %, sign-flip across windows = noise):")
+    sweep = sweep_or_windows(df)
+    for w, arms in sweep.items():
+        print(f"  {w:>2}-min: break_up {arms['break_up']['cond_mean']:+.3f}%  "
+              f"break_down {arms['break_down']['cond_mean']:+.3f}%")
+
+    print("\nVIX gate (15-min OR — does directional pay more with range?):")
+    tv = attach_vix(table)
+    for arm in ("break_up", "break_down"):
+        g = vix_gate(tv, arm, threshold=18.0)
+        print(f"  {arm:>11}: calm<18 n={g['calm']['n']} {g['calm']['cond_mean']:+.3f}%  | "
+              f"high>=18 n={g['high']['n']} {g['high']['cond_mean']:+.3f}%")
 
 
 if __name__ == "__main__":
