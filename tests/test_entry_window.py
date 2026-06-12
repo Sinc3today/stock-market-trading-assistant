@@ -67,11 +67,26 @@ def test_dipbuy_open_blocked_outside_window(monkeypatch):
     assert out is None      # blocked before touching options_layer/recorder
 
 
-def test_paper_broker_execute_today_blocked_outside_window(monkeypatch, tmp_path):
-    """execute_today must return the entry_window skip before reading any plan."""
+def test_paper_broker_logs_prediction_but_skips_open_outside_window(monkeypatch, tmp_path):
+    """Decoupling (Standing Rule 15): outside the entry window the daily
+    PREDICTION is still logged; only the OPEN is skipped."""
+    from datetime import date
     monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
     monkeypatch.setattr(config, "within_entry_window", lambda *a, **k: False)
     from learning.paper_broker import PaperBroker
-    res = PaperBroker().execute_today()
+    from learning.predictions import PredictionLog
+    today = date.today().isoformat()
+    play = {
+        "date": today, "tradeable": True, "regime": "trending_up_calm",
+        "confidence": 0.85, "reasons": ["ADX trend", "VIX calm"],
+        "metrics": {"spy_close": 720.0, "vix": 14.0, "ivr": 32.0, "adx": 28.0},
+        "options": {"strategy": "debit_spread",
+                    "legs": [{"strike": 720, "side": "buy"}, {"strike": 730, "side": "sell"}],
+                    "max_profit": "$700", "max_loss": "$300"},
+    }
+    res = PaperBroker().execute(play)
+    # open skipped...
     assert res.get("skipped") == "entry_window"
-    assert res.get("recorded") is False
+    assert res.get("trade_id") is None
+    # ...but the forecast was still recorded
+    assert PredictionLog().get(today) is not None

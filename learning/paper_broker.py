@@ -110,14 +110,10 @@ class PaperBroker:
     def execute_today(self) -> dict:
         """
         Scheduler entry point: read today's plan from PlanLogger (saved
-        by the 09:15 premarket job) and process it.
+        by the 09:15 premarket job) and process it. The daily PREDICTION is
+        always logged (Standing Rule 15); only the OPEN is gated by the entry
+        window — that gate lives in execute().
         """
-        import config
-        if not config.within_entry_window():
-            logger.info("PaperBroker.execute_today: outside entry window "
-                        "(09:45-15:00 ET) — no open")
-            return {"prediction_date": None, "trade_id": None,
-                    "recorded": False, "skipped": "entry_window"}
         plan = self.plans.get_today()
         if not plan:
             logger.info("PaperBroker.execute_today: no plan for today, nothing to do")
@@ -197,6 +193,15 @@ class PaperBroker:
         if not tradeable:
             logger.info(f"PaperBroker: {today_str} skip day, prediction logged only")
             return {"prediction_date": today_str, "trade_id": None, "recorded": False}
+
+        # Prediction is logged above regardless; only the OPEN is gated to the
+        # entry window (no opens before 09:45 / after 15:00 ET).
+        import config
+        if not config.within_entry_window():
+            logger.info(f"PaperBroker: {today_str} outside entry window "
+                        "(09:45-15:00 ET) — prediction logged, no open")
+            return {"prediction_date": today_str, "trade_id": None,
+                    "recorded": False, "skipped": "entry_window"}
 
         open_disc = self._open_count_by_book("disciplined")
         if open_disc >= MAX_CONCURRENT_DISCIPLINED:

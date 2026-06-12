@@ -11,6 +11,14 @@ from learning.predictions import Prediction, PredictionLog
 from journal.trade_recorder import TradeRecorder
 
 
+@pytest.fixture(autouse=True)
+def _entry_window_open(monkeypatch):
+    """Neutralize the 09:45-15:00 ET open gate so open-logic tests don't depend
+    on wall-clock time. The gate itself is covered by test_entry_window.py."""
+    import config
+    monkeypatch.setattr(config, "ENFORCE_ENTRY_WINDOW", False)
+
+
 # ── Prediction dataclass ──────────────────────────────────────────────────
 
 def test_prediction_new_fields_default_to_none():
