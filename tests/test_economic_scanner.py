@@ -42,6 +42,7 @@ def test_high_impact_series_defined():
     assert "CPIAUCSL" in HIGH_IMPACT_SERIES
     print(f"\n✅ {len(HIGH_IMPACT_SERIES)} high impact series: {HIGH_IMPACT_SERIES}")
 
+@pytest.mark.integration  # live FRED API
 def test_get_latest_cpi(client):
     data = client.get_latest_observation("CPIAUCSL")
     assert data is not None
@@ -50,18 +51,21 @@ def test_get_latest_cpi(client):
     assert "change"        in data
     print(f"\n✅ CPI: {data['current_value']} ({data['current_date']}) change={data['change']}")
 
+@pytest.mark.integration  # live FRED API
 def test_get_latest_jobs(client):
     data = client.get_latest_observation("PAYEMS")
     assert data is not None
     assert float(data["current_value"]) > 100000  # NFP in thousands
     print(f"\n✅ NFP: {data['current_value']}K ({data['current_date']})")
 
+@pytest.mark.integration  # live FRED API
 def test_observation_has_direction(client):
     data = client.get_latest_observation("FEDFUNDS")
     assert data is not None
     assert data["direction"] in ("up", "down", "flat")
     print(f"\n✅ Fed Rate: {data['current_value']}% direction={data['direction']}")
 
+@pytest.mark.integration  # live FRED API
 def test_get_all_tracked(client):
     all_data = client.get_all_tracked()
     assert len(all_data) >= 4
@@ -70,6 +74,7 @@ def test_get_all_tracked(client):
         assert "name"          in data
     print(f"\n✅ Fetched {len(all_data)} series")
 
+@pytest.mark.integration  # live FRED API
 def test_economic_snapshot(client):
     snapshot = client.get_economic_snapshot()
     assert "indicators"       in snapshot
@@ -86,6 +91,7 @@ def test_scanner_initializes(scanner):
     assert scanner is not None
     print("\n✅ EconomicScanner initialized")
 
+@pytest.mark.integration  # live FRED API
 def test_scan_for_recent_releases(scanner):
     releases = scanner.scan_for_new_releases(days_back=60)
     assert isinstance(releases, list)
