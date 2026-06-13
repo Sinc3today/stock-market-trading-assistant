@@ -71,13 +71,13 @@ class VolumeAnalysis:
         breakdown = {}
         rvol = self.result["rvol"]
 
-        if rvol >= config.VOLUME_SPIKE_MULTIPLIER:        # >= 1.5x
+        if rvol >= config.VOLUME_STRONG_MULTIPLIER:        # >= 1.5x → strong
             score += 12
             breakdown["volume_spike"] = {
                 "points": 12,
                 "reason": f"Strong volume spike: {rvol:.1f}x average"
             }
-        elif rvol >= 1.2:                                  # >= 1.2x (partial)
+        elif rvol >= config.VOLUME_SPIKE_MULTIPLIER:       # >= 1.2x → moderate
             score += 6
             breakdown["volume_spike"] = {
                 "points": 6,

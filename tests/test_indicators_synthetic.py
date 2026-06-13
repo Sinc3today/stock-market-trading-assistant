@@ -210,14 +210,25 @@ def test_donchian_insufficient_data():
 # VolumeAnalysis
 # ===========================================================================
 
-def test_volume_spike_on_last_bar():
+def test_volume_strong_spike_full_score():
+    # rvol >= VOLUME_STRONG_MULTIPLIER (1.5) -> full 12 pts
     vols = [1_000_000] * 59 + [5_000_000]  # 5x spike on final bar
     df = make_df([100 + i * 0.1 for i in range(60)], volume=vols)
     res = VolumeAnalysis(df).analyze()
-    assert res["rvol"] > 1.2
+    assert res["rvol"] >= 1.5
     assert res["volume_spike"] is True
     assert res["score"] == 12
     assert res["volume_direction"] == "up"  # rising closes
+
+
+def test_volume_moderate_tier_partial_score():
+    # rvol in [VOLUME_SPIKE_MULTIPLIER 1.2, VOLUME_STRONG_MULTIPLIER 1.5) -> 6 pts
+    vols = [1_000_000] * 59 + [1_300_000]  # ~1.3x -> moderate
+    df = make_df([100 + i * 0.1 for i in range(60)], volume=vols)
+    res = VolumeAnalysis(df).analyze()
+    assert 1.2 <= res["rvol"] < 1.5
+    assert res["volume_spike"] is True
+    assert res["score"] == 6
 
 
 def test_volume_no_spike_flat_volume():
@@ -236,9 +247,7 @@ def test_volume_direction_down():
 
 
 def test_volume_keys_and_near_threshold():
-    # config.VOLUME_SPIKE_MULTIPLIER == 1.2, so >=1.2 already scores full 12;
-    # the 1.2-1.5 "partial" branch in the module is dead code at this config.
-    # Pin a just-below-1.2 bar to the zero-score band instead.
+    # just below the 1.2 spike threshold -> zero-score band
     vols = [1_000_000] * 59 + [1_150_000]  # ~1.15x -> below 1.2 threshold
     df = make_df([100 + i * 0.1 for i in range(60)], volume=vols)
     res = VolumeAnalysis(df).analyze()

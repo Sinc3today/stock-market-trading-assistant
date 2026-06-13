@@ -115,7 +115,8 @@ MA_LONG  = 200
 DONCHIAN_PERIOD          = 20
 DONCHIAN_INTRADAY_PERIOD = 20
 
-VOLUME_SPIKE_MULTIPLIER = 1.2
+VOLUME_SPIKE_MULTIPLIER = 1.2   # rvol >= this = a spike (flag + moderate score tier)
+VOLUME_STRONG_MULTIPLIER = 1.5  # rvol >= this = a STRONG spike (full volume score)
 VOLUME_LOOKBACK         = 20
 
 RSI_PERIOD              = 14
