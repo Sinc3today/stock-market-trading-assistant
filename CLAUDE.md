@@ -114,7 +114,10 @@ SPY play trade in the **disciplined** book.
 2. Never run intraday scanner outside 9:30-16:00 ET
 3. Always use `config.SWING_PRIMARY_TIMEFRAME` not hardcoded `"day"` or `"1day"`
 4. Every new module needs a test file in `tests/`
-5. Run `pytest tests/ -v -m "not integration" --tb=short` before every commit
+5. Run the full suite before every commit. Parallel (recommended, ~90s on 16 cores):
+   `pytest tests/ -m "not integration" -n auto --dist loadfile --tb=short`
+   (`--dist loadfile` keeps each file on one worker, preserving module fixtures/ordering.
+   For debugging a single test, drop the `-n` flags to run serially with pdb.)
 6. Never commit with failing tests — fix the code, not the assertions
 7. `post_message_sync` for plain Discord messages, `post_alert_sync` for scored alerts
 8. `plan_logger.py` for pre-trade plans, `trade_recorder.py` for actual fills — never mix
@@ -144,7 +147,7 @@ See TRADING_ASSISTANT.md for current project state and decisions.
 
 1. Read BUILD_LOG.md — last 2-3 entries
 2. Read TRADING_ASSISTANT.md — Active Decisions section
-3. Run `pytest tests/ -v -m "not integration" --tb=short` to confirm baseline
+3. Run `pytest tests/ -m "not integration" -n auto --dist loadfile --tb=short` to confirm baseline
 4. Check git status — never build on uncommitted changes
 
 ## Parking Lot
