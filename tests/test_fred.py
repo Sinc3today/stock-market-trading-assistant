@@ -13,6 +13,8 @@ import requests
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from dotenv import load_dotenv
+
+pytestmark = pytest.mark.integration  # live network/API — excluded from the fast suite
 load_dotenv()
 
 

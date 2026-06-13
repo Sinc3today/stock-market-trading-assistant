@@ -19,6 +19,8 @@ from indicators.volume import VolumeAnalysis
 from indicators.cvd import CVDAnalysis
 from indicators.rsi import RSIAnalysis
 
+pytestmark = pytest.mark.integration  # live network/API — excluded from the fast suite
+
 
 @pytest.fixture(scope="module")
 def daily_df():

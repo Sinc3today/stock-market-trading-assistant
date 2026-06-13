@@ -21,6 +21,8 @@ from signals.scorer import SignalScorer
 from signals.gates import AlertGates
 from signals.alert_builder import AlertBuilder
 
+pytestmark = pytest.mark.integration  # live network/API — excluded from the fast suite
+
 
 # ─────────────────────────────────────────
 # FIXTURES
