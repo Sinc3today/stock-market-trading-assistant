@@ -170,7 +170,9 @@ def test_snapshots_open_paper_trade(iso_dirs):
         "reasons":    ["x"],
         "metrics":    {"spy_close": 720.0},
         "options":    {"strategy": "debit_spread", "net_debit": 3.0,
-                       "max_profit": 700, "max_loss": 300, "legs": []},
+                       "max_profit": 700, "max_loss": 300,
+                       "legs": [{"strike": 720, "action": "buy", "type": "call"},
+                                {"strike": 725, "action": "sell", "type": "call"}]},
     }
     PaperBroker().execute(play)
     OutcomeResolver(polygon_client=FakePolygon(close=725.0)).resolve_today()
@@ -193,7 +195,9 @@ def test_open_position_marked_with_real_close_on_skip_day(iso_dirs):
         "reasons":    ["x"],
         "metrics":    {"spy_close": 739.0},
         "options":    {"strategy": "credit_spread", "net_credit": 1.0,
-                       "max_profit": 100, "max_loss": 400, "legs": []},
+                       "max_profit": 100, "max_loss": 400,
+                       "legs": [{"strike": 730, "action": "sell", "type": "put"},
+                                {"strike": 725, "action": "buy", "type": "put"}]},
     }
     PaperBroker().execute(play)
 

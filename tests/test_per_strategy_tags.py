@@ -121,7 +121,8 @@ def test_paper_broker_populates_45dte_disciplined_tags(tmp_path, monkeypatch):
             "entry_price":   1.10,
             "max_profit":    200.0,
             "max_loss":      110.0,
-            "legs":          [],
+            "legs":          [{"strike": 740, "action": "buy",  "type": "call"},
+                              {"strike": 745, "action": "sell", "type": "call"}],
         },
     }
     broker.execute(play)

@@ -55,6 +55,11 @@ def is_auto_paper(trade: dict) -> bool:
 MAX_CONCURRENT_DISCIPLINED = 3
 MAX_CONCURRENT_LEARNING    = 6
 
+# A plan only opens if it carries one of these real option structures. Anything
+# else (e.g. strategy "none" when the brief couldn't price a play) logs the
+# prediction but opens nothing.
+_VALID_STRATEGIES = {"debit_spread", "credit_spread", "iron_condor", "single_leg"}
+
 
 class PaperBroker:
     """Records a paper position from a daily PlayCard."""
@@ -140,16 +145,23 @@ class PaperBroker:
                 "intended_direction": plan.get("intended_direction"),
                 "options":    {},
             }
+        # tradeable ONLY when the plan carries a real options structure. A
+        # non-SKIP plan can still have no structure (strategy "none" / no legs)
+        # when the brief couldn't price one — those must NOT open a placeholder
+        # position. (regression: 2026-06-12 choppy_transition opened $1.00 junk.)
+        strategy = plan.get("strategy")
+        legs     = plan.get("legs", []) or []
+        has_structure = (strategy in _VALID_STRATEGIES) and bool(legs)
         return {
             "date":       plan.get("date"),
-            "tradeable":  True,
+            "tradeable":  has_structure,
             "regime":     plan.get("regime", "unknown"),
             "confidence": float(plan.get("confidence", 0.0) or 0.0),
             "reasons":    [s.strip() for s in (plan.get("thesis", "") or "").split("|") if s.strip()],
             "metrics":    plan.get("regime_metrics", {}) or {},
             "options": {
-                "strategy":        plan.get("strategy"),
-                "legs":            plan.get("legs", []),
+                "strategy":        strategy,
+                "legs":            legs,
                 "max_profit":      plan.get("max_profit"),
                 "max_loss":        plan.get("max_loss"),
                 "rr_ratio":        plan.get("rr_ratio"),
@@ -193,6 +205,15 @@ class PaperBroker:
         if not tradeable:
             logger.info(f"PaperBroker: {today_str} skip day, prediction logged only")
             return {"prediction_date": today_str, "trade_id": None, "recorded": False}
+
+        # Defense-in-depth: never open without a real options structure. A
+        # tradeable-flagged play with strategy "none" / no legs is a no-structure
+        # day — log the prediction, open nothing (no $1.00 placeholder trade).
+        if (options.get("strategy") not in _VALID_STRATEGIES) or not (options.get("legs") or []):
+            logger.info(f"PaperBroker: {today_str} no valid options structure "
+                        f"(strategy={options.get('strategy')!r}) — prediction logged, no open")
+            return {"prediction_date": today_str, "trade_id": None,
+                    "recorded": False, "skipped": "no_structure"}
 
         # Prediction is logged above regardless; only the OPEN is gated to the
         # entry window (no opens before 09:45 / after 15:00 ET).

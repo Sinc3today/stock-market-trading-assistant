@@ -38,7 +38,8 @@ def _tradeable_play(date_str="2026-05-26"):
             "entry_price": 1.10,
             "max_profit":  200.0,
             "max_loss":    110.0,
-            "legs":        [],
+            "legs":        [{"strike": 740, "action": "buy",  "type": "call"},
+                            {"strike": 745, "action": "sell", "type": "call"}],
         },
     }
 
