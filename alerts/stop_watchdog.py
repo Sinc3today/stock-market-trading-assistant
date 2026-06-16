@@ -41,10 +41,19 @@ def stop_signal(legs, spot: float, buffer_pct: float = 0.005):
     return False, ""
 
 
+def _leg_order_key(leg):
+    """Display order (user preference): buy call, sell call, buy put, sell put —
+    calls before puts, buy before sell."""
+    typ = (leg.get("option_type") or leg.get("type") or "").upper()
+    action = (leg.get("action") or "").upper()
+    return (0 if typ.startswith("C") else 1, 0 if action.startswith("B") else 1)
+
+
 def rh_leg_lines(legs) -> list[str]:
-    """Legs as copy-ready Robinhood-shaped lines, e.g. 'SELL $700 PUT'."""
+    """Legs as copy-ready Robinhood-shaped lines, e.g. 'SELL $700 PUT', ordered
+    buy call, sell call, buy put, sell put."""
     out = []
-    for leg in legs or []:
+    for leg in sorted(legs or [], key=_leg_order_key):
         action = (leg.get("action") or "").upper()
         typ = (leg.get("option_type") or leg.get("type") or "").upper()
         strike = leg.get("strike")

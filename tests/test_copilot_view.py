@@ -28,6 +28,14 @@ def test_rh_leg_lines_match_broker_wording():
     assert len(lines) == 4
 
 
+def test_rh_leg_lines_order_buy_first_calls_then_puts():
+    # user preference: buy call, sell call, buy put, sell put
+    from alerts.stop_watchdog import rh_leg_lines
+    lines = rh_leg_lines(_condor_legs())   # stored order is mixed
+    assert lines == ["BUY $781 CALL", "SELL $776 CALL",
+                     "BUY $695 PUT",  "SELL $700 PUT"]
+
+
 def test_position_status_three_tiers():
     from alerts.stop_watchdog import position_status
     # well inside -> SAFE
