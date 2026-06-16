@@ -31,7 +31,7 @@ from typing import Any
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from fastapi import FastAPI, HTTPException, Cookie, Form
+from fastapi import FastAPI, HTTPException, Cookie, Form, File, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -672,6 +672,22 @@ _COPILOT_CSS = """
 .btn-primary{appearance:none;border:1px solid var(--accent,#4f46e5);background:var(--accent,#4f46e5);color:#fff;
   border-radius:6px;padding:.45rem .8rem;font-size:.9rem;font-weight:600;cursor:pointer}
 .btn-primary:active{transform:translateY(1px)}
+.btn-ghost{display:inline-block;appearance:none;border:1px solid var(--border,#e4e4e7);background:var(--surface,#fff);
+  color:var(--fg,#18181b);border-radius:6px;padding:.45rem .8rem;font-size:.9rem;font-weight:600;
+  cursor:pointer;text-decoration:none}
+.cp-form{background:var(--surface,#fff);border:1px solid var(--border,#e4e4e7);border-radius:8px;padding:1rem;margin-bottom:1rem}
+.cp-form label{display:block;font-size:.78rem;color:var(--fg-subtle,#a1a1aa);text-transform:uppercase;
+  letter-spacing:.04em;margin:.55rem 0 .2rem}
+.cp-form input{width:100%;box-sizing:border-box;border:1px solid var(--border,#e4e4e7);border-radius:6px;
+  padding:.5rem .6rem;font-size:1rem;font-family:var(--font-mono,ui-monospace,monospace);
+  background:var(--bg,#fafafa);color:var(--fg,#18181b)}
+.cp-form input:focus{outline:2px solid var(--accent-weak,#eef2ff);border-color:var(--accent,#4f46e5)}
+.cp-grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem 1rem}
+.cp-note{font-size:.82rem;color:var(--fg-muted,#52525b);margin:.3rem 0 .6rem}
+.cp-err{background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;border-radius:6px;padding:.5rem .7rem;
+  font-size:.88rem;margin-bottom:.75rem}
+.cp-ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;border-radius:6px;padding:.5rem .7rem;
+  font-size:.88rem;margin-bottom:.75rem}
 """
 
 
@@ -743,11 +759,77 @@ def _render_copilot(live: list[dict], plays: list[dict], spot) -> str:
 
     body = (f'<div class="cp-spot">SPY {spot_str}</div>'
             f'<div class="cp-h">Your live positions</div>{live_html}'
-            f'<div class="cp-h">Today\'s plays — mirror on Robinhood</div>{plays_html}')
+            f'<div class="cp-h">Today\'s plays — mirror on Robinhood</div>{plays_html}'
+            f'<div class="cp-h">Built one yourself?</div>'
+            f'<div class="cp-note">Log a trade you set up on Robinhood so the '
+            f'watchdog tracks it too.</div>'
+            f'<a class="btn-ghost" href="/copilot/log">+ Log a trade I built</a>')
     return _render_page(
         title      = "Trading Assistant - Copilot",
         heading    = "Trade Copilot",
         body       = body,
+        css        = _INDEX_CSS + _COPILOT_CSS,
+        active_nav = "copilot",
+    )
+
+
+def _render_copilot_log(prefill: dict | None = None, error: str | None = None,
+                        ok: str | None = None) -> str:
+    """Manual 'log a trade I built myself' form. Two ways to fill it: upload an
+    RH screenshot (Claude reads the legs, pre-fills below) or type the strikes.
+    Either way the user confirms before it's logged — vision just saves typing."""
+    pf = prefill or {}
+
+    def _v(k):
+        return _esc(str(pf.get(k, "")))
+
+    msg = ""
+    if error:
+        msg = f'<div class="cp-err">{_esc(error)}</div>'
+    elif ok:
+        msg = f'<div class="cp-ok">{_esc(ok)}</div>'
+
+    upload = (
+        '<form class="cp-form" method="post" action="/copilot/extract" '
+        'enctype="multipart/form-data">'
+        '<label>Read it off a screenshot (optional)</label>'
+        '<div class="cp-note">Upload your Robinhood order screen — Claude reads '
+        'the legs and pre-fills the form. Tip: the order ticket usually doesn\'t '
+        'show your balance; crop it out if it does.</div>'
+        '<input type="file" name="shot" accept="image/*" capture="environment">'
+        '<div style="margin-top:.6rem"><button class="btn-primary" type="submit">'
+        '📷 Extract from screenshot</button></div>'
+        '</form>'
+    )
+
+    form = (
+        '<form class="cp-form" method="post" action="/copilot/log">'
+        f'<label>Ticker</label><input name="ticker" value="{_v("ticker") or "SPY"}">'
+        f'<label>Expiration (YYYY-MM-DD)</label>'
+        f'<input name="expiry" value="{_v("expiry")}" placeholder="2026-07-17">'
+        f'<label>Net credit / debit (per share)</label>'
+        f'<input name="entry_price" value="{_v("entry_price")}" placeholder="1.10">'
+        '<label>Strikes — leave blank what you didn\'t trade</label>'
+        '<div class="cp-grid">'
+        f'<div><label>Buy call</label><input name="bc" value="{_v("bc")}"></div>'
+        f'<div><label>Sell call</label><input name="sc" value="{_v("sc")}"></div>'
+        f'<div><label>Buy put</label><input name="bp" value="{_v("bp")}"></div>'
+        f'<div><label>Sell put</label><input name="sp" value="{_v("sp")}"></div>'
+        '</div>'
+        '<div class="cp-grid">'
+        f'<div><label>Max profit ($)</label><input name="max_profit" value="{_v("max_profit")}"></div>'
+        f'<div><label>Max loss ($)</label><input name="max_loss" value="{_v("max_loss")}"></div>'
+        '</div>'
+        '<div style="margin-top:.9rem"><button class="btn-primary" type="submit">'
+        'Log live trade</button> '
+        '<a class="btn-ghost" href="/copilot">Cancel</a></div>'
+        '</form>'
+    )
+
+    return _render_page(
+        title      = "Trading Assistant - Log a trade",
+        heading    = "Log a trade I built",
+        body       = msg + upload + form,
         css        = _INDEX_CSS + _COPILOT_CSS,
         active_nav = "copilot",
     )
@@ -2482,6 +2564,55 @@ def copilot_placed(trade_id: str = Form(...)):
             source      = "user-placed",
             notes       = f"[LIVE] mirrored from play {trade_id}",
         )
+    return RedirectResponse("/copilot", status_code=303)
+
+
+@app.get("/copilot/log", response_class=HTMLResponse)
+def copilot_log_form():
+    """Blank manual-log form for a trade the user built on RH themselves."""
+    return HTMLResponse(_render_copilot_log())
+
+
+@app.post("/copilot/extract", response_class=HTMLResponse)
+async def copilot_extract(shot: UploadFile = File(...)):
+    """Read a play off an uploaded RH screenshot (Claude vision) and return the
+    manual-log form pre-filled — the user confirms before logging."""
+    from alerts.play_vision import extract
+    from alerts.copilot_log import prefill_from_extracted
+    try:
+        data = await shot.read()
+        if not data:
+            return HTMLResponse(_render_copilot_log(error="Empty upload — pick an image."))
+        media = shot.content_type or "image/png"
+        play = extract(data, media_type=media)
+        prefill = prefill_from_extracted(play)
+        if not any(prefill.get(k) for k in ("bc", "sc", "bp", "sp")):
+            return HTMLResponse(_render_copilot_log(
+                prefill=prefill,
+                error="Couldn't read the legs — fill the strikes in manually."))
+        return HTMLResponse(_render_copilot_log(
+            prefill=prefill,
+            ok="Read from screenshot — check the strikes, then log."))
+    except (RuntimeError, ValueError) as e:
+        return HTMLResponse(_render_copilot_log(error=f"Couldn't read it: {e}"))
+
+
+@app.post("/copilot/log")
+def copilot_log_submit(
+    ticker: str = Form("SPY"), expiry: str = Form(""),
+    entry_price: str = Form(""), max_profit: str = Form(""), max_loss: str = Form(""),
+    bc: str = Form(""), sc: str = Form(""), bp: str = Form(""), sp: str = Form(""),
+):
+    """Log a user-built trade so the smart-stop watchdog tracks it (book=live)."""
+    from alerts.copilot_log import build_live_trade_kwargs
+    form = {"ticker": ticker, "expiry": expiry, "entry_price": entry_price,
+            "max_profit": max_profit, "max_loss": max_loss,
+            "bc": bc, "sc": sc, "bp": bp, "sp": sp}
+    try:
+        kwargs = build_live_trade_kwargs(form)
+    except ValueError as e:
+        return HTMLResponse(_render_copilot_log(prefill=form, error=str(e)))
+    TradeRecorder().log_entry(**kwargs)
     return RedirectResponse("/copilot", status_code=303)
 
 
