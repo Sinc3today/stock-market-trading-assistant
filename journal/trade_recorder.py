@@ -480,5 +480,6 @@ class TradeRecorder:
             return []
 
     def _save(self, trades: list):
-        with open(self.trades_path, "w") as f:
-            json.dump(trades, f, indent=2)
+        # atomic write: a freeze/crash mid-write must never corrupt the journal
+        from atomic_io import atomic_write_text
+        atomic_write_text(self.trades_path, json.dumps(trades, indent=2))

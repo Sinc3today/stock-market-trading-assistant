@@ -159,7 +159,7 @@ class PlanLogger:
         # Keep last 365 entries
         plans = sorted(plans, key=lambda p: p.get("date", ""))[-365:]
         try:
-            with open(self._plans_path, "w") as f:
-                json.dump(plans, f, indent=2)
+            from atomic_io import atomic_write_text
+            atomic_write_text(self._plans_path, json.dumps(plans, indent=2))
         except OSError as e:
             logger.error(f"PlanLogger save error: {e}")

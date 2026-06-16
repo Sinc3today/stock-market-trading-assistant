@@ -255,6 +255,6 @@ class PredictionLog:
 
     def _rewrite(self, rows: list[dict]):
         rows = sorted(rows, key=lambda r: r.get("date", ""))
-        with open(self._path, "w") as f:
-            for r in rows:
-                f.write(json.dumps(r, separators=(",", ":")) + "\n")
+        from atomic_io import atomic_write_text
+        atomic_write_text(self._path, "".join(
+            json.dumps(r, separators=(",", ":")) + "\n" for r in rows))

@@ -195,7 +195,7 @@ class KnowledgeBase:
             lines.append("---")
             lines.append("")
         try:
-            with open(self._md_path, "w") as f:
-                f.write("\n".join(lines))
+            from atomic_io import atomic_write_text
+            atomic_write_text(self._md_path, "\n".join(lines))
         except OSError as ex:
             logger.warning(f"KB markdown rewrite failed: {ex}")

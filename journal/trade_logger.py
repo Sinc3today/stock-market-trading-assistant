@@ -167,5 +167,5 @@ class TradeLogger:
 
     def _save(self, path: str, data: list, limit: int = 1000):
         data = data[-limit:]
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
+        from atomic_io import atomic_write_text
+        atomic_write_text(path, json.dumps(data, indent=2))
