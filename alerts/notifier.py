@@ -51,6 +51,18 @@ class Notifier:
         except Exception as e:
             logger.error(f"Notifier.play: pushover send failed: {e}")
 
+    # ── APPROVE: emergency entry alert (one-tap to /copilot) ────────────────
+
+    def approve(self, trade: dict) -> bool:
+        """Emergency (priority-2) entry-approve push for a freshly-opened
+        tradeable play — RH-shaped legs + one-tap link to the copilot screen."""
+        from alerts.entry_approve import notify_entry_approve
+        try:
+            return notify_entry_approve(trade, self.pushover)
+        except Exception as e:
+            logger.error(f"Notifier.approve failed: {e}")
+            return False
+
     # ── LOG: record only, NO push ──────────────────────────────────────────
 
     def log(self, message_or_alert) -> None:

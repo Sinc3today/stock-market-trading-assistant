@@ -45,17 +45,32 @@ from journal.trade_recorder     import TradeRecorder
 
 # ── JOB WRAPPERS ──────────────────────────────────────
 
-def job_paper_broker(play_fn=None):
+def job_paper_broker(play_fn=None, approve_fn=None):
     if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
         logger.info("paper_broker: non-trading day, skipping")
         return
     try:
         result = PaperBroker().execute_today()
         logger.info(f"learning.paper_broker -> {result}")
-        if play_fn and result.get("recorded"):
+        if not result.get("recorded"):
+            return
+        trade_id = result.get("trade_id")
+        # Prefer the emergency entry-approve alert (RH-shaped legs + one-tap to
+        # /copilot) over the plain priority-1 buzz — this is the "approve it"
+        # alert the user asked for so they don't miss the window.
+        if approve_fn and trade_id:
+            trade = next((t for t in TradeRecorder().get_open_trades()
+                          if t.get("trade_id") == trade_id), None)
+            if trade:
+                try:
+                    approve_fn(trade)
+                    return
+                except Exception as e:
+                    logger.warning(f"paper_broker approve notify failed: {e}")
+        if play_fn:
             try:
                 play_fn(title="📈 Daily play opened",
-                        body=f"45DTE disciplined play opened — {result.get('trade_id')}")
+                        body=f"45DTE disciplined play opened — {trade_id}")
             except Exception as e:
                 logger.warning(f"paper_broker play notify failed: {e}")
     except Exception as e:
@@ -223,6 +238,7 @@ def register_learning_jobs(
     vix_client=None,
     post_fn=None,
     play_fn=None,
+    approve_fn=None,
 ):
     """Register all learning jobs onto an already-running scheduler."""
     from apscheduler.triggers.cron import CronTrigger
@@ -233,7 +249,7 @@ def register_learning_jobs(
         # 09:45 ET — inside the entry window (config.ENTRY_WINDOW_START_ET). Was
         # 09:16 (pre-market); opens must not fire before 15 min after the bell.
         CronTrigger(day_of_week="mon-fri", hour=9, minute=45, timezone=eastern),
-        kwargs={"play_fn": play_fn},
+        kwargs={"play_fn": play_fn, "approve_fn": approve_fn},
         id="learning_paper_broker",
         name="Learning: paper broker",
         replace_existing=True,

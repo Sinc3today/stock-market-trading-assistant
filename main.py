@@ -469,6 +469,7 @@ if __name__ == "__main__":
             vix_client     = VIXClient(),   # exit_manager marks spreads with VIX as IV
             post_fn=notifier.message,
             play_fn=notifier.play,
+            approve_fn=notifier.approve,   # emergency entry-approve (one-tap to /copilot)
         )
         logger.info("✅ Self-learning jobs registered")
     except Exception as e:
