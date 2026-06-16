@@ -31,8 +31,8 @@ from typing import Any
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from fastapi import FastAPI, HTTPException, Cookie
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Cookie, Form
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 import config
@@ -417,6 +417,7 @@ _NAV_GROUPS = [
         ("alerts", "/",       "Alerts"),
     ]),
     ("Trades", [
+        ("copilot", "/copilot", "Copilot"),
         ("trades",  "/trades",  "Trades"),
         ("journal", "/journal", "Journal"),
         ("chats",   "/chats",   "Chats"),
@@ -660,6 +661,95 @@ def _render_trades(trades: list[dict]) -> str:
         body        = body,
         css         = _INDEX_CSS,
         active_nav  = "trades",
+    )
+
+
+_COPILOT_CSS = """
+.cp-spot{font-family:var(--font-mono,ui-monospace,monospace);color:var(--fg-muted,#52525b);margin-bottom:.75rem}
+.legs{margin:.4rem 0;display:flex;flex-direction:column;gap:.2rem}
+.leg{font-family:var(--font-mono,ui-monospace,monospace);font-size:.95rem;letter-spacing:.02em}
+.cp-h{margin:1.4rem 0 .5rem;font-size:1rem;color:var(--fg-muted,#52525b);text-transform:uppercase;letter-spacing:.04em}
+.btn-primary{appearance:none;border:1px solid var(--accent,#4f46e5);background:var(--accent,#4f46e5);color:#fff;
+  border-radius:6px;padding:.45rem .8rem;font-size:.9rem;font-weight:600;cursor:pointer}
+.btn-primary:active{transform:translateY(1px)}
+"""
+
+
+def _spy_spot():
+    """Latest SPY price for stop-status, or None. Best-effort (no page-load blocking)."""
+    try:
+        from data.polygon_client import PolygonClient
+        df = PolygonClient().get_bars("SPY", config.SWING_PRIMARY_TIMEFRAME, limit=1, days_back=3)
+        return float(df["close"].iloc[-1]) if df is not None and len(df) else None
+    except Exception:
+        return None
+
+
+def _render_copilot(live: list[dict], plays: list[dict], spot) -> str:
+    """Trade copilot: your live (watchdog-tracked) positions + today's plays to
+    mirror on Robinhood — copy-ready RH-shaped legs + smart-stop status."""
+    from alerts.stop_watchdog import rh_leg_lines, position_status
+    spot_str = f"${spot:,.2f}" if isinstance(spot, (int, float)) else "—"
+
+    def _legs(t):
+        lines = rh_leg_lines(t.get("legs") or [])
+        return ("<div class='legs'>" +
+                "".join(f"<div class='leg'>{_esc(l)}</div>" for l in lines) +
+                "</div>") if lines else ""
+
+    def _exp(t):
+        for leg in (t.get("legs") or []):
+            e = leg.get("expiration") or leg.get("expiry")
+            if e:
+                return str(e)[:10]
+        return t.get("dte_bucket") or "—"
+
+    def _strat(t):
+        return _esc((t.get("strategy") or t.get("trade_type") or "").replace("_", " "))
+
+    if live:
+        cards = []
+        for t in live:
+            legs = t.get("legs") or []
+            if isinstance(spot, (int, float)) and legs:
+                label, cls = position_status(legs, spot)
+            else:
+                label, cls = "—", "status-open"
+            cards.append(f'''<div class="alert-card">
+  <div><b>{_esc(t.get('ticker','SPY'))}</b> &middot; {_strat(t)} <span class="badge {cls}">{label}</span></div>
+  {_legs(t)}
+  <div class="muted" style="margin-top:.25rem">Exp {_esc(_exp(t))} &middot; watchdog tracking</div>
+</div>''')
+        live_html = "\n".join(cards)
+    else:
+        live_html = ('<div class="empty">No live positions logged. Mirror a play on '
+                     'Robinhood, then tap "I placed it" below — the watchdog will track it.</div>')
+
+    if plays:
+        cards = []
+        for t in plays:
+            cards.append(f'''<div class="alert-card">
+  <div><b>{_esc(t.get('ticker','SPY'))}</b> &middot; {_strat(t)}</div>
+  {_legs(t)}
+  <div class="muted" style="margin-top:.25rem">Exp {_esc(_exp(t))}</div>
+  <form method="post" action="/copilot/placed" style="margin-top:.5rem">
+    <input type="hidden" name="trade_id" value="{_esc(t.get('trade_id',''))}">
+    <button class="btn-primary" type="submit">I placed it on RH</button>
+  </form>
+</div>''')
+        plays_html = "\n".join(cards)
+    else:
+        plays_html = '<div class="empty">No open plays to mirror right now.</div>'
+
+    body = (f'<div class="cp-spot">SPY {spot_str}</div>'
+            f'<div class="cp-h">Your live positions</div>{live_html}'
+            f'<div class="cp-h">Today\'s plays — mirror on Robinhood</div>{plays_html}')
+    return _render_page(
+        title      = "Trading Assistant - Copilot",
+        heading    = "Trade Copilot",
+        body       = body,
+        css        = _INDEX_CSS + _COPILOT_CSS,
+        active_nav = "copilot",
     )
 
 
@@ -2358,6 +2448,41 @@ def trades_page():
     """Cross-trade history from TradeRecorder."""
     trades = TradeRecorder().get_all_trades()
     return HTMLResponse(_render_trades(trades))
+
+
+@app.get("/copilot", response_class=HTMLResponse)
+def copilot_page():
+    """Trade copilot — your live positions (watchdog-tracked) + plays to mirror."""
+    opens = TradeRecorder().get_open_trades()
+    live  = [t for t in opens if t.get("book") == "live"]
+    plays = [t for t in opens if (t.get("book") or "disciplined") == "disciplined"]
+    return HTMLResponse(_render_copilot(live, plays, _spy_spot()))
+
+
+@app.post("/copilot/placed")
+def copilot_placed(trade_id: str = Form(...)):
+    """'I placed it on RH' — log a live copy of a play so the smart-stop watchdog
+    tracks YOUR real position (the bot can't read RH, so you tell it)."""
+    rec = TradeRecorder()
+    src = next((t for t in rec.get_open_trades() if t.get("trade_id") == trade_id), None)
+    if src:
+        rec.log_entry(
+            ticker      = src.get("ticker", "SPY"),
+            entry_price = src.get("entry_price") or 0,
+            size        = 1,
+            trade_type  = src.get("trade_type") or src.get("strategy") or "single_leg",
+            strategy    = src.get("strategy"),
+            direction   = src.get("direction", "neutral"),
+            mode        = "swing",
+            legs        = src.get("legs") or [],
+            max_profit  = src.get("max_profit"),
+            max_loss    = src.get("max_loss"),
+            dte_bucket  = src.get("dte_bucket"),
+            book        = "live",
+            source      = "user-placed",
+            notes       = f"[LIVE] mirrored from play {trade_id}",
+        )
+    return RedirectResponse("/copilot", status_code=303)
 
 
 @app.get("/journal", response_class=HTMLResponse)

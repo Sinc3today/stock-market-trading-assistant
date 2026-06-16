@@ -41,8 +41,33 @@ def stop_signal(legs, spot: float, buffer_pct: float = 0.005):
     return False, ""
 
 
+def rh_leg_lines(legs) -> list[str]:
+    """Legs as copy-ready Robinhood-shaped lines, e.g. 'SELL $700 PUT'."""
+    out = []
+    for leg in legs or []:
+        action = (leg.get("action") or "").upper()
+        typ = (leg.get("option_type") or leg.get("type") or "").upper()
+        strike = leg.get("strike")
+        if not action or strike is None or not typ:
+            continue
+        out.append(f"{action} ${strike:g} {typ}")
+    return out
+
+
+def position_status(legs, spot: float, buffer_pct: float = 0.005):
+    """3-tier status for the companion screen:
+    NEAR STOP (within the stop buffer of a short), WATCH (within 2x buffer),
+    else SAFE. Returns (label, css_class)."""
+    if stop_signal(legs, spot, buffer_pct)[0]:
+        return "NEAR STOP", "status-loss"
+    if stop_signal(legs, spot, buffer_pct * 2)[0]:
+        return "WATCH", "status-be"
+    return "SAFE", "status-win"
+
+
 def check_open_positions(recorder, spot: float, pushover, alerted: set,
-                         buffer_pct: float = 0.005, books=("disciplined",)) -> int:
+                         buffer_pct: float = 0.005,
+                         books=("disciplined", "live")) -> int:
     """For each open position whose underlying is near a short strike, fire one
     emergency Pushover (deduped via `alerted`). Returns the number of new alerts."""
     if spot is None:
