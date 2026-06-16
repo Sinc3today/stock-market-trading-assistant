@@ -37,6 +37,20 @@ FOMC_DATES = [
     date(2026, 1, 28), date(2026, 3, 18), date(2026, 4, 29),
 ]
 
+# CPI release dates (BLS). 2025-2026 mirror data/event_calendar._static_cpi_dates
+# (the bot's vetted table); 2024 H2 added to cover the option-data window. Dates
+# are accurate to the week; the weekly-expiry method absorbs ±1-day error.
+CPI_DATES = [
+    date(2024, 7, 11), date(2024, 8, 14), date(2024, 9, 11),
+    date(2024, 10, 10), date(2024, 11, 13), date(2024, 12, 11),
+    date(2025, 1, 15), date(2025, 2, 12), date(2025, 3, 12),
+    date(2025, 4, 10), date(2025, 5, 13), date(2025, 6, 11),
+    date(2025, 7, 15), date(2025, 8, 12), date(2025, 9, 10),
+    date(2025, 10, 15), date(2025, 11, 13), date(2025, 12, 10),
+    date(2026, 1, 14), date(2026, 2, 11), date(2026, 3, 11),
+    date(2026, 4, 10), date(2026, 5, 12), date(2026, 6, 10),
+]
+
 
 def nearest_friday_on_or_after(d: date) -> date:
     return d + timedelta(days=(4 - d.weekday()) % 7)   # Mon=0..Fri=4
