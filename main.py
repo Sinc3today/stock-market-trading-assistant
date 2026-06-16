@@ -167,6 +167,42 @@ def run_intraday_scan():
         logger.error(f"Intraday scan failed: {e}")
 
 
+# Smart-stop watchdog state (trade copilot) — trade_ids alerted today; reset daily.
+from alerts import stop_watchdog as _stop_wd
+_stop_alerted: set = set()
+_stop_alerted_date: list = [None]
+
+
+def run_stop_watchdog():
+    """Every 5 min during market hours: emergency-alert if SPY nears an open
+    position's short strike — the smart stop RH can't do. Keyed off the
+    underlying, not the option mark. EXITS are never gated by the entry window."""
+    if not getattr(config, "STOP_WATCHDOG_ENABLED", True):
+        return
+    eastern = pytz.timezone("US/Eastern")
+    now = datetime.now(eastern)
+    if not config.is_trading_day(now):
+        return
+    from datetime import time as _time
+    if not (_time(9, 30) <= now.time() <= _time(16, 0)):   # market hours only
+        return
+    if _stop_alerted_date[0] != now.date():                # daily reset
+        _stop_alerted.clear(); _stop_alerted_date[0] = now.date()
+    try:
+        from journal.trade_recorder import TradeRecorder
+        df = PolygonClient().get_bars("SPY", config.SWING_PRIMARY_TIMEFRAME,
+                                      limit=1, days_back=3)
+        if df is None or len(df) == 0:
+            return
+        spot = float(df["close"].iloc[-1])
+        n = _stop_wd.check_open_positions(TradeRecorder(), spot, pushover,
+                                          _stop_alerted, config.STOP_WATCHDOG_BUFFER_PCT)
+        if n:
+            logger.info(f"stop_watchdog: {n} stop alert(s) fired at SPY ${spot:.2f}")
+    except Exception as e:
+        logger.exception(f"stop_watchdog failed: {e}")
+
+
 # ─────────────────────────────────────────
 # SCHEDULER
 # ─────────────────────────────────────────
@@ -223,6 +259,15 @@ def start_scheduler():
         ),
         id   = "intraday_scan",
         name = "Intraday Scanner",
+    )
+
+    # Smart-stop watchdog — every 5 min, market hours (self-gated). Emergency
+    # alert when SPY nears an open position's short strike (trade copilot).
+    scheduler.add_job(
+        run_stop_watchdog,
+        CronTrigger(day_of_week="mon-fri", hour="9-16", minute="*/5", timezone=eastern),
+        id="stop_watchdog",
+        name="Smart-stop watchdog",
     )
 
     # Options flow scan — 9:35 AM ET weekdays

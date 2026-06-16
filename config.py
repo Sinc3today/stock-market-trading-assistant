@@ -169,6 +169,12 @@ MARKET_OPEN                = "09:30"
 MARKET_CLOSE               = "16:00"
 INTRADAY_SCAN_INTERVAL_MIN = 5
 
+# Smart-stop watchdog (trade copilot): emergency-alert when SPY comes within
+# this fraction of an open position's short strike, so you close on RH before
+# max loss. Keyed off the underlying (not the option mark) — what RH can't do.
+STOP_WATCHDOG_ENABLED    = True
+STOP_WATCHDOG_BUFFER_PCT = 0.005   # warn within 0.5% of a short strike
+
 # News scanner / Polygon API rate limits.
 # Polygon free tier = 5 req/sec; 1.5s between ticker fetches keeps us safe.
 POLYGON_RATE_LIMIT_SEC = 1.5
