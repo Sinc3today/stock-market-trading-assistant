@@ -262,8 +262,22 @@ def start_scheduler():
         name="Economic Data Scanner",
     )
 
+    # Liveness watchdog — ping systemd's WatchdogSec + stamp a heartbeat every
+    # 60s. If the bot freezes the pings stop and systemd restarts it; on startup
+    # an emergency Pushover fires if we were down (2026-06-15 silent-freeze fix).
+    from alerts import watchdog
+    watchdog.check_recovery(pushover)   # alert if there was a gap before this start
+    watchdog.ping()                     # immediate first ping + fresh stamp
+    scheduler.add_job(
+        watchdog.ping,
+        IntervalTrigger(seconds=60, timezone=eastern),
+        id="watchdog_ping",
+        name="Liveness watchdog",
+    )
+
     scheduler.start()
     logger.info("✅ Scheduler started")
+    logger.info("   Liveness watchdog: ping every 60s (systemd auto-restart + recovery alert)")
     logger.info("   Morning briefing: weekdays at 7:45 AM EST")
     logger.info("   Premarket scan:   weekdays at 8:00 AM EST")
     logger.info("   Swing scan:       weekdays at 9:00 AM EST")

@@ -83,6 +83,8 @@ class PushoverClient:
         url:       str | None = None,
         url_title: str | None = None,
         priority:  int        = 0,
+        retry:     int        = 60,
+        expire:    int        = 3600,
     ) -> bool:
         """
         Send a raw Pushover notification.
@@ -93,6 +95,8 @@ class PushoverClient:
             url:       Optional URL attached to the notification.
             url_title: Link label (max 100 chars).
             priority:  -1 low | 0 normal | 1 high | 2 emergency.
+            retry:     emergency-only — re-alert interval in s (Pushover min 30).
+            expire:    emergency-only — stop re-alerting after s (Pushover max 10800).
 
         Returns:
             True on success, False on any failure.
@@ -107,6 +111,11 @@ class PushoverClient:
             "message":  message[:1024],
             "priority": priority,
         }
+        if priority == 2:
+            # Pushover REQUIRES retry+expire at emergency priority; it re-alerts
+            # until acknowledged. Clamp to Pushover's allowed bounds.
+            payload["retry"]  = max(30, int(retry))
+            payload["expire"] = min(10800, int(expire))
         if url:
             payload["url"]       = url
             payload["url_title"] = (url_title or "View Details")[:100]
