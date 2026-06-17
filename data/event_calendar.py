@@ -341,11 +341,14 @@ class EventCalendar:
                     "label": f"FOMC decision — {d.strftime('%b %d, %Y')}",
                 })
                 day_before = d - timedelta(days=1)
-                events.append({
-                    "date":  day_before.isoformat(),
-                    "type":  "FOMC_EVE",
-                    "label": f"FOMC eve — {day_before.strftime('%b %d, %Y')}",
-                })
+                # Skip the eve if it already passed (e.g. today IS the decision
+                # day) — a past eve-gate does nothing and isn't a valid event.
+                if day_before >= today:
+                    events.append({
+                        "date":  day_before.isoformat(),
+                        "type":  "FOMC_EVE",
+                        "label": f"FOMC eve — {day_before.strftime('%b %d, %Y')}",
+                    })
         return events
 
     # ─────────────────────────────────────────

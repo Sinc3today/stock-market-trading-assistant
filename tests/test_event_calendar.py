@@ -122,10 +122,13 @@ class TestStaticSchedules:
         print(f"\n✅ {len(fomc_only)} static FOMC dates, all weekdays")
 
     def test_static_fomc_has_eves(self, cal):
+        today   = date.today()
         events  = cal._static_fomc_dates()
         fomc    = {date.fromisoformat(e["date"]) for e in events if e["type"] == "FOMC"}
         eves    = {date.fromisoformat(e["date"]) for e in events if e["type"] == "FOMC_EVE"}
-        expected = {d - timedelta(days=1) for d in fomc}
+        # Every FOMC has its eve — except when the eve already passed (e.g. today
+        # IS the decision day); eves are future-filtered just like the decisions.
+        expected = {d - timedelta(days=1) for d in fomc if d - timedelta(days=1) >= today}
         assert expected == eves
         print(f"\n✅ All {len(eves)} FOMC eves present")
 
