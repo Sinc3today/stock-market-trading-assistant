@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-06-17 — Trade copilot finished (entry-approve + screenshot logging + slippage core)
+
+**What was worked on (plain language):**
+- Closed out the trade-copilot build. Two pieces shipped, one deliberately half-done.
+- **Entry-approve alert.** When the bot opens a tradeable daily play at 09:45 (inside the entry
+  window), it now fires a can't-miss EMERGENCY Pushover — the RH-shaped legs + expiry + net
+  credit/debit and a one-tap Tailscale link straight to the /copilot screen — instead of a quiet
+  high-priority buzz. Solves the user's "I miss the window because alerts get lost" problem.
+  Emergency because approving an entry is a trade action, same bar as the stop watchdog.
+- **Manual logging + screenshot pre-fill.** A "log a trade I built myself" form on /copilot (type
+  the strikes by slot, or upload an RH order screenshot and Claude **Sonnet** vision reads the legs
+  to pre-fill it — the user confirms before it logs, so a misread strike is caught by a human).
+  Decided AGAINST local vision after de-risking: qwen2.5vl/gemma3 took ~4 min and still couldn't
+  read the leg strikes. Claude reuses the key the AI advisor already uses (no new provider, ~sub-cent
+  per image). Also reordered copilot legs to buy-call/sell-call/buy-put/sell-put per the user's pref.
+- **Slippage reader — core only.** Built + tested the math (real fill vs the bot's optimistic
+  day-close/vwap mark → $/% give-up), a crash-safe JSONL store, and the RH cookie loader. The live
+  Playwright RH scrape is deferred on purpose — blocked on a real logged-in session for correct
+  selectors (won't ship a blind scraper), plus playwright isn't installed and no RH cookies exist yet.
+
+**What didn't work / honest gaps:**
+- Local vision (qwen2.5vl:7b timed out, gemma3:4b all-nulls, qwen2.5vl:3b 4 min summary-only) can't
+  read leg strikes — rejected for screenshot extraction.
+- Slippage live fetch blocked (see above); remaining steps + security notes in docs/SLIPPAGE_READER.md.
+- The auto-classifier (correctly) blocks ME from sending RH screenshots to the API proactively — the
+  user uploading via the UI is the per-use consent boundary.
+
+**Also fixed:** a date-rollover bug — on an FOMC decision day the static calendar emitted the eve
+(yesterday) as a past event; now future-filtered.
+
+**Live trading / learning:** trader.service redeployed and healthy after each change (web app up on
+8002, all jobs registered, no crash loop). Slippage core is inert (nothing calls it yet).
+
+**Tests:** 1213/1213 passing (added entry_approve, play_vision, copilot_log_form, slippage,
+rh_session suites; fixed event_calendar eve invariant).
+
+**Open for next session:** the live RH slippage scrape (needs RH cookies + a market-hours session to
+write real selectors); optional copilot screen polish (surface slippage summary once it has data).
+
+---
+
 ## 2026-06-08 — Sector-breadth lead (built → walk-forwarded → falsified) + educator-calls pipeline
 
 **What was worked on (plain language):**
