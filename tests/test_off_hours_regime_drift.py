@@ -18,6 +18,45 @@ from learning.off_hours_learner import (
 )
 
 
+def test_window_plan_never_starves_the_warmup():
+    # THE BUG: a too-small window (93 rows) can't satisfy the 210-row warm-up,
+    # so every row was skipped -> 0 classifiable -> silent skip for ~5 weeks.
+    from learning.off_hours_learner import window_plan, LOOKBACK_WARMUP_ROWS
+    need = int(config.REGIME_DRIFT_RECENT_DAYS) + int(config.REGIME_DRIFT_PRIOR_DAYS)
+    # plenty of history -> enough rows become classifiable for the 60+60 split
+    n_keep, classifiable = window_plan(available=1256, need_total=need)
+    assert classifiable >= need
+    assert n_keep >= LOOKBACK_WARMUP_ROWS + need
+    # the old broken boundary is documented: a 93-row window yields zero
+    _, broke = window_plan(available=93, need_total=need)
+    assert broke == 0
+
+
+def _write_synthetic_spy(path, n=360, end="2026-05-22"):
+    import numpy as np
+    idx = pd.bdate_range(end=end, periods=n)
+    close = 400 + np.arange(n) * 0.2 + np.sin(np.arange(n) / 9.0) * 3
+    df = pd.DataFrame({
+        "open": close - 0.5, "high": close + 1.0,
+        "low": close - 1.0, "close": close, "volume": 1_000_000,
+    }, index=idx)
+    df.index.name = "date"
+    df.to_csv(path)
+    return path
+
+
+def test_loader_returns_enough_rows_not_zero(tmp_path, monkeypatch):
+    # regression guard: with a full CSV the loader MUST classify >= need_total
+    # rows. Under the old 170-day window vs 210-row warm-up it always returned 0.
+    monkeypatch.setattr("data.vix_client.VIXClient.get_history",
+                        lambda self, days=180: None)
+    csv = _write_synthetic_spy(str(tmp_path / "spy.csv"))
+    learner = OffHoursLearner(csv_path=str(csv))
+    rows = learner._load_regime_classifications(date(2026, 5, 22))
+    need = int(config.REGIME_DRIFT_RECENT_DAYS) + int(config.REGIME_DRIFT_PRIOR_DAYS)
+    assert len(rows) >= need, f"loader returned {len(rows)} rows (silent-zero regression)"
+
+
 def test_compute_distribution_pct_sums_to_100():
     rows = [
         {"regime": "TRENDING_UP_CALM"},

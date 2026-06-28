@@ -126,6 +126,24 @@ def compute_feature_trends(rows: list[dict]) -> dict[str, float]:
 #  Learner
 # ────────────────────────────────────────────────────────────
 
+LOOKBACK_WARMUP_ROWS = 210     # rows of indicator warm-up before a date is classifiable
+_WINDOW_BUFFER = 20
+
+
+def window_plan(available: int, need_total: int,
+                warmup: int = LOOKBACK_WARMUP_ROWS, buffer: int = _WINDOW_BUFFER):
+    """Decide how many recent rows to keep and how many become classifiable.
+
+    A date is only classifiable after `warmup` rows of indicator history, and the
+    run needs `need_total` (recent+prior) classifiable rows. So the kept window
+    must span warmup + need_total (+buffer). Returns (n_keep, classifiable).
+    The bug this guards: a window smaller than `warmup` yields ZERO classifiable
+    rows — every date is skipped — which the off-hours learner did silently.
+    """
+    n_keep = min(available, warmup + need_total + buffer)
+    return n_keep, max(0, n_keep - warmup)
+
+
 class OffHoursLearner:
     """Weekend regime-drift detector + Claude pattern-finding."""
 
@@ -133,9 +151,11 @@ class OffHoursLearner:
         self,
         knowledge_base: KnowledgeBase | None = None,
         api_key:        str | None    = None,
+        csv_path:       str | None    = None,
     ):
         self.kb      = knowledge_base or KnowledgeBase()
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self.csv_path = csv_path or os.path.join("backtests", "spy_history.csv")
 
     # ── MAIN ──────────────────────────────────────────
 
@@ -149,7 +169,7 @@ class OffHoursLearner:
         need_total  = recent_days + prior_days
 
         if len(rows) < need_total:
-            logger.info(
+            logger.warning(
                 f"OffHoursLearner: insufficient history "
                 f"({len(rows)} < {need_total}) — skipping"
             )
@@ -210,20 +230,29 @@ class OffHoursLearner:
             logger.warning(f"OffHoursLearner: deps missing -- {e}")
             return []
 
-        csv_path = os.path.join("backtests", "spy_history.csv")
+        csv_path = self.csv_path
         if not os.path.exists(csv_path):
-            logger.warning("OffHoursLearner: backtests/spy_history.csv missing")
+            logger.warning(f"OffHoursLearner: {csv_path} missing")
             return []
         df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
         df.columns = [c.lower() for c in df.columns]
         df.index   = pd.to_datetime(df.index).date
         df = df.sort_index()
+        df = df[df.index <= today]                 # never classify future rows
 
-        # Look back 170 calendar days to get ~120 trading days
-        cutoff = today - timedelta(days=170)
-        df = df[df.index >= cutoff]
-        if len(df) < 60:
+        # Keep enough rows that the 210-row warm-up still leaves need_total
+        # (recent+prior) classifiable rows. Sizing by ROW COUNT (not calendar
+        # days) is what the old code got wrong: a 170-day cut gave ~93 rows, far
+        # short of the warm-up, so every date was skipped and 0 rows came back.
+        need_total = int(config.REGIME_DRIFT_RECENT_DAYS) + int(config.REGIME_DRIFT_PRIOR_DAYS)
+        n_keep, classifiable = window_plan(len(df), need_total)
+        if classifiable < need_total:
+            logger.warning(
+                f"OffHoursLearner: only {classifiable} classifiable rows from "
+                f"{len(df)} available (need {need_total}) — CSV too short/stale; "
+                f"skipping. Refresh backtests/spy_history.csv.")
             return []
+        df = df.iloc[-n_keep:]
 
         # Load VIX history (best-effort)
         vix_lookup: dict = {}
@@ -239,7 +268,7 @@ class OffHoursLearner:
         rows: list[dict] = []
         dates = sorted(df.index)
         for i, d in enumerate(dates):
-            if i < 210:    # need lookback for indicators
+            if i < LOOKBACK_WARMUP_ROWS:    # need indicator warm-up
                 continue
             hist = df.loc[dates[max(0, i-250):i]].copy()
             hist.index = pd.to_datetime(hist.index)
