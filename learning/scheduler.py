@@ -77,6 +77,26 @@ def job_paper_broker(play_fn=None, approve_fn=None):
         logger.exception(f"learning.paper_broker failed: {e}")
 
 
+def job_rh_sync():
+    """Poll Robinhood READ-ONLY and reconcile open positions into the live book
+    so the copilot/watchdog track real trades hands-off. Self-gated to trading
+    days; degrades gracefully if the RH session has expired (logs a nudge to
+    re-run login, never crashes the bot)."""
+    if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
+        return
+    try:
+        from learning.rh_sync import sync
+        plan = sync(dry_run=False)
+        created = sum(1 for s in plan if s.get("action") == "create")
+        if created:
+            logger.info(f"rh_sync: synced {created} new live position(s) from Robinhood")
+    except RuntimeError as e:
+        # expired/missing session — expected periodically; not a crash
+        logger.warning(f"rh_sync skipped: {e}")
+    except Exception as e:
+        logger.exception(f"rh_sync failed: {e}")
+
+
 def job_outcome_resolver(polygon_client, post_fn=None):
     if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
         logger.info("outcome_resolver: non-trading day, skipping")
@@ -252,6 +272,17 @@ def register_learning_jobs(
         kwargs={"play_fn": play_fn, "approve_fn": approve_fn},
         id="learning_paper_broker",
         name="Learning: paper broker",
+        replace_existing=True,
+    )
+
+    # RH read-only position sync — every 15 min during market hours so the live
+    # book/watchdog track real trades hands-off (no-op until the user has logged
+    # in via `python -m learning.rh_sync login`).
+    scheduler.add_job(
+        job_rh_sync,
+        CronTrigger(day_of_week="mon-fri", hour="9-15", minute="*/15", timezone=eastern),
+        id="learning_rh_sync",
+        name="Learning: RH read-only sync",
         replace_existing=True,
     )
 

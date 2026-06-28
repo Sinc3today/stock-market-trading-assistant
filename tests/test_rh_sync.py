@@ -65,6 +65,8 @@ def test_group_into_positions_builds_condor():
     assert p["size"] == 2
     strikes = sorted(l["strike"] for l in p["legs"])
     assert strikes == [695.0, 700.0, 771.0, 776.0]
+    # net entry from leg avg_prices: shorts(0.80+3.90) - longs(0.45+3.32) = 0.93
+    assert round(p["entry_price"], 2) == 0.93
 
 
 def test_reconcile_matches_existing_live_trade_not_duplicate():

@@ -68,12 +68,18 @@ def group_into_positions(legs: list[dict]) -> list[dict]:
         size = max(set(qtys), key=qtys.count) if qtys else 1
         clean = [{"action": l["action"], "option_type": l["option_type"],
                   "strike": l["strike"], "expiry": l["expiry"]} for l in grp]
+        # net entry from leg avg fills: credit = Σ short fills − Σ long fills
+        # (per share). Best-effort baseline for a freshly-synced position; the
+        # user can correct it on the copilot screen if needed.
+        net = sum((l["avg_price"] if l["action"] == "SELL" else -l["avg_price"])
+                  for l in grp)
         positions.append({
             "ticker": symbol,
             "expiry": expiry,
             "strategy": _infer_strategy(grp),
             "size": size,
             "legs": clean,
+            "entry_price": round(net, 2),
             "source": "rh-sync",
         })
     return positions
@@ -115,10 +121,26 @@ def reconcile(positions: list[dict], existing_live: list[dict]) -> list[dict]:
 
 # ── I/O: robin_stocks read-only fetch + login (validated via dry-run) ───────
 
+def _load_session():
+    """Re-load the stored RH token into THIS process. robin_stocks' logged-in
+    state is per-process — login() silently reuses the saved pickle (no MFA) when
+    it's still valid. Raises a clear error if there's no valid session yet."""
+    import os
+    import robin_stocks.robinhood as r
+    pickle_path = os.path.expanduser("~/.tokens/robinhood.pickle")
+    if not os.path.isfile(pickle_path):
+        raise RuntimeError("No stored RH session — run `python -m learning.rh_sync login` first")
+    try:
+        r.login(store_session=True)            # reloads + validates the pickle
+    except Exception as e:
+        raise RuntimeError(f"Stored RH session invalid/expired — re-run `login`: {e}") from e
+
+
 def fetch_open_legs() -> list[dict]:
     """Fetch + normalize all open option legs from RH (READ-ONLY). Requires a
     valid stored session (run `login` first)."""
     import robin_stocks.robinhood as r
+    _load_session()
     legs = []
     for p in (r.options.get_open_option_positions() or []):
         if float(p.get("quantity") or 0) == 0:
@@ -162,7 +184,8 @@ def sync(dry_run: bool = True):
             if not dry_run:
                 from alerts.copilot_log import build_live_trade_kwargs
                 form = {"ticker": pos["ticker"], "expiry": pos["expiry"],
-                        "contracts": str(pos["size"])}
+                        "contracts": str(pos["size"]),
+                        "entry_price": str(pos.get("entry_price", "") or "")}
                 for leg in pos["legs"]:
                     slot = ("bc" if leg["action"] == "BUY" else "sc") if leg["option_type"] == "CALL" \
                         else ("bp" if leg["action"] == "BUY" else "sp")
