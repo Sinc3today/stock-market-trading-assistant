@@ -696,6 +696,7 @@ _COPILOT_CSS = """
 @media (max-width:760px){.cp-cols{grid-template-columns:1fr}}
 .cp-shot{position:sticky;top:1rem}
 .cp-shot img{width:100%;border:1px solid var(--border,#e4e4e7);border-radius:8px;display:block}
+.cp-slip{display:inline-block;margin-top:.35rem;font-size:.8rem;padding:.15rem .5rem;border-radius:5px}
 """
 
 
@@ -713,7 +714,25 @@ def _render_copilot(live: list[dict], plays: list[dict], spot) -> str:
     """Trade copilot: your live (watchdog-tracked) positions + today's plays to
     mirror on Robinhood — copy-ready RH-shaped legs + smart-stop status."""
     from alerts.stop_watchdog import rh_leg_lines, position_status
+    from journal.slippage import trade_slippage
     spot_str = f"${spot:,.2f}" if isinstance(spot, (int, float)) else "—"
+
+    def _slip(t):
+        s = trade_slippage(t)
+        if not s:
+            return ""
+        d = s["slippage_dollars"]
+        mark, fill = t.get("bot_mark"), t.get("entry_price")
+        if d < 0:
+            txt = f"vs entry: filled {fill:g} vs bot mark {mark:g} → +${-d:,.2f} better than mark"
+            cls = "status-win"
+        elif d > 0:
+            txt = f"vs entry: filled {fill:g} vs bot mark {mark:g} → −${d:,.2f} spread cost"
+            cls = "status-loss"
+        else:
+            txt = f"vs entry: filled {fill:g} = bot mark {mark:g} (no slippage)"
+            cls = "status-be"
+        return f'<div class="cp-slip badge {cls}">{_esc(txt)}</div>'
 
     def _legs(t):
         lines = rh_leg_lines(t.get("legs") or [])
@@ -743,6 +762,7 @@ def _render_copilot(live: list[dict], plays: list[dict], spot) -> str:
   <div><b>{_esc(t.get('ticker','SPY'))}</b> &middot; {_strat(t)} <span class="badge {cls}">{label}</span></div>
   {_legs(t)}
   <div class="muted" style="margin-top:.25rem">Exp {_esc(_exp(t))} &middot; watchdog tracking</div>
+  {_slip(t)}
 </div>''')
         live_html = "\n".join(cards)
     else:
@@ -817,6 +837,7 @@ def _render_copilot_log(prefill: dict | None = None, error: str | None = None,
 
     form = (
         '<form class="cp-form" method="post" action="/copilot/log">'
+        f'<input type="hidden" name="bot_mark" value="{_v("bot_mark")}">'
         f'<label>Ticker</label><input name="ticker" value="{_v("ticker") or "SPY"}">'
         f'<label>Expiration (YYYY-MM-DD)</label>'
         f'<input name="expiry" value="{_v("expiry")}" placeholder="2026-07-24">'
@@ -2658,13 +2679,14 @@ async def copilot_extract(shot: UploadFile = File(...)):
 def copilot_log_submit(
     ticker: str = Form("SPY"), expiry: str = Form(""),
     entry_price: str = Form(""), contracts: str = Form(""),
-    max_profit: str = Form(""), max_loss: str = Form(""),
+    max_profit: str = Form(""), max_loss: str = Form(""), bot_mark: str = Form(""),
     bc: str = Form(""), sc: str = Form(""), bp: str = Form(""), sp: str = Form(""),
 ):
     """Log a user-built trade so the smart-stop watchdog tracks it (book=live)."""
     from alerts.copilot_log import build_live_trade_kwargs
     form = {"ticker": ticker, "expiry": expiry, "entry_price": entry_price,
             "contracts": contracts, "max_profit": max_profit, "max_loss": max_loss,
+            "bot_mark": bot_mark,
             "bc": bc, "sc": sc, "bp": bp, "sp": sp}
     try:
         kwargs = build_live_trade_kwargs(form)

@@ -80,6 +80,7 @@ def build_live_trade_kwargs(form: dict) -> dict:
         "book": "live",
         "source": "user-manual",
         "notes": "[LIVE] manually logged via copilot",
+        "bot_mark": _f(form, "bot_mark"),
     }
 
 
@@ -107,6 +108,7 @@ def prefill_from_play(play: dict) -> dict:
             pf["bp" if is_buy else "sp"] = _g(leg.get("strike"))
         if not expiry:
             expiry = str(leg.get("expiration") or leg.get("expiry") or "")[:10]
+    bm = play.get("entry_price")
     return {
         "ticker": (play.get("ticker") or "SPY"),
         "expiry": expiry,
@@ -114,6 +116,7 @@ def prefill_from_play(play: dict) -> dict:
         "contracts": "",       # your real size — you fill this
         "max_profit": "",
         "max_loss": "",
+        "bot_mark": ("" if bm is None else f"{float(bm):g}"),  # carried for slippage
         **pf,
     }
 

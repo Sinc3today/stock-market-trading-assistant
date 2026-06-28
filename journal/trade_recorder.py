@@ -62,6 +62,8 @@ class TradeRecorder:
         dte_bucket:      str | None = None,   # "0DTE" / "1-3DTE" / "45DTE"
         book:            str | None = None,   # "disciplined" / "learning"
         source:          str | None = None,   # "auto-paper" for bot-generated paper trades
+        bot_mark:        float | None = None, # the bot's assumed price when you placed a
+                                              # live copy — for slippage vs your real fill
     ) -> str:
         """
         Log a trade entry.
@@ -150,6 +152,9 @@ class TradeRecorder:
 
             # Provenance — "auto-paper" for bot-generated paper trades, else None
             "source":     source,
+
+            # Slippage baseline — bot's assumed price when a live copy was placed
+            "bot_mark":   bot_mark,
         }
 
         trades = self._load()

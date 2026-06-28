@@ -60,6 +60,29 @@ def test_store_append_and_summary(tmp_path):
     assert round(summary["avg_dollars"], 2) == 10.00
 
 
+def test_trade_slippage_credit_better_than_mark():
+    from journal.slippage import trade_slippage
+    # Real condor: bot assumed 1.00, user filled 1.55 on 2 contracts -> did BETTER.
+    s = trade_slippage({"strategy": "iron_condor", "bot_mark": 1.00,
+                        "entry_price": 1.55, "size": 2})
+    assert round(s["slippage_dollars"], 2) == -110.00   # negative = better than mark
+    assert s["slippage_dollars"] < 0
+
+
+def test_trade_slippage_debit_worse_than_mark():
+    from journal.slippage import trade_slippage
+    s = trade_slippage({"strategy": "debit_spread", "bot_mark": 2.00,
+                        "entry_price": 2.10, "size": 1})
+    assert round(s["slippage_dollars"], 2) == 10.00     # positive = spread cost
+
+
+def test_trade_slippage_none_without_bot_mark():
+    from journal.slippage import trade_slippage
+    assert trade_slippage({"strategy": "iron_condor", "entry_price": 1.55}) is None
+    assert trade_slippage({"strategy": "iron_condor", "bot_mark": None,
+                          "entry_price": 1.55}) is None
+
+
 def test_store_survives_reload(tmp_path):
     from journal.slippage import SlippageStore, compute_slippage
     path = str(tmp_path / "slippage.jsonl")

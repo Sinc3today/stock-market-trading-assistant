@@ -50,6 +50,21 @@ def compute_slippage(mark_price: float, fill_price: float, *, action: str,
     }
 
 
+def trade_slippage(trade: dict) -> dict | None:
+    """Slippage of a logged trade's real fill vs the bot's mark at placement.
+    Returns None when there's no `bot_mark` baseline (manual log, no bot play).
+    Credit strategies (condor/credit spread) want a high fill; debit strategies
+    want a low one — so the action is inferred from the strategy."""
+    mark = trade.get("bot_mark")
+    fill = trade.get("entry_price")
+    if mark in (None, "") or fill in (None, ""):
+        return None
+    strat = (trade.get("strategy") or "").lower()
+    action = "debit" if ("debit" in strat or strat == "single_leg") else "credit"
+    size = int(trade.get("size") or 1)
+    return compute_slippage(float(mark), float(fill), action=action, contracts=size)
+
+
 class SlippageStore:
     """Append-only JSONL of slippage observations. Rewrites atomically (crash/
     freeze-safe) — the set is small, so whole-file rewrite is fine and keeps the

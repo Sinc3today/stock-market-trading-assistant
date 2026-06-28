@@ -65,6 +65,24 @@ def test_build_kwargs_contracts_defaults_to_one():
     assert kw["size"] == 1
 
 
+def test_build_kwargs_carries_bot_mark():
+    from alerts.copilot_log import build_live_trade_kwargs
+    kw = build_live_trade_kwargs({"bc": "781", "sc": "776", "bp": "695", "sp": "700",
+                                  "entry_price": "1.55", "contracts": "2",
+                                  "bot_mark": "1.00"})
+    assert kw["bot_mark"] == 1.00
+    # blank bot_mark -> None (manual log with no bot baseline)
+    kw2 = build_live_trade_kwargs({"bc": "781", "sc": "776", "entry_price": "1.0"})
+    assert kw2["bot_mark"] is None
+
+
+def test_prefill_from_play_carries_bot_mark():
+    from alerts.copilot_log import prefill_from_play
+    play = {"ticker": "SPY", "entry_price": 1.00,
+            "legs": [{"action": "SELL", "option_type": "CALL", "strike": 771}]}
+    assert prefill_from_play(play)["bot_mark"] == "1"
+
+
 def test_prefill_from_play_fills_strikes_but_not_fill():
     # "I placed it" pre-fills strikes/expiry from the bot play, but leaves the
     # user's actual fill (credit + contracts) blank so they enter what they got.
