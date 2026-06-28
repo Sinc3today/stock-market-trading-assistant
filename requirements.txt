@@ -50,3 +50,4 @@ multidict>=4.5,<6.1
 # ML / Meta-labeling
 scikit-learn==1.4.2
 joblib==1.4.0
+robin_stocks==3.4.0
