@@ -52,6 +52,41 @@ def test_build_kwargs_no_legs_raises():
         build_live_trade_kwargs({"ticker": "SPY", "entry_price": "1.0"})
 
 
+def test_build_kwargs_contracts_sets_size():
+    from alerts.copilot_log import build_live_trade_kwargs
+    kw = build_live_trade_kwargs({"bc": "781", "sc": "776", "bp": "695", "sp": "700",
+                                  "entry_price": "1.55", "contracts": "2"})
+    assert kw["size"] == 2
+
+
+def test_build_kwargs_contracts_defaults_to_one():
+    from alerts.copilot_log import build_live_trade_kwargs
+    kw = build_live_trade_kwargs({"bc": "781", "sc": "776", "entry_price": "1.0"})
+    assert kw["size"] == 1
+
+
+def test_prefill_from_play_fills_strikes_but_not_fill():
+    # "I placed it" pre-fills strikes/expiry from the bot play, but leaves the
+    # user's actual fill (credit + contracts) blank so they enter what they got.
+    from alerts.copilot_log import prefill_from_play
+    play = {
+        "ticker": "SPY", "strategy": "iron_condor",
+        "legs": [
+            {"action": "SELL", "option_type": "CALL", "strike": 771.0, "expiration": "2026-07-24"},
+            {"action": "BUY",  "option_type": "CALL", "strike": 776.0, "expiration": "2026-07-24"},
+            {"action": "SELL", "option_type": "PUT",  "strike": 700.0, "expiration": "2026-07-24"},
+            {"action": "BUY",  "option_type": "PUT",  "strike": 695.0, "expiration": "2026-07-24"},
+        ],
+    }
+    pf = prefill_from_play(play)
+    assert pf["bc"] == "776" and pf["sc"] == "771"
+    assert pf["bp"] == "695" and pf["sp"] == "700"
+    assert pf["expiry"] == "2026-07-24"
+    # the fields that were wrong before stay blank — user must confirm them
+    assert pf["entry_price"] == ""
+    assert pf["contracts"] == ""
+
+
 def test_prefill_from_extracted_maps_legs_to_slots():
     from alerts.copilot_log import prefill_from_extracted
     extracted = {

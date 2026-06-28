@@ -67,3 +67,6 @@ docs/*.txt
 docs/kb_youtube_*.md
 docs/kb_substack_*.md
 docs/miner.log
+
+# uploaded RH screenshots (account info — never commit)
+logs/copilot_uploads/

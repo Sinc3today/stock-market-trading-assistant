@@ -32,7 +32,7 @@ from typing import Any
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from fastapi import FastAPI, HTTPException, Cookie, Form, File, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from pydantic import BaseModel
 
 import config
@@ -664,6 +664,10 @@ def _render_trades(trades: list[dict]) -> str:
     )
 
 
+# Uploaded RH screenshots land here — tailnet-only, gitignored (may hold account
+# info). Pruned to ~1 day in _save_copilot_shot.
+_COPILOT_UPLOAD_DIR = os.path.join(config.LOG_DIR, "copilot_uploads")
+
 _COPILOT_CSS = """
 .cp-spot{font-family:var(--font-mono,ui-monospace,monospace);color:var(--fg-muted,#52525b);margin-bottom:.75rem}
 .legs{margin:.4rem 0;display:flex;flex-direction:column;gap:.2rem}
@@ -688,6 +692,10 @@ _COPILOT_CSS = """
   font-size:.88rem;margin-bottom:.75rem}
 .cp-ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;border-radius:6px;padding:.5rem .7rem;
   font-size:.88rem;margin-bottom:.75rem}
+.cp-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1rem;align-items:start}
+@media (max-width:760px){.cp-cols{grid-template-columns:1fr}}
+.cp-shot{position:sticky;top:1rem}
+.cp-shot img{width:100%;border:1px solid var(--border,#e4e4e7);border-radius:8px;display:block}
 """
 
 
@@ -774,10 +782,12 @@ def _render_copilot(live: list[dict], plays: list[dict], spot) -> str:
 
 
 def _render_copilot_log(prefill: dict | None = None, error: str | None = None,
-                        ok: str | None = None) -> str:
-    """Manual 'log a trade I built myself' form. Two ways to fill it: upload an
-    RH screenshot (Claude reads the legs, pre-fills below) or type the strikes.
-    Either way the user confirms before it's logged — vision just saves typing."""
+                        ok: str | None = None, shot_url: str | None = None,
+                        intro: str | None = None) -> str:
+    """Log a live trade. Fill it three ways: (1) upload an RH screenshot — Claude
+    reads it and pre-fills, with the image shown SIDE-BY-SIDE so you compare
+    without app-switching; (2) confirm a bot play you placed ('I placed it');
+    (3) type it. You always confirm your real credit + contracts before logging."""
     pf = prefill or {}
 
     def _v(k):
@@ -788,14 +798,17 @@ def _render_copilot_log(prefill: dict | None = None, error: str | None = None,
         msg = f'<div class="cp-err">{_esc(error)}</div>'
     elif ok:
         msg = f'<div class="cp-ok">{_esc(ok)}</div>'
+    if intro:
+        msg += f'<div class="cp-note">{_esc(intro)}</div>'
 
     upload = (
         '<form class="cp-form" method="post" action="/copilot/extract" '
         'enctype="multipart/form-data">'
-        '<label>Read it off a screenshot (optional)</label>'
-        '<div class="cp-note">Upload your Robinhood order screen — Claude reads '
-        'the legs and pre-fills the form. Tip: the order ticket usually doesn\'t '
-        'show your balance; crop it out if it does.</div>'
+        '<label>Read it off a screenshot</label>'
+        '<div class="cp-note">Upload your Robinhood position/order screen — Claude '
+        'reads the legs and pre-fills the form, and the screenshot stays on this '
+        'page so you can check it against the fields. Tip: crop out your balance '
+        'if it shows.</div>'
         '<input type="file" name="shot" accept="image/*" capture="environment">'
         '<div style="margin-top:.6rem"><button class="btn-primary" type="submit">'
         '📷 Extract from screenshot</button></div>'
@@ -806,9 +819,14 @@ def _render_copilot_log(prefill: dict | None = None, error: str | None = None,
         '<form class="cp-form" method="post" action="/copilot/log">'
         f'<label>Ticker</label><input name="ticker" value="{_v("ticker") or "SPY"}">'
         f'<label>Expiration (YYYY-MM-DD)</label>'
-        f'<input name="expiry" value="{_v("expiry")}" placeholder="2026-07-17">'
-        f'<label>Net credit / debit (per share)</label>'
-        f'<input name="entry_price" value="{_v("entry_price")}" placeholder="1.10">'
+        f'<input name="expiry" value="{_v("expiry")}" placeholder="2026-07-24">'
+        '<label>Your actual fill — confirm these</label>'
+        '<div class="cp-grid">'
+        f'<div><label>Net credit / debit (per share)</label>'
+        f'<input name="entry_price" value="{_v("entry_price")}" placeholder="1.55"></div>'
+        f'<div><label>Contracts</label>'
+        f'<input name="contracts" value="{_v("contracts")}" placeholder="2"></div>'
+        '</div>'
         '<label>Strikes — leave blank what you didn\'t trade</label>'
         '<div class="cp-grid">'
         f'<div><label>Buy call</label><input name="bc" value="{_v("bc")}"></div>'
@@ -817,8 +835,8 @@ def _render_copilot_log(prefill: dict | None = None, error: str | None = None,
         f'<div><label>Sell put</label><input name="sp" value="{_v("sp")}"></div>'
         '</div>'
         '<div class="cp-grid">'
-        f'<div><label>Max profit ($)</label><input name="max_profit" value="{_v("max_profit")}"></div>'
-        f'<div><label>Max loss ($)</label><input name="max_loss" value="{_v("max_loss")}"></div>'
+        f'<div><label>Max profit ($, optional)</label><input name="max_profit" value="{_v("max_profit")}"></div>'
+        f'<div><label>Max loss ($, optional)</label><input name="max_loss" value="{_v("max_loss")}"></div>'
         '</div>'
         '<div style="margin-top:.9rem"><button class="btn-primary" type="submit">'
         'Log live trade</button> '
@@ -826,10 +844,20 @@ def _render_copilot_log(prefill: dict | None = None, error: str | None = None,
         '</form>'
     )
 
+    if shot_url:
+        # Side-by-side: screenshot on the left, form on the right (laptop with RH
+        # in one window + assistant in the other). Stacks on a phone.
+        shot_panel = (f'<div class="cp-shot"><div class="cp-note">Your screenshot — '
+                      f'compare against the fields</div>'
+                      f'<img src="{_esc(shot_url)}" alt="uploaded trade screenshot"></div>')
+        body = msg + upload + f'<div class="cp-cols">{shot_panel}<div>{form}</div></div>'
+    else:
+        body = msg + upload + form
+
     return _render_page(
         title      = "Trading Assistant - Log a trade",
         heading    = "Log a trade I built",
-        body       = msg + upload + form,
+        body       = body,
         css        = _INDEX_CSS + _COPILOT_CSS,
         active_nav = "copilot",
     )
@@ -2541,30 +2569,53 @@ def copilot_page():
     return HTMLResponse(_render_copilot(live, plays, _spy_spot()))
 
 
-@app.post("/copilot/placed")
+@app.post("/copilot/placed", response_class=HTMLResponse)
 def copilot_placed(trade_id: str = Form(...)):
-    """'I placed it on RH' — log a live copy of a play so the smart-stop watchdog
-    tracks YOUR real position (the bot can't read RH, so you tell it)."""
-    rec = TradeRecorder()
-    src = next((t for t in rec.get_open_trades() if t.get("trade_id") == trade_id), None)
-    if src:
-        rec.log_entry(
-            ticker      = src.get("ticker", "SPY"),
-            entry_price = src.get("entry_price") or 0,
-            size        = 1,
-            trade_type  = src.get("trade_type") or src.get("strategy") or "single_leg",
-            strategy    = src.get("strategy"),
-            direction   = src.get("direction", "neutral"),
-            mode        = "swing",
-            legs        = src.get("legs") or [],
-            max_profit  = src.get("max_profit"),
-            max_loss    = src.get("max_loss"),
-            dte_bucket  = src.get("dte_bucket"),
-            book        = "live",
-            source      = "user-placed",
-            notes       = f"[LIVE] mirrored from play {trade_id}",
-        )
-    return RedirectResponse("/copilot", status_code=303)
+    """'I placed it on RH' — open the log form pre-filled from the bot's play so
+    you confirm your REAL fill (credit + contracts) before it's tracked. It used
+    to blind-copy the bot's numbers (size 1, the bot's mark), which mismatched
+    actual fills — now you enter what you really got."""
+    from alerts.copilot_log import prefill_from_play
+    src = next((t for t in TradeRecorder().get_open_trades()
+                if t.get("trade_id") == trade_id), None)
+    if not src:
+        return RedirectResponse("/copilot", status_code=303)
+    return HTMLResponse(_render_copilot_log(
+        prefill=prefill_from_play(src),
+        intro="Strikes + expiry are from the bot's play. Enter the credit and "
+              "number of contracts you actually got on Robinhood, then log."))
+
+
+def _save_copilot_shot(data: bytes, content_type: str) -> str:
+    """Persist an uploaded screenshot locally (tailnet-only, never committed —
+    may contain account info) and return its filename token. Best-effort prune of
+    shots older than a day so they don't accumulate."""
+    import time
+    import uuid
+    os.makedirs(_COPILOT_UPLOAD_DIR, exist_ok=True)
+    now = time.time()
+    for fn in os.listdir(_COPILOT_UPLOAD_DIR):
+        fp = os.path.join(_COPILOT_UPLOAD_DIR, fn)
+        try:
+            if now - os.path.getmtime(fp) > 86400:
+                os.unlink(fp)
+        except OSError:
+            pass
+    ct = content_type or ""
+    ext = ".png" if "png" in ct else (".jpg" if ("jpeg" in ct or "jpg" in ct) else ".img")
+    name = uuid.uuid4().hex + ext
+    with open(os.path.join(_COPILOT_UPLOAD_DIR, name), "wb") as f:
+        f.write(data)
+    return name
+
+
+@app.get("/copilot/shot/{token}")
+def copilot_shot(token: str):
+    """Serve a previously-uploaded screenshot (tailnet-only)."""
+    fp = os.path.join(_COPILOT_UPLOAD_DIR, os.path.basename(token))
+    if not os.path.exists(fp):
+        raise HTTPException(status_code=404, detail="screenshot not found")
+    return FileResponse(fp)
 
 
 @app.get("/copilot/log", response_class=HTMLResponse)
@@ -2575,38 +2626,45 @@ def copilot_log_form():
 
 @app.post("/copilot/extract", response_class=HTMLResponse)
 async def copilot_extract(shot: UploadFile = File(...)):
-    """Read a play off an uploaded RH screenshot (Claude vision) and return the
-    manual-log form pre-filled — the user confirms before logging."""
+    """Read a play off an uploaded RH screenshot (Claude vision), pre-fill the
+    form, and show the screenshot SIDE-BY-SIDE so the user compares without
+    app-switching. The image is always shown — even if auto-read fails — so they
+    can type from it. User confirms credit + contracts before logging."""
     from alerts.play_vision import extract
     from alerts.copilot_log import prefill_from_extracted
+    data = await shot.read()
+    if not data:
+        return HTMLResponse(_render_copilot_log(error="Empty upload — pick an image."))
+    media = shot.content_type or "image/png"
+    shot_url = f"/copilot/shot/{_save_copilot_shot(data, media)}"
     try:
-        data = await shot.read()
-        if not data:
-            return HTMLResponse(_render_copilot_log(error="Empty upload — pick an image."))
-        media = shot.content_type or "image/png"
         play = extract(data, media_type=media)
-        prefill = prefill_from_extracted(play)
-        if not any(prefill.get(k) for k in ("bc", "sc", "bp", "sp")):
-            return HTMLResponse(_render_copilot_log(
-                prefill=prefill,
-                error="Couldn't read the legs — fill the strikes in manually."))
-        return HTMLResponse(_render_copilot_log(
-            prefill=prefill,
-            ok="Read from screenshot — check the strikes, then log."))
     except (RuntimeError, ValueError) as e:
-        return HTMLResponse(_render_copilot_log(error=f"Couldn't read it: {e}"))
+        return HTMLResponse(_render_copilot_log(
+            shot_url=shot_url,
+            error=f"Couldn't auto-read it ({e}). Type the trade from the screenshot →"))
+    prefill = prefill_from_extracted(play)
+    if not any(prefill.get(k) for k in ("bc", "sc", "bp", "sp")):
+        return HTMLResponse(_render_copilot_log(
+            prefill=prefill, shot_url=shot_url,
+            error="Couldn't read the legs — fill the strikes from the screenshot."))
+    return HTMLResponse(_render_copilot_log(
+        prefill=prefill, shot_url=shot_url,
+        ok="Read from the screenshot — check it against the image, confirm your "
+           "credit + contracts, then log."))
 
 
 @app.post("/copilot/log")
 def copilot_log_submit(
     ticker: str = Form("SPY"), expiry: str = Form(""),
-    entry_price: str = Form(""), max_profit: str = Form(""), max_loss: str = Form(""),
+    entry_price: str = Form(""), contracts: str = Form(""),
+    max_profit: str = Form(""), max_loss: str = Form(""),
     bc: str = Form(""), sc: str = Form(""), bp: str = Form(""), sp: str = Form(""),
 ):
     """Log a user-built trade so the smart-stop watchdog tracks it (book=live)."""
     from alerts.copilot_log import build_live_trade_kwargs
     form = {"ticker": ticker, "expiry": expiry, "entry_price": entry_price,
-            "max_profit": max_profit, "max_loss": max_loss,
+            "contracts": contracts, "max_profit": max_profit, "max_loss": max_loss,
             "bc": bc, "sc": sc, "bp": bp, "sp": sp}
     try:
         kwargs = build_live_trade_kwargs(form)

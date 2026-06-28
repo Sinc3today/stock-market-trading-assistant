@@ -63,10 +63,13 @@ def build_live_trade_kwargs(form: dict) -> dict:
     else:
         strategy, direction = "custom", "neutral"
 
+    contracts = _f(form, "contracts")
+    size = int(contracts) if contracts and contracts > 0 else 1
+
     return {
         "ticker": ticker,
         "entry_price": _f(form, "entry_price") or 0.0,
-        "size": 1,
+        "size": size,
         "trade_type": strategy,
         "strategy": strategy,
         "direction": direction,
@@ -85,6 +88,34 @@ def _g(strike) -> str:
     if strike is None:
         return ""
     return f"{float(strike):g}"
+
+
+def prefill_from_play(play: dict) -> dict:
+    """Pre-fill the log form from a bot play (the 'I placed it' path): copy the
+    strikes + expiry, but leave the user's ACTUAL fill (credit + contracts) blank
+    so they confirm what they really got — the fields that silently mismatched
+    when 'I placed it' used to blind-copy the bot's numbers."""
+    pf = {"bc": "", "sc": "", "bp": "", "sp": ""}
+    expiry = ""
+    for leg in (play.get("legs") or []):
+        otype = (leg.get("option_type") or leg.get("type") or "").upper()
+        action = (leg.get("action") or "").upper()
+        is_buy = action.startswith("B")
+        if otype.startswith("C"):
+            pf["bc" if is_buy else "sc"] = _g(leg.get("strike"))
+        elif otype.startswith("P"):
+            pf["bp" if is_buy else "sp"] = _g(leg.get("strike"))
+        if not expiry:
+            expiry = str(leg.get("expiration") or leg.get("expiry") or "")[:10]
+    return {
+        "ticker": (play.get("ticker") or "SPY"),
+        "expiry": expiry,
+        "entry_price": "",     # your real credit/debit — you fill this
+        "contracts": "",       # your real size — you fill this
+        "max_profit": "",
+        "max_loss": "",
+        **pf,
+    }
 
 
 def prefill_from_extracted(extracted: dict) -> dict:
