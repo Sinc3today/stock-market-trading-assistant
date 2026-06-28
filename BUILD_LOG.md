@@ -4,6 +4,61 @@
 
 ---
 
+## 2026-06-28 — Copilot to feature-complete + two silent learning-loop failures found & fixed
+
+**What was worked on (plain language):**
+
+*Trade copilot — the live loop now works end-to-end.*
+- Reviewed the week: realized −$33 in the disciplined book (one small condor), the −$263 was the
+  extension-gate SHADOW test (measurement, not real). The big news: the user placed their FIRST
+  real-money trade through the copilot (a SPY 700/771 condor) and it's doing well.
+- They sent RH screenshots — and our logged copy was wrong: "I placed it" had blind-copied the bot's
+  numbers (1 contract @ $1.00) instead of their real fill (2 @ $1.55), plus a mixed-expiry glitch.
+  Corrected the record by hand, then rebuilt the flow so it can't happen again: "I placed it" now
+  opens a confirm-your-fill form (real credit + contracts), and screenshots show SIDE-BY-SIDE with
+  the form so there's no app-switching (built for the laptop + RH-web workflow).
+- Added a slippage line on the copilot: "filled $1.55 vs bot mark $1.00 → +$110 better than mark."
+- Reframed the slippage reader: the NBBO spread is broker-independent, so we DON'T need to scrape RH
+  for it. yfinance gives the same quotes free — live mark-to-market on the open condor read +$126,
+  matching RH's screen to the dollar. RH scraping dropped.
+- Set up RH read-only position sync (robin_stocks) so the copilot tracks real trades without manual
+  logging — strictly read-only (a test bans order functions), validated live (dry-run matched the
+  condor, no duplicate), auto-polls every 15 min during market hours. Placement stays MANUAL by
+  design; pushed back hard on using cookies to auto-trade (ToS/lockout). Real automated placement
+  would mean a broker-API migration (Tradier), and only after the live edge is proven.
+
+*Learning loop — the user asked "are we still learning from previous data?" and we found two silent failures.*
+- The off-hours learner (Sunday "replay 60 days" job) had returned 0 rows and skipped EVERY run for
+  ~5 weeks behind an INFO log. Root cause: it windowed data to 170 calendar days (~93 rows) but the
+  classify loop needed 210 rows of warm-up — impossible by construction. Fixed (size the window by
+  row count), refreshed the stale CSV, ran it live: 4 regime shifts + 3 fresh KB entries. Alive again.
+- The daily prediction just mirrored the strategy (condor → "neutral") and scored neutral on a broken
+  |move| < 0.25% test — so it was marked "wrong" on normal moves a condor wins on, producing a
+  misleading 28.6% "accuracy" the hypothesis engine had CITED to justify a tuning change. Replaced
+  with a real independent directional forecast (MA stack + momentum + RSI, decoupled from the trade),
+  scored against a VIX-implied band. Re-scored history under the new method: 28.6% → 68.4%.
+- Built a learning-loop HEALTH MONITOR so silent rot can't recur: daily check of every artifact's
+  freshness (off-hours, predictions, KB, CSV, RH session) with a push alert if stale, plus a weekly
+  CSV auto-refresh. Real check is currently healthy.
+
+**What didn't work / honest gaps:**
+- Local vision rejected earlier for screenshots (too slow, couldn't read strikes); use Claude Sonnet.
+- The 68.4% directional accuracy is a ~1-month RECONSTRUCTION, not validated — let it accumulate
+  out-of-sample before trusting it as a signal.
+- spy_history.csv is a static snapshot (now auto-refreshed weekly, but no daily refresh).
+
+**Live trading / learning:** trader.service redeployed + healthy after every change; web app on 8002.
+First real user trade open and tracked. Learning loop fully restored and now self-monitoring.
+
+**Tests:** 1240 passing (added copilot confirm-fill/side-by-side, play_vision, market_quotes/MTM,
+rh_session, rh_sync, directional_forecast, loop_health, off-hours regression guards; fixed the FOMC
+decision-day eve calendar bug).
+
+**Open for next session:** confirm RH sync runs clean live Monday; watch the directional forecast
+accumulate; consider surfacing the forecast track record on the dashboard.
+
+---
+
 ## 2026-06-17 — Trade copilot finished (entry-approve + screenshot logging + slippage core)
 
 **What was worked on (plain language):**
