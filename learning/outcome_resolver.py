@@ -128,7 +128,10 @@ class OutcomeResolver:
 
         direction = prediction.get("direction", "neutral")
         entry     = prediction.get("entry_spy")
-        outcome   = self._score(direction, entry, spy_close)
+        # neutral is scored against the prediction's own VIX-implied daily band
+        # (sane), not a hardcoded 0.25% flatness test. Fall back for old records.
+        band      = prediction.get("expected_move_pct") or NEUTRAL_TOLERANCE_PCT
+        outcome   = self._score(direction, entry, spy_close, neutral_band=band)
 
         self.predictions.mark_resolved(today_str, spy_close, outcome, today_str)
         self._snapshot_open_paper_trades(today_str, spy_close)
@@ -144,7 +147,8 @@ class OutcomeResolver:
     # ── SCORING ───────────────────────────────────────
 
     @staticmethod
-    def _score(direction: str, entry: float | None, close: float) -> str:
+    def _score(direction: str, entry: float | None, close: float,
+               neutral_band: float = NEUTRAL_TOLERANCE_PCT) -> str:
         if entry is None:
             return "partial"   # we have a close but no entry to compare to
         move_pct = (close - entry) / entry * 100
@@ -153,7 +157,7 @@ class OutcomeResolver:
         if direction == "bearish":
             return "correct" if move_pct < 0 else "wrong"
         if direction == "neutral":
-            return "correct" if abs(move_pct) < NEUTRAL_TOLERANCE_PCT else "wrong"
+            return "correct" if abs(move_pct) < neutral_band else "wrong"
         return "partial"
 
     # ── DATA ──────────────────────────────────────────

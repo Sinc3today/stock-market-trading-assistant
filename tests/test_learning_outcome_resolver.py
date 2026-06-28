@@ -43,7 +43,7 @@ def iso_dirs(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _seed_prediction(direction, entry=720.0, tradeable=True):
+def _seed_prediction(direction, entry=720.0, tradeable=True, expected_move_pct=None):
     pl = PredictionLog()
     pl.save(Prediction(
         date=date.today().isoformat(),
@@ -51,6 +51,7 @@ def _seed_prediction(direction, entry=720.0, tradeable=True):
         direction=direction,
         tradeable=tradeable,
         entry_spy=entry,
+        expected_move_pct=expected_move_pct,
     ))
 
 
@@ -85,6 +86,15 @@ def test_neutral_outside_tolerance(iso_dirs):
     _seed_prediction("neutral", entry=720.0)
     result = OutcomeResolver(polygon_client=FakePolygon(close=725.0)).resolve_today()
     assert result["outcome"] == "wrong"
+
+
+def test_neutral_scored_against_prediction_band_not_hardcoded(iso_dirs):
+    # the fix: a neutral prediction is scored against ITS OWN VIX-implied band,
+    # not the old 0.25%. A 0.7% move is "wrong" under 0.25 but "correct" under a
+    # 1.2% band — proving the per-prediction band is what's used.
+    _seed_prediction("neutral", entry=720.0, expected_move_pct=1.2)
+    result = OutcomeResolver(polygon_client=FakePolygon(close=725.0)).resolve_today()
+    assert result["outcome"] == "correct"   # 0.69% move is inside the 1.2% band
 
 
 def test_skip_day_marks_skip(iso_dirs):

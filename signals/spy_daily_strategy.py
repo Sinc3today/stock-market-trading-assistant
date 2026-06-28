@@ -38,6 +38,7 @@ from signals.options_layer   import OptionsLayer
 from data.options_chain      import OptionsChain
 from signals.feature_builder import build_features
 from signals.meta_labeler    import MetaLabeler
+from signals.directional_forecast import forecast_direction
 
 
 # ─────────────────────────────────────────
@@ -60,6 +61,7 @@ class PlayCard:
     plan_payload:     dict   # written to journal/plan_logger — NOT a real fill
     track:            str = "45DTE"   # which timeframe track produced this play
     meta_tier:        str | None = None   # conviction tier from meta-labeler ("high"/"med"/None)
+    forecast:         dict | None = None   # independent next-day directional forecast
 
 
 # ─────────────────────────────────────────
@@ -120,6 +122,15 @@ class SPYDailyStrategy:
         vix_current = self._fetch_vix()
         ivr_current = self._fetch_ivr()
 
+        # Independent next-day directional forecast — derived from price + VIX,
+        # NOT from the strategy we end up trading. Logged on every play (incl.
+        # skip days) so we build a real directional track record.
+        try:
+            forecast = forecast_direction(spy_df, vix_current)
+        except Exception as e:
+            logger.warning(f"directional forecast failed: {e}")
+            forecast = None
+
         regime_result = self.detector.classify(
             spy_daily_df = spy_df,
             vix_current  = vix_current,
@@ -129,7 +140,9 @@ class SPYDailyStrategy:
         logger.info(f"Regime: {regime_result.regime.value} | {regime_result.play}")
 
         if not regime_result.tradeable:
-            return asdict(self._skip_card(today, regime_result, track_name))
+            skip = self._skip_card(today, regime_result, track_name)
+            skip.forecast = forecast
+            return asdict(skip)
 
         # ── Meta-label gate (secondary take/skip + conviction) ──
         # Inert unless explicitly enabled; fails open if no model is loaded.
@@ -141,7 +154,9 @@ class SPYDailyStrategy:
                 regime_result.reasons = list(regime_result.reasons) + [
                     f"meta-filter: P(win) {decision['prob']} < {config.META_PROB_THRESHOLD}"
                 ]
-                return asdict(self._skip_card(today, regime_result, track_name))
+                skip = self._skip_card(today, regime_result, track_name)
+                skip.forecast = forecast
+                return asdict(skip)
             meta_tier = decision["tier"]
 
         # ── Build option structure ─────────────────────────────
@@ -184,6 +199,7 @@ class SPYDailyStrategy:
             plan_payload    = plan,
             track           = track_name,
             meta_tier       = meta_tier,
+            forecast        = forecast,
         )
 
         logger.info(

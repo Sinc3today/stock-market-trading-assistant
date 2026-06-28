@@ -184,7 +184,20 @@ class PaperBroker:
         reasons    = play.get("reasons", [])  or []
         entry_spy  = metrics.get("spy_close")
 
-        direction = self._infer_direction(regime, options)
+        # Direction is now an INDEPENDENT next-day forecast (price+VIX), not a
+        # mirror of the strategy. Fall back to the old strategy-derived direction
+        # only if no forecast was attached (older plays / forecast failure).
+        forecast = play.get("forecast") or {}
+        if forecast.get("direction"):
+            direction          = forecast["direction"]
+            expected_move_pct  = forecast.get("expected_move_pct")
+            pred_reasons       = forecast.get("reasons") or reasons
+            pred_confidence    = float(forecast.get("confidence", confidence))
+        else:
+            direction          = self._infer_direction(regime, options)
+            expected_move_pct  = None
+            pred_reasons       = reasons
+            pred_confidence    = confidence
 
         pred = Prediction(
             date             = today_str,
@@ -194,8 +207,9 @@ class PaperBroker:
             entry_spy        = float(entry_spy) if entry_spy is not None else None,
             predicted_target = self._level(options, "target") or self._move_from_metrics(metrics, direction, +0.01),
             predicted_stop   = self._level(options, "stop")   or self._move_from_metrics(metrics, direction, -0.01),
-            confidence       = confidence,
-            reasons          = reasons,
+            confidence       = pred_confidence,
+            reasons          = pred_reasons,
+            expected_move_pct = expected_move_pct,
             strategy         = (play.get("options") or {}).get("strategy"),
             dte_bucket       = "45DTE",
             book             = "disciplined",

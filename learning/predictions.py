@@ -62,6 +62,7 @@ class Prediction:
     predicted_stop:   float | None  = None
     confidence:       float         = 0.0
     reasons:          list[str]     = field(default_factory=list)
+    expected_move_pct: float | None = None   # VIX-implied daily band for neutral scoring
     # Resolution (filled by outcome_resolver)
     resolved:         bool          = False
     resolution_date:  str | None    = None
