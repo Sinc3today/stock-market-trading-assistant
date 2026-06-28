@@ -97,6 +97,35 @@ def job_rh_sync():
         logger.exception(f"rh_sync failed: {e}")
 
 
+def job_loop_health(alert_fn=None):
+    """Daily: flag any silently-stale learning artifact (off-hours output,
+    predictions, KB growth, spy_history.csv, RH session) so a broken component
+    surfaces in days, not the ~5 weeks the off-hours learner sat dead."""
+    try:
+        from learning.loop_health import gather_and_assess
+        issues = gather_and_assess()
+        if issues:
+            logger.warning("loop_health: " + " | ".join(issues))
+            if alert_fn:
+                alert_fn(title="⚠️ Learning loop needs attention",
+                         body="\n".join(f"• {i}" for i in issues))
+        else:
+            logger.info("loop_health: all learning artifacts fresh")
+    except Exception as e:
+        logger.exception(f"loop_health failed: {e}")
+
+
+def job_refresh_csv():
+    """Weekly: keep backtests/spy_history.csv current so the off-hours replay
+    (and backtests) never run on stale data."""
+    try:
+        from learning.loop_health import refresh_spy_history
+        n = refresh_spy_history()
+        logger.info(f"refresh_csv: appended {n} new SPY row(s)")
+    except Exception as e:
+        logger.exception(f"refresh_csv failed: {e}")
+
+
 def job_outcome_resolver(polygon_client, post_fn=None):
     if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
         logger.info("outcome_resolver: non-trading day, skipping")
@@ -283,6 +312,26 @@ def register_learning_jobs(
         CronTrigger(day_of_week="mon-fri", hour="9-15", minute="*/15", timezone=eastern),
         id="learning_rh_sync",
         name="Learning: RH read-only sync",
+        replace_existing=True,
+    )
+
+    # Loop health monitor — daily, flags any silently-stale learning artifact.
+    scheduler.add_job(
+        job_loop_health,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=30, timezone=eastern),
+        kwargs={"alert_fn": play_fn},
+        id="learning_loop_health",
+        name="Learning: loop health monitor",
+        replace_existing=True,
+    )
+
+    # Weekly CSV refresh — Saturday, before the Sat hypothesis + Sun off-hours
+    # jobs replay it. Keeps backtests/spy_history.csv from going stale.
+    scheduler.add_job(
+        job_refresh_csv,
+        CronTrigger(day_of_week="sat", hour=8, minute=0, timezone=eastern),
+        id="learning_refresh_csv",
+        name="Learning: weekly CSV refresh",
         replace_existing=True,
     )
 

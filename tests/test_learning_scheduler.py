@@ -29,7 +29,7 @@ class FakeScheduler:
 def test_register_learning_jobs_adds_all_jobs():
     s = FakeScheduler()
     sched.register_learning_jobs(s, polygon_client=None, post_fn=None)
-    assert len(s.jobs) == 13
+    assert len(s.jobs) == 15
     job_ids = {j["id"] for j in s.jobs}
     assert job_ids == {
         "learning_paper_broker",
@@ -44,7 +44,9 @@ def test_register_learning_jobs_adds_all_jobs():
         "learning_exit_manager_intraday",
         "learning_exit_digest",               # EOD disciplined-only exit digest
         "learning_dipbuy_resolver",           # dip-buy forward-test resolver
-        "learning_rh_sync",                   # NEW — RH read-only position sync
+        "learning_rh_sync",                   # RH read-only position sync
+        "learning_loop_health",               # NEW — daily loop health monitor
+        "learning_refresh_csv",               # NEW — weekly CSV refresh
     }
 
 
