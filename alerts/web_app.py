@@ -710,6 +710,39 @@ def _spy_spot():
         return None
 
 
+_MTM_CACHE: dict = {}   # trade_id -> (timestamp, html) — live quotes are slow + delayed
+
+
+def _live_mtm_badge(t: dict) -> str:
+    """Best-effort live mark-to-market for a position from real NBBO quotes
+    (yfinance). Cached ~90s so the page stays snappy; never breaks the render."""
+    import time
+    tid = t.get("trade_id")
+    now = time.time()
+    hit = _MTM_CACHE.get(tid)
+    if hit and now - hit[0] < 90:
+        return hit[1]
+    html = ""
+    try:
+        from data.market_quotes import fetch_leg_quotes, position_mtm
+        strat = (t.get("strategy") or "").lower()
+        action = "debit" if ("debit" in strat or strat == "single_leg") else "credit"
+        legs = fetch_leg_quotes(t.get("ticker", "SPY"), t.get("legs") or [])
+        m = position_mtm(legs, entry_price=t.get("entry_price") or 0,
+                         size=t.get("size") or 1, action=action)
+        if m:
+            d, sc = m["mtm_dollars"], m["spread_cost_dollars"]
+            cls = "status-win" if d >= 0 else "status-loss"
+            sign = "+" if d >= 0 else "−"
+            html = (f'<div class="cp-slip badge {cls}">live MTM {sign}${abs(d):,.0f}'
+                    f' · spread to close ~${sc:,.0f}</div>')
+    except Exception as e:
+        logger.warning(f"copilot live MTM failed for {tid}: {e}")
+        html = ""
+    _MTM_CACHE[tid] = (now, html)
+    return html
+
+
 def _render_copilot(live: list[dict], plays: list[dict], spot) -> str:
     """Trade copilot: your live (watchdog-tracked) positions + today's plays to
     mirror on Robinhood — copy-ready RH-shaped legs + smart-stop status."""
@@ -762,6 +795,7 @@ def _render_copilot(live: list[dict], plays: list[dict], spot) -> str:
   <div><b>{_esc(t.get('ticker','SPY'))}</b> &middot; {_strat(t)} <span class="badge {cls}">{label}</span></div>
   {_legs(t)}
   <div class="muted" style="margin-top:.25rem">Exp {_esc(_exp(t))} &middot; watchdog tracking</div>
+  {_live_mtm_badge(t)}
   {_slip(t)}
 </div>''')
         live_html = "\n".join(cards)
