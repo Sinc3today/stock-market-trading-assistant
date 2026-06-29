@@ -244,23 +244,27 @@ _NAV_CSS = """
 
 _BASE_CSS = """
 :root{
-  --bg:#0b0e14;--surface:#11151d;--surface-2:#161b26;--border:#232a36;--border-strong:#2f3847;
-  --fg:#e6edf3;--fg-muted:#9aa7b8;--fg-subtle:#6b7787;
-  --accent:#4f8cff;--accent-fg:#ffffff;--accent-weak:#16233c;
-  --ok:#3fb950;--ok-weak:#0f2b18;--warn:#d6a728;--warn-weak:#2c2410;
-  --err:#f0626b;--err-weak:#2e1416;--info:#58a6ff;--info-weak:#11233c;
+  --bg:#100f0d;--surface:#1a1714;--surface-2:#221e1a;--border:#2d2823;--border-strong:#3c362d;
+  --fg:#ece7df;--fg-muted:#a39b8d;--fg-subtle:#6f675b;
+  --accent:#3fd9c0;--accent-fg:#06140f;--accent-weak:#0e2a25;
+  --highlight:#c25a34;--highlight-weak:#2a1810;
+  --data-blue:#4c8dff;--data-coral:#f3766b;
+  --ok:#3fd9a8;--ok-weak:#0e2a22;--warn:#e0a83a;--warn-weak:#2a2210;
+  --err:#f3766b;--err-weak:#2c1512;--info:#4c8dff;--info-weak:#11223c;
   --violet:#bc8cff;--violet-weak:#241636;
-  --r-sm:6px;--r-md:9px;--r-lg:13px;--sidebar-w:236px;--content-max:1320px;
-  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.22);
+  --r-sm:6px;--r-md:9px;--r-lg:13px;--sidebar-w:236px;--content-max:1340px;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 8px 24px rgba(0,0,0,.28);
   --font-sans:"Inter",ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
 }
 [data-theme="light"]{
-  --bg:#f6f7f9;--surface:#ffffff;--surface-2:#f3f5f7;--border:#e4e7eb;--border-strong:#d2d7dd;
-  --fg:#1b2230;--fg-muted:#5a6675;--fg-subtle:#8a94a3;
-  --accent:#2563eb;--accent-fg:#ffffff;--accent-weak:#e8f0ff;
-  --ok:#1a7f37;--ok-weak:#e7f6ec;--warn:#9a6700;--warn-weak:#fbf3dc;
-  --err:#cf222e;--err-weak:#fcebec;--info:#0969da;--info-weak:#e7f1fd;
+  --bg:#f6f3ec;--surface:#fffdf8;--surface-2:#efe9df;--border:#e6e0d3;--border-strong:#d5cdbd;
+  --fg:#241f18;--fg-muted:#5d5648;--fg-subtle:#8c8474;
+  --accent:#0f9b86;--accent-fg:#ffffff;--accent-weak:#dcf3ee;
+  --highlight:#b5532f;--highlight-weak:#f6e6dd;
+  --data-blue:#2563eb;--data-coral:#d9534a;
+  --ok:#0f9b6e;--ok-weak:#dcf2e6;--warn:#9a6700;--warn-weak:#fbf3dc;
+  --err:#cf4b3e;--err-weak:#fbe7e3;--info:#0969da;--info-weak:#e7f1fd;
   --violet:#8250df;--violet-weak:#f1ebfb;
   --shadow:0 1px 2px rgba(0,0,0,.05),0 6px 18px rgba(0,0,0,.07);
 }
@@ -362,11 +366,51 @@ _MOBILE_CSS = """
   h1{font-size:1.2rem}
   .grid{grid-template-columns:1fr}
   .row{flex-direction:column}
+  .dash{grid-template-columns:1fr;gap:.75rem}
+  .span-3,.span-4,.span-5,.span-6,.span-7,.span-8{grid-column:1/-1}
   #lvl-chart{height:360px !important}
 }
 """
 
-_INDEX_CSS = _BASE_CSS + _NAV_CSS + _MOBILE_CSS
+# Dashboard components — Image-1 (analytics) style: 12-col grid, stat cards with
+# uppercase kicker labels, delta chips, sparklines, dotted status pills.
+_DASH_CSS = """
+.dash{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:1rem;margin-bottom:1.1rem}
+.span-3{grid-column:span 3}.span-4{grid-column:span 4}.span-5{grid-column:span 5}
+.span-6{grid-column:span 6}.span-7{grid-column:span 7}.span-8{grid-column:span 8}.span-12{grid-column:span 12}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:1.1rem 1.2rem}
+.kicker{font-size:.64rem;text-transform:uppercase;letter-spacing:.1em;color:var(--fg-subtle);
+        font-weight:600;display:flex;align-items:center;gap:.45rem;margin-bottom:.6rem}
+.kicker .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:0 0 auto}
+.kicker .sep{color:var(--border-strong)}
+.stat{display:flex;align-items:flex-start;justify-content:space-between;gap:.75rem}
+.stat-value{font-size:2.05rem;font-weight:600;letter-spacing:-.02em;line-height:1.05;
+            font-variant-numeric:tabular-nums;color:var(--fg)}
+.stat-value .unit{font-size:.9rem;font-weight:500;color:var(--fg-muted);margin-left:.2rem}
+.stat-sub{color:var(--fg-muted);font-size:.8rem;margin-top:.35rem}
+.delta-chip{display:inline-flex;align-items:center;gap:.2rem;font-size:.72rem;font-weight:600;
+            padding:.14rem .45rem;border-radius:999px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.delta-up{color:var(--ok);background:var(--ok-weak)}
+.delta-down{color:var(--err);background:var(--err-weak)}
+.delta-flat{color:var(--fg-muted);background:var(--surface-2)}
+.spark{display:block}
+.pill{display:inline-flex;align-items:center;gap:.4rem;font-size:.74rem;font-weight:600;
+      padding:.2rem .55rem;border-radius:999px;background:var(--surface-2);
+      border:1px solid var(--border);color:var(--fg)}
+.pill .dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+.pill-win .dot{background:var(--ok)}.pill-loss .dot{background:var(--err)}
+.pill-watch .dot{background:var(--warn)}.pill-open .dot{background:var(--accent)}
+.pill-auto .dot{background:var(--violet)}
+/* cards nested inside a dashboard card render as clean list rows, not boxes */
+.card .alert-card{background:transparent;border:none;border-radius:0;box-shadow:none;
+                  border-bottom:1px solid var(--border);padding:.85rem 0;margin:0}
+.card .alert-card:hover{box-shadow:none;border-color:transparent;border-bottom-color:var(--border)}
+.card .alert-card:last-of-type{border-bottom:none;padding-bottom:0}
+.card .empty{background:transparent;border:none;padding:1.5rem 0}
+.card .cp-note{margin:.1rem 0 .7rem}
+"""
+
+_INDEX_CSS = _BASE_CSS + _NAV_CSS + _DASH_CSS + _MOBILE_CSS
 
 # Detail pages share the same system now (everything moved into _BASE_CSS).
 _DETAIL_CSS = _INDEX_CSS
@@ -738,19 +782,20 @@ def _render_condor_calc(spot, vix) -> str:
     )
 
 
-_MTM_CACHE: dict = {}   # trade_id -> (timestamp, html) — live quotes are slow + delayed
+_MTM_CACHE: dict = {}   # trade_id -> (timestamp, mtm dict | None) — live quotes are slow
 
 
-def _live_mtm_badge(t: dict) -> str:
-    """Best-effort live mark-to-market for a position from real NBBO quotes
-    (yfinance). Cached ~90s so the page stays snappy; never breaks the render."""
+def _position_mtm_cached(t: dict):
+    """Best-effort live MTM dict for a position from real NBBO quotes (yfinance),
+    cached ~90s. Returns None on failure. Numeric so it feeds both the per-card
+    badge and the portfolio stat card without double-fetching."""
     import time
     tid = t.get("trade_id")
     now = time.time()
     hit = _MTM_CACHE.get(tid)
     if hit and now - hit[0] < 90:
         return hit[1]
-    html = ""
+    m = None
     try:
         from data.market_quotes import fetch_leg_quotes, position_mtm
         strat = (t.get("strategy") or "").lower()
@@ -758,17 +803,55 @@ def _live_mtm_badge(t: dict) -> str:
         legs = fetch_leg_quotes(t.get("ticker", "SPY"), t.get("legs") or [])
         m = position_mtm(legs, entry_price=t.get("entry_price") or 0,
                          size=t.get("size") or 1, action=action)
-        if m:
-            d, sc = m["mtm_dollars"], m["spread_cost_dollars"]
-            cls = "status-win" if d >= 0 else "status-loss"
-            sign = "+" if d >= 0 else "−"
-            html = (f'<div class="cp-slip badge {cls}">live MTM {sign}${abs(d):,.0f}'
-                    f' · spread to close ~${sc:,.0f}</div>')
     except Exception as e:
         logger.warning(f"copilot live MTM failed for {tid}: {e}")
-        html = ""
-    _MTM_CACHE[tid] = (now, html)
-    return html
+    _MTM_CACHE[tid] = (now, m)
+    return m
+
+
+def _live_mtm_badge(t: dict) -> str:
+    m = _position_mtm_cached(t)
+    if not m:
+        return ""
+    d, sc = m["mtm_dollars"], m["spread_cost_dollars"]
+    cls = "status-win" if d >= 0 else "status-loss"
+    sign = "+" if d >= 0 else "−"
+    return (f'<div class="cp-slip badge {cls}">live MTM {sign}${abs(d):,.0f}'
+            f' · spread to close ~${sc:,.0f}</div>')
+
+
+def _live_totals(live: list[dict]) -> dict:
+    """Portfolio roll-up across live positions: summed MTM (None if no quotes),
+    collateral at risk (from records, no network), and count."""
+    mtm = 0.0
+    have_mtm = False
+    capital = 0.0
+    for t in live:
+        capital += float(t.get("max_loss") or 0)
+        m = _position_mtm_cached(t)
+        if m:
+            mtm += m["mtm_dollars"]
+            have_mtm = True
+    return {"mtm": mtm if have_mtm else None, "capital": capital, "n": len(live)}
+
+
+def _spy_recent_closes(n: int = 19) -> list:
+    """Recent SPY closes from the local history CSV (fast, no network)."""
+    try:
+        import pandas as pd
+        df = pd.read_csv(os.path.join("backtests", "spy_history.csv"))
+        col = "close" if "close" in df.columns else "Close"
+        return [float(x) for x in df[col].tail(n).tolist()]
+    except Exception:
+        return []
+
+
+def _stat_card(kicker_html: str, value_html: str, sub: str = "",
+               right_html: str = "", span: str = "span-4") -> str:
+    sub_html = f'<div class="stat-sub">{sub}</div>' if sub else ""
+    return (f'<div class="card {span}"><div class="kicker"><span class="dot"></span>{kicker_html}</div>'
+            f'<div class="stat"><div><div class="stat-value">{value_html}</div>{sub_html}</div>'
+            f'<div style="text-align:right">{right_html}</div></div></div>')
 
 
 def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None) -> str:
@@ -850,17 +933,57 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None) -> str:
     else:
         plays_html = '<div class="empty">No open plays to mirror right now.</div>'
 
-    body = (f'<div class="cp-spot">SPY {spot_str}</div>'
-            f'<div class="cp-h">Your live positions</div>{live_html}'
-            f'<div class="cp-h">Today\'s plays — mirror on Robinhood</div>{plays_html}'
-            f'<div class="cp-h">Condor at the current price</div>'
-            f'<div class="cp-note">Missed the morning alert? Here\'s a condor built '
-            f'off SPY right now — mirror it on RH, then log it.</div>'
-            f'{_render_condor_calc(spot, vix)}'
-            f'<div class="cp-h">Built one yourself?</div>'
-            f'<div class="cp-note">Log a trade you set up on Robinhood so the '
-            f'watchdog tracks it too.</div>'
-            f'<a class="btn-ghost" href="/copilot/log">+ Log a trade I built</a>')
+    # ── Stat row (Image-1 dashboard style) ──────────────────────────────
+    from alerts.sparkline import sparkline_svg, delta_chip
+    closes = _spy_recent_closes(19)
+    day_delta = ""
+    if isinstance(spot, (int, float)):
+        prev = closes[-1] if closes else None
+        closes = closes + [spot]
+        if prev:
+            day_delta = delta_chip(round((spot - prev) / prev * 100, 2))
+    spark = sparkline_svg(closes, width=140, height=38) if len(closes) >= 2 else ""
+    tot = _live_totals(live)
+    spy_val = f'${spot:,.2f}' if isinstance(spot, (int, float)) else '—'
+    if tot["mtm"] is None:
+        mtm_val, mtm_sub = '—', f'{tot["n"]} open position(s)'
+    else:
+        col = "var(--ok)" if tot["mtm"] >= 0 else "var(--err)"
+        sign = "+" if tot["mtm"] >= 0 else "−"
+        mtm_val = f'<span style="color:{col}">{sign}${abs(tot["mtm"]):,.0f}</span>'
+        mtm_sub = f'{tot["n"]} open position(s)'
+
+    stat_row = (
+        '<div class="dash">'
+        + _stat_card('Market <span class="sep">·</span> SPY', spy_val,
+                     sub="live underlying", right_html=spark + day_delta)
+        + _stat_card('Positions <span class="sep">·</span> Open MTM', mtm_val, sub=mtm_sub)
+        + _stat_card('Risk <span class="sep">·</span> Collateral', f'${tot["capital"]:,.0f}',
+                     sub="max loss tied up on RH")
+        + '</div>'
+    )
+
+    # ── Main grid: positions | condor calc, then plays + log ────────────
+    positions_card = (
+        '<div class="card span-7">'
+        '<div class="kicker"><span class="dot"></span>Live positions <span class="sep">·</span> watchdog</div>'
+        f'{live_html}</div>'
+    )
+    condor_card = (
+        '<div class="card span-5">'
+        '<div class="kicker"><span class="dot"></span>Condor <span class="sep">·</span> current price</div>'
+        '<div class="cp-note">Missed the alert? A condor off SPY right now — mirror it, then log.</div>'
+        f'{_render_condor_calc(spot, vix)}</div>'
+    )
+    plays_card = (
+        '<div class="card span-12">'
+        '<div class="kicker"><span class="dot"></span>Today\'s plays <span class="sep">·</span> mirror on RH</div>'
+        f'{plays_html}'
+        '<div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border)">'
+        '<a class="btn-ghost" href="/copilot/log">+ Log a trade I built myself</a></div>'
+        '</div>'
+    )
+    body = stat_row + f'<div class="dash">{positions_card}{condor_card}{plays_card}</div>'
     return _render_page(
         title      = "Trading Assistant - Copilot",
         heading    = "Trade Copilot",
