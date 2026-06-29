@@ -710,6 +710,48 @@ def _spy_spot():
         return None
 
 
+def _spy_vix():
+    """Current VIX for the condor calculator, or None. Best-effort."""
+    try:
+        from data.vix_client import VIXClient
+        v = VIXClient().get_current()
+        return float(v) if v else None
+    except Exception:
+        return None
+
+
+def _render_condor_calc(spot, vix) -> str:
+    """On-demand condor at the CURRENT price (0.20-delta shorts, $5 wings) — for
+    when the morning notification was missed. Estimate; the 'Log this' link
+    pre-fills the log form to confirm the real fill."""
+    if not isinstance(spot, (int, float)):
+        return '<div class="empty">SPY quote unavailable — calculator needs a live price.</div>'
+    from signals.condor_calc import build_condor
+    from alerts.stop_watchdog import rh_leg_lines
+    try:
+        c = build_condor(spot, vix)
+    except Exception as e:
+        logger.warning(f"condor calc failed: {e}")
+        return '<div class="empty">Could not build a condor right now.</div>'
+    legs = "".join(f"<div class='leg'>{_esc(l)}</div>" for l in rh_leg_lines(c["legs"]))
+    vix_str = f"VIX {vix:.1f}" if isinstance(vix, (int, float)) else "VIX —"
+    log_url = (f"/copilot/log?ticker=SPY&expiry={c['expiry']}"
+               f"&bc={c['long_call']:g}&sc={c['short_call']:g}"
+               f"&bp={c['long_put']:g}&sp={c['short_put']:g}")
+    return (
+        '<div class="alert-card">'
+        f'<div class="muted">At SPY ${c["spot"]:,.2f} &middot; {vix_str} &middot; '
+        f'~45 DTE &middot; estimate — verify vs the live chain</div>'
+        f"<div class='legs'>{legs}</div>"
+        '<div class="muted" style="margin-top:.25rem">'
+        f'Est. credit ${c["credit"]:.2f} &middot; max profit ${c["max_profit"]:.0f} &middot; '
+        f'max loss ${c["max_loss"]:.0f} &middot; breakevens '
+        f'{c["breakeven_low"]:g}–{c["breakeven_high"]:g} &middot; exp {_esc(c["expiry"])}</div>'
+        f'<a class="btn-ghost" style="margin-top:.6rem" href="{log_url}">Log this condor</a>'
+        '</div>'
+    )
+
+
 _MTM_CACHE: dict = {}   # trade_id -> (timestamp, html) — live quotes are slow + delayed
 
 
@@ -743,7 +785,7 @@ def _live_mtm_badge(t: dict) -> str:
     return html
 
 
-def _render_copilot(live: list[dict], plays: list[dict], spot) -> str:
+def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None) -> str:
     """Trade copilot: your live (watchdog-tracked) positions + today's plays to
     mirror on Robinhood — copy-ready RH-shaped legs + smart-stop status."""
     from alerts.stop_watchdog import rh_leg_lines, position_status
@@ -783,6 +825,9 @@ def _render_copilot(live: list[dict], plays: list[dict], spot) -> str:
     def _strat(t):
         return _esc((t.get("strategy") or t.get("trade_type") or "").replace("_", " "))
 
+    def _when(t):
+        return _esc(t.get("entry_date") or "")
+
     if live:
         cards = []
         for t in live:
@@ -794,7 +839,7 @@ def _render_copilot(live: list[dict], plays: list[dict], spot) -> str:
             cards.append(f'''<div class="alert-card">
   <div><b>{_esc(t.get('ticker','SPY'))}</b> &middot; {_strat(t)} <span class="badge {cls}">{label}</span></div>
   {_legs(t)}
-  <div class="muted" style="margin-top:.25rem">Exp {_esc(_exp(t))} &middot; watchdog tracking</div>
+  <div class="muted" style="margin-top:.25rem">Exp {_esc(_exp(t))} &middot; opened {_when(t) or '—'} &middot; watchdog tracking</div>
   {_live_mtm_badge(t)}
   {_slip(t)}
 </div>''')
@@ -809,7 +854,7 @@ def _render_copilot(live: list[dict], plays: list[dict], spot) -> str:
             cards.append(f'''<div class="alert-card">
   <div><b>{_esc(t.get('ticker','SPY'))}</b> &middot; {_strat(t)}</div>
   {_legs(t)}
-  <div class="muted" style="margin-top:.25rem">Exp {_esc(_exp(t))}</div>
+  <div class="muted" style="margin-top:.25rem">Exp {_esc(_exp(t))}{(' &middot; ' + _when(t)) if _when(t) else ''}</div>
   <form method="post" action="/copilot/placed" style="margin-top:.5rem">
     <input type="hidden" name="trade_id" value="{_esc(t.get('trade_id',''))}">
     <button class="btn-primary" type="submit">I placed it on RH</button>
@@ -822,6 +867,10 @@ def _render_copilot(live: list[dict], plays: list[dict], spot) -> str:
     body = (f'<div class="cp-spot">SPY {spot_str}</div>'
             f'<div class="cp-h">Your live positions</div>{live_html}'
             f'<div class="cp-h">Today\'s plays — mirror on Robinhood</div>{plays_html}'
+            f'<div class="cp-h">Condor at the current price</div>'
+            f'<div class="cp-note">Missed the morning alert? Here\'s a condor built '
+            f'off SPY right now — mirror it on RH, then log it.</div>'
+            f'{_render_condor_calc(spot, vix)}'
             f'<div class="cp-h">Built one yourself?</div>'
             f'<div class="cp-note">Log a trade you set up on Robinhood so the '
             f'watchdog tracks it too.</div>'
@@ -2621,7 +2670,7 @@ def copilot_page():
     opens = TradeRecorder().get_open_trades()
     live  = [t for t in opens if t.get("book") == "live"]
     plays = [t for t in opens if (t.get("book") or "disciplined") == "disciplined"]
-    return HTMLResponse(_render_copilot(live, plays, _spy_spot()))
+    return HTMLResponse(_render_copilot(live, plays, _spy_spot(), _spy_vix()))
 
 
 @app.post("/copilot/placed", response_class=HTMLResponse)
@@ -2674,8 +2723,18 @@ def copilot_shot(token: str):
 
 
 @app.get("/copilot/log", response_class=HTMLResponse)
-def copilot_log_form():
-    """Blank manual-log form for a trade the user built on RH themselves."""
+def copilot_log_form(ticker: str = "", expiry: str = "", entry_price: str = "",
+                     contracts: str = "", bc: str = "", sc: str = "",
+                     bp: str = "", sp: str = ""):
+    """Manual-log form. Blank by default; pre-filled from query params when opened
+    via the condor calculator's 'Log this condor' link."""
+    prefill = {"ticker": ticker, "expiry": expiry, "entry_price": entry_price,
+               "contracts": contracts, "bc": bc, "sc": sc, "bp": bp, "sp": sp}
+    if any(prefill.values()):
+        return HTMLResponse(_render_copilot_log(
+            prefill=prefill,
+            intro="Pre-filled from the condor calculator — confirm your real credit "
+                  "+ contracts (and adjust strikes to the live chain), then log."))
     return HTMLResponse(_render_copilot_log())
 
 

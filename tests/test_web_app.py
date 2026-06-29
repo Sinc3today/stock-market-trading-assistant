@@ -1249,5 +1249,21 @@ def test_backtest_page_renders_hypotheses_and_kb(client, app_modules, tmp_path):
     assert "100.0%" in r.text or "100%" in r.text
 
 
+def test_copilot_log_prefilled_from_calculator(client):
+    # the condor calculator's "Log this condor" link opens /copilot/log with the
+    # strikes as query params -> the form should come up pre-filled.
+    r = client.get("/copilot/log?ticker=SPY&expiry=2026-08-14"
+                   "&bc=794&sc=789&bp=701&sp=706")
+    assert r.status_code == 200
+    assert 'value="789"' in r.text and 'value="706"' in r.text
+    assert "confirm your real credit" in r.text.lower()
+
+
+def test_copilot_log_blank_without_params(client):
+    r = client.get("/copilot/log")
+    assert r.status_code == 200
+    assert "Extract from screenshot" in r.text
+
+
 # Needed by test_macro_page_empty
 import os
