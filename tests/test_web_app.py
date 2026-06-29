@@ -504,10 +504,12 @@ def test_levels_picker_form_populated_with_watchlist(
 
 
 def test_mobile_css_media_query_present(client, app_modules):
-    """Every page should ship the mobile @media rules."""
+    """Every page should ship the responsive @media rules (sidebar collapses)."""
     r = client.get("/today")
-    assert "@media (max-width:760px)" in r.text
-    # The grid stack rule is what makes /macro readable on phone
+    assert "@media (max-width:860px)" in r.text
+    # On desktop the layout is a sidebar + content grid
+    assert "grid-template-columns:var(--sidebar-w)" in r.text
+    # ...which collapses to a single column on mobile
     assert "grid-template-columns:1fr" in r.text
 
 
@@ -525,8 +527,9 @@ def test_nav_renders_brand_and_hamburger_toggle(client, app_modules):
     assert "nav-brand"          in r.text
     assert "nav-toggle"         in r.text
     assert "nav-toggle-input"   in r.text
-    # The CSS-only toggle relies on the :checked sibling selector
-    assert ":checked ~ .nav-links" in r.text
+    # Sidebar + theme toggle + the CSS-only drawer (:checked sibling selector)
+    assert "theme-toggle"          in r.text
+    assert ":checked ~ .nav"       in r.text
 
 
 def test_nav_renders_three_grouped_sections(client, app_modules):
@@ -738,7 +741,7 @@ def test_nav_includes_auto_close_script(client, app_modules):
     the right elements."""
     r = client.get("/macro")
     assert 'getElementById("nav-toggle")'          in r.text
-    assert 'querySelectorAll(".nav-links a")'      in r.text
+    assert 'querySelectorAll(".nav a")'            in r.text
     assert 't.checked=false'                       in r.text
 
 

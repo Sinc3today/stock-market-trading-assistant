@@ -218,191 +218,158 @@ def _ask_claude(alert: dict, user_message: str, history: list[dict]) -> str:
 # ─────────────────────────────────────────
 
 _NAV_CSS = """
-/* ── Sticky header with brand + groupable links ────────── */
-.nav{position:sticky;top:0;z-index:10;background:#0d1117;
-     border-bottom:1px solid #30363d;margin:-1rem -1rem 1rem;padding:.55rem 1rem;
-     display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
-.nav-brand{color:#58a6ff;text-decoration:none;font-weight:700;font-size:.95rem;
-           white-space:nowrap;letter-spacing:.02em}
+/* ── Left sidebar (desktop) → slide-in overlay (mobile) ───── */
+.nav{grid-column:1;grid-row:1;position:sticky;top:0;height:100vh;align-self:start;
+     background:var(--surface);border-right:1px solid var(--border);
+     padding:1rem .8rem;display:flex;flex-direction:column;gap:.15rem;overflow-y:auto}
+.nav-brand{color:var(--fg);text-decoration:none;font-weight:700;font-size:1.05rem;
+           letter-spacing:-.01em;padding:.2rem .55rem .9rem;display:block}
+.nav-group{display:flex;flex-direction:column;gap:.1rem;margin-bottom:.45rem}
+.nav-group-label{display:block;color:var(--fg-subtle);font-size:.66rem;text-transform:uppercase;
+                 letter-spacing:.08em;font-weight:600;padding:.5rem .55rem .2rem}
+.nav a:not(.nav-brand){color:var(--fg-muted);text-decoration:none;font-size:.9rem;font-weight:500;
+       padding:.5rem .6rem;border-radius:var(--r-sm);display:block}
+.nav a:not(.nav-brand):hover{color:var(--fg);background:var(--surface-2)}
+.nav a.active{color:var(--accent-fg);background:var(--accent)}
+.nav-spacer{flex:1;min-height:.5rem}
+.theme-toggle{background:transparent;border:1px solid var(--border);color:var(--fg-muted);
+              border-radius:var(--r-sm);padding:.5rem .6rem;text-align:left;cursor:pointer;
+              font-weight:500;font-size:.85rem;width:100%}
+.theme-toggle:hover{color:var(--fg);border-color:var(--border-strong);filter:none}
+.topbar{display:none}
+.nav-scrim{display:none}
 .nav-toggle-input{display:none}
-.nav-toggle{display:none;background:transparent;border:1px solid #30363d;
-            color:#c9d1d9;border-radius:6px;padding:.35rem .65rem;cursor:pointer;
-            font-size:1.1rem;line-height:1;user-select:none;-webkit-user-select:none}
-.nav-toggle:hover{border-color:#58a6ff}
-.nav-links{display:flex;align-items:center;gap:.4rem;flex:1;flex-wrap:wrap;
-           margin-left:auto}
-.nav-group{display:flex;align-items:center;gap:.25rem;padding:0 .35rem;
-           border-left:1px solid #21262d}
-.nav-group:first-child{border-left:none;padding-left:0}
-.nav-group-label{display:none;color:#6e7681;font-size:.7rem;text-transform:uppercase;
-                 letter-spacing:.06em;margin-right:.25rem}
-.nav a:not(.nav-brand){flex:0 0 auto;color:#8b949e;text-decoration:none;
-       padding:.4rem .7rem;border-radius:6px;font-size:.85rem;font-weight:500;
-       white-space:nowrap}
-.nav a:not(.nav-brand):hover{color:#c9d1d9;background:#161b22}
-.nav a.active{color:#fff;background:#1f6feb}
-.pnl-pos{color:#3fb950}
-.pnl-neg{color:#f85149}
-.pnl-zero{color:#8b949e}
-.status-open{background:#1f3a5f;color:#58a6ff;border:1px solid #1f6feb}
-.status-win{background:#0f3a1f;color:#3fb950;border:1px solid #238636}
-.status-loss{background:#3a1212;color:#f85149;border:1px solid #b62324}
-.status-be{background:#3a2f0f;color:#d29922;border:1px solid #9e6a03}
-.status-auto{background:#2d1b3d;color:#bc8cff;border:1px solid #6e40c9}
+.nav-toggle{display:none}
 """
 
 _BASE_CSS = """
+:root{
+  --bg:#0b0e14;--surface:#11151d;--surface-2:#161b26;--border:#232a36;--border-strong:#2f3847;
+  --fg:#e6edf3;--fg-muted:#9aa7b8;--fg-subtle:#6b7787;
+  --accent:#4f8cff;--accent-fg:#ffffff;--accent-weak:#16233c;
+  --ok:#3fb950;--ok-weak:#0f2b18;--warn:#d6a728;--warn-weak:#2c2410;
+  --err:#f0626b;--err-weak:#2e1416;--info:#58a6ff;--info-weak:#11233c;
+  --violet:#bc8cff;--violet-weak:#241636;
+  --r-sm:6px;--r-md:9px;--r-lg:13px;--sidebar-w:236px;--content-max:1320px;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.22);
+  --font-sans:"Inter",ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+[data-theme="light"]{
+  --bg:#f6f7f9;--surface:#ffffff;--surface-2:#f3f5f7;--border:#e4e7eb;--border-strong:#d2d7dd;
+  --fg:#1b2230;--fg-muted:#5a6675;--fg-subtle:#8a94a3;
+  --accent:#2563eb;--accent-fg:#ffffff;--accent-weak:#e8f0ff;
+  --ok:#1a7f37;--ok-weak:#e7f6ec;--warn:#9a6700;--warn-weak:#fbf3dc;
+  --err:#cf222e;--err-weak:#fcebec;--info:#0969da;--info-weak:#e7f1fd;
+  --violet:#8250df;--violet-weak:#f1ebfb;
+  --shadow:0 1px 2px rgba(0,0,0,.05),0 6px 18px rgba(0,0,0,.07);
+}
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
-body{font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,sans-serif;
-     background:linear-gradient(180deg,#0d1117 0%, #0a0e14 100%) fixed;
-     color:#c9d1d9;line-height:1.5;padding:1rem;max-width:760px;margin:0 auto;
-     -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
-     overscroll-behavior-y:contain}    /* lets our PtR JS own the pull */
-h1{font-size:1.5rem;margin-bottom:1.1rem;color:#c9d1d9;font-weight:700;
-   letter-spacing:-.01em;
-   background:linear-gradient(90deg,#58a6ff 0%,#9d7aff 100%);
-   -webkit-background-clip:text;background-clip:text;color:transparent}
-.alert-card{background:linear-gradient(180deg,#161b22 0%,#13181f 100%);
-            border:1px solid #30363d;border-radius:10px;
-            padding:.95rem 1.05rem;margin-bottom:.75rem;
-            text-decoration:none;color:inherit;display:block;
-            box-shadow:0 1px 2px rgba(0,0,0,.4), 0 0 0 1px rgba(255,255,255,.02) inset;
-            transition:border-color .14s ease, transform .14s ease, box-shadow .14s ease}
-.alert-card:hover{border-color:#58a6ff;
-                  box-shadow:0 2px 8px rgba(31,111,235,.18), 0 0 0 1px rgba(88,166,255,.15) inset}
-.alert-row{display:flex;justify-content:space-between;font-size:.9rem;margin-top:.25rem;
-           flex-wrap:wrap;gap:.3rem;align-items:center}
-.muted{color:#8b949e;font-size:.85rem}
-.badge{display:inline-block;padding:.18rem .55rem;border-radius:999px;font-size:.7rem;
-       background:#21262d;border:1px solid #30363d;margin-right:.25rem;
-       font-weight:600;letter-spacing:.02em;text-transform:uppercase}
-.empty{text-align:center;color:#8b949e;padding:3rem 0}
-
-/* Pull-to-refresh indicator */
-#ptr-indicator{position:fixed;top:0;left:0;right:0;
-               display:flex;align-items:center;justify-content:center;
-               gap:.45rem;height:46px;color:#8b949e;font-size:.85rem;
-               background:linear-gradient(180deg,#0d1117 0%,rgba(13,17,23,0) 100%);
-               opacity:0;transform:translateY(-46px);pointer-events:none;
-               transition:transform .15s ease-out, opacity .15s ease-out;
-               z-index:9}
-#ptr-indicator .ptr-spinner{font-size:1.1rem;display:inline-block}
-
-/* /levels ticker picker */
-.lvl-picker{display:flex;gap:.5rem;align-items:center;padding:.6rem .8rem}
-.lvl-picker select{flex:1;background:#0d1117;color:#c9d1d9;
-                   border:1px solid #30363d;border-radius:6px;padding:.4rem .5rem}
-.lvl-picker button{background:#1f6feb;color:#fff;border:none;border-radius:6px;
-                   padding:.45rem 1rem;cursor:pointer;font-weight:600}
-.lvl-picker button:hover{background:#388bfd}
-
-/* /levels timeframe ribbon */
-.rng-ribbon{display:flex;gap:.3rem;padding:.5rem .55rem;overflow-x:auto;
-            -webkit-overflow-scrolling:touch;scrollbar-width:none}
+body{font-family:var(--font-sans);background:var(--bg);color:var(--fg);line-height:1.5;
+     min-height:100vh;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+     overscroll-behavior-y:contain;display:grid;grid-template-columns:var(--sidebar-w) minmax(0,1fr)}
+.content{grid-column:2;padding:1.6rem 2rem 4rem;max-width:var(--content-max);width:100%}
+.page-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1.25rem}
+h1{font-size:1.4rem;font-weight:650;letter-spacing:-.02em;color:var(--fg)}
+h2{font-size:1.05rem;font-weight:600;color:var(--fg)}
+a{color:var(--accent)}
+.muted{color:var(--fg-muted);font-size:.85rem}
+.legs,.leg,.tnum{font-variant-numeric:tabular-nums}
+.alert-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
+            padding:1rem 1.1rem;margin-bottom:.8rem;text-decoration:none;color:inherit;display:block;
+            transition:border-color .14s ease, box-shadow .14s ease}
+.alert-card:hover{border-color:var(--border-strong);box-shadow:var(--shadow)}
+.alert-row{display:flex;justify-content:space-between;font-size:.9rem;margin-top:.35rem;
+           flex-wrap:wrap;gap:.35rem;align-items:center}
+.badge{display:inline-block;padding:.18rem .55rem;border-radius:999px;font-size:.68rem;
+       background:var(--surface-2);border:1px solid var(--border);margin-right:.25rem;
+       font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--fg-muted)}
+.empty{text-align:center;color:var(--fg-subtle);padding:2.5rem 1rem;border:1px dashed var(--border);
+       border-radius:var(--r-md);background:var(--surface)}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
+         padding:1.1rem;margin-bottom:1rem}
+.section h2{font-size:.95rem;color:var(--fg);margin-bottom:.8rem;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.75rem 1rem;font-size:.9rem}
+.grid div span{color:var(--fg-subtle);display:block;font-size:.72rem;text-transform:uppercase;
+               letter-spacing:.04em;margin-bottom:.1rem}
+.grid div b{font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
+.row{display:flex;gap:.5rem;flex-wrap:wrap}
+.field{margin-bottom:.7rem}
+label{display:block;font-size:.75rem;color:var(--fg-subtle);margin-bottom:.25rem;
+      text-transform:uppercase;letter-spacing:.04em}
+textarea,input,select{width:100%;background:var(--bg);border:1px solid var(--border);
+       border-radius:var(--r-sm);padding:.5rem .6rem;color:var(--fg);font-family:inherit;font-size:.92rem}
+textarea:focus,input:focus,select:focus{outline:2px solid var(--accent-weak);border-color:var(--accent)}
+textarea{resize:vertical;min-height:60px}
+button{background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent);
+       border-radius:var(--r-sm);padding:.55rem 1rem;font-weight:600;cursor:pointer;
+       font-size:.9rem;font-family:inherit}
+button:hover{filter:brightness(1.07)}
+button:disabled{background:var(--surface-2);color:var(--fg-subtle);border-color:var(--border);
+       cursor:not-allowed;filter:none}
+.pnl-pos{color:var(--ok)}.pnl-neg{color:var(--err)}.pnl-zero{color:var(--fg-muted)}
+.status-open{background:var(--info-weak);color:var(--info);border:1px solid var(--info)}
+.status-win,.outcome-win{background:var(--ok-weak);color:var(--ok);border:1px solid var(--ok)}
+.status-loss,.outcome-loss{background:var(--err-weak);color:var(--err);border:1px solid var(--err)}
+.status-be,.outcome-be{background:var(--warn-weak);color:var(--warn);border:1px solid var(--warn)}
+.status-auto{background:var(--violet-weak);color:var(--violet);border:1px solid var(--violet)}
+.chat-box{height:340px;overflow-y:auto;padding:.6rem;background:var(--bg);border:1px solid var(--border);
+          border-radius:var(--r-md);margin-bottom:.6rem;font-size:.9rem}
+.msg{margin-bottom:.6rem;padding:.55rem .75rem;border-radius:var(--r-sm);white-space:pre-wrap;word-wrap:break-word}
+.msg.user{background:var(--accent-weak);border-left:3px solid var(--accent)}
+.msg.assistant{background:var(--surface-2);border-left:3px solid var(--ok)}
+.entry{background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);
+       padding:.5rem .7rem;margin-top:.5rem;font-size:.85rem}
+.toggle{display:flex;gap:.5rem;margin:.4rem 0}
+.toggle button{flex:1;background:var(--surface-2);color:var(--fg);border:1px solid var(--border)}
+.toggle button.active{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.lvl-picker{display:flex;gap:.5rem;align-items:center;padding:.2rem 0 .8rem}
+.lvl-picker select{flex:1}
+.rng-ribbon{display:flex;gap:.35rem;padding:.2rem 0 .8rem;overflow-x:auto;scrollbar-width:none}
 .rng-ribbon::-webkit-scrollbar{display:none}
-.rng-btn{flex:0 0 auto;padding:.4rem .7rem;border-radius:6px;font-size:.8rem;
-         font-weight:600;color:#8b949e;background:#0d1117;
-         border:1px solid #30363d;text-decoration:none;white-space:nowrap;
-         transition:background .12s ease, color .12s ease, border-color .12s ease}
-.rng-btn:hover{color:#c9d1d9;border-color:#58a6ff}
-.rng-btn.active{color:#fff;background:#1f6feb;border-color:#1f6feb}
+.rng-btn{flex:0 0 auto;padding:.4rem .75rem;border-radius:var(--r-sm);font-size:.8rem;font-weight:600;
+         color:var(--fg-muted);background:var(--surface);border:1px solid var(--border);
+         text-decoration:none;white-space:nowrap}
+.rng-btn:hover{color:var(--fg);border-color:var(--accent)}
+.rng-btn.active{color:var(--accent-fg);background:var(--accent);border-color:var(--accent)}
+#ptr-indicator{position:fixed;top:0;left:0;right:0;display:flex;align-items:center;justify-content:center;
+               gap:.45rem;height:46px;color:var(--fg-muted);font-size:.85rem;background:var(--bg);
+               opacity:0;transform:translateY(-46px);pointer-events:none;
+               transition:transform .15s ease-out, opacity .15s ease-out;z-index:9}
+#ptr-indicator .ptr-spinner{font-size:1.1rem;display:inline-block}
 """
 
 # The mobile @media block has to come AFTER _NAV_CSS so its rules win the
 # cascade — earlier versions concatenated it before and the desktop
 # nav-links rules (no media query) clobbered the mobile slide-down panel.
 _MOBILE_CSS = """
-@media (max-width:760px){
-  body{padding:.6rem}
-  h1{font-size:1.2rem;margin-bottom:.6rem}
-  .alert-card{padding:.7rem .8rem}
-  /* Keep flex-wrap:wrap (inherited from base .nav) — the panel needs to
-     wrap to its OWN row below the brand+toggle. nowrap was forcing it
-     to overflow off the right edge of the viewport. */
-  .nav{margin:-.6rem -.6rem .8rem;padding:.45rem .6rem;gap:.5rem}
-  .nav-toggle{display:inline-block;margin-left:auto}   /* push toggle to right */
-
-  /* Slide-down panel: takes the full viewport row below brand/toggle.
-     Animates via opacity + max-height for a fast GPU reveal — no layout
-     reflow. */
-  .nav-links{display:flex;flex:0 0 100%;width:100%;
-             flex-direction:column;align-items:stretch;
-             gap:.2rem;margin:0;padding:0;
-             max-height:0;opacity:0;overflow:hidden;pointer-events:none;
-             border-top:0 solid #21262d;
-             transition:max-height .18s ease-out, opacity .14s ease-out,
-                        margin .18s ease-out, padding .18s ease-out;
-             will-change:max-height,opacity}
-  .nav-toggle-input:checked ~ .nav-links{
-    max-height:75vh;opacity:1;pointer-events:auto;overflow:auto;
-    margin-top:.5rem;border-top-width:1px;padding-top:.5rem;
-  }
-
-  /* 2-column grid keeps the panel under ~280px tall instead of ~500px.
-     Group labels span both columns. Box-sizing makes the grid fit
-     inside the panel without horizontal overflow. */
-  .nav-group{display:grid;grid-template-columns:1fr 1fr;gap:.3rem;
-             padding:.35rem .25rem;border-left:none;border-top:1px solid #161b22;
-             align-items:stretch;width:100%;box-sizing:border-box;
-             min-width:0}
-  .nav-group:first-child{border-top:none;padding-top:.15rem}
-  .nav-group-label{display:block;grid-column:1/-1;padding:0 .15rem .15rem;
-                   font-weight:600;color:#8b949e;font-size:.7rem;
-                   text-transform:uppercase;letter-spacing:.06em;
-                   text-align:left}
-  .nav a:not(.nav-brand){padding:.65rem .4rem;font-size:.9rem;
-                         text-align:center;border:1px solid #21262d;
-                         background:#161b22;border-radius:6px;
-                         display:flex;align-items:center;justify-content:center;
-                         min-height:42px;min-width:0;width:100%}
-  .nav a:not(.nav-brand):active{background:#1f6feb;color:#fff}
-  .nav a.active{background:#1f6feb;color:#fff;border-color:#1f6feb}
-
-  .grid{grid-template-columns:1fr !important;gap:.4rem !important}
+@media (max-width:860px){
+  body{grid-template-columns:1fr}
+  .content{grid-column:1;padding:1rem 1rem 4rem}
+  .topbar{display:flex;align-items:center;gap:.6rem;position:sticky;top:0;z-index:40;grid-column:1;
+          background:var(--surface);border-bottom:1px solid var(--border);padding:.6rem .9rem}
+  .topbar .nav-brand{padding:0;font-size:1rem}
+  .nav-toggle{display:inline-flex;align-items:center;justify-content:center;margin-left:auto;
+              background:transparent;border:1px solid var(--border);color:var(--fg);
+              border-radius:var(--r-sm);padding:.35rem .6rem;font-size:1.15rem;line-height:1;cursor:pointer}
+  .nav{position:fixed;left:0;top:0;bottom:0;width:250px;height:100dvh;z-index:60;
+       transform:translateX(-100%);transition:transform .2s ease;box-shadow:var(--shadow)}
+  .nav-toggle-input:checked ~ .nav{transform:none}
+  .nav-scrim{display:block;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:55;
+             opacity:0;pointer-events:none;transition:opacity .2s ease}
+  .nav-toggle-input:checked ~ .nav-scrim{opacity:1;pointer-events:auto}
+  h1{font-size:1.2rem}
+  .grid{grid-template-columns:1fr}
   .row{flex-direction:column}
   #lvl-chart{height:360px !important}
-  /* Card rows: more breathing room between badge + value + timestamp */
-  .alert-row{margin-top:.4rem}
-  .alert-card > div:not(.alert-row){line-height:1.45}
 }
 """
 
 _INDEX_CSS = _BASE_CSS + _NAV_CSS + _MOBILE_CSS
 
-_DETAIL_CSS = _INDEX_CSS + """
-.section{background:#161b22;border:1px solid #30363d;border-radius:8px;
-         padding:1rem;margin-bottom:1rem}
-.section h2{font-size:1rem;color:#58a6ff;margin-bottom:.75rem;
-            text-transform:uppercase;letter-spacing:.05em}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:.5rem .75rem;font-size:.9rem}
-.grid div span{color:#8b949e;display:block;font-size:.75rem;text-transform:uppercase}
-.grid div b{font-weight:600;color:#c9d1d9}
-.chat-box{height:280px;overflow-y:auto;padding:.5rem;background:#0d1117;
-          border:1px solid #30363d;border-radius:6px;margin-bottom:.5rem;font-size:.9rem}
-.msg{margin-bottom:.6rem;padding:.5rem .7rem;border-radius:6px;white-space:pre-wrap;word-wrap:break-word}
-.msg.user{background:#1f3a5f;border-left:3px solid #58a6ff}
-.msg.assistant{background:#21262d;border-left:3px solid #3fb950}
-.row{display:flex;gap:.5rem}
-textarea,input,select{width:100%;background:#0d1117;border:1px solid #30363d;
-       border-radius:6px;padding:.5rem;color:#c9d1d9;font-family:inherit;font-size:.9rem}
-textarea{resize:vertical;min-height:60px}
-button{background:#238636;color:#fff;border:none;border-radius:6px;
-       padding:.55rem 1rem;font-weight:600;cursor:pointer;font-size:.9rem}
-button:hover{background:#2ea043}
-button:disabled{background:#21262d;color:#8b949e;cursor:not-allowed}
-.toggle{display:flex;gap:.5rem;margin:.4rem 0}
-.toggle button{flex:1;background:#21262d;color:#c9d1d9;border:1px solid #30363d}
-.toggle button.active{background:#1f6feb;color:#fff;border-color:#1f6feb}
-.entry{background:#0d1117;border:1px solid #30363d;border-radius:6px;
-       padding:.5rem .7rem;margin-top:.5rem;font-size:.85rem}
-.outcome-win{color:#3fb950}
-.outcome-loss{color:#f85149}
-.outcome-be{color:#d29922}
-label{display:block;font-size:.8rem;color:#8b949e;margin-bottom:.2rem;
-      text-transform:uppercase;letter-spacing:.04em}
-.field{margin-bottom:.7rem}
-"""
+# Detail pages share the same system now (everything moved into _BASE_CSS).
+_DETAIL_CSS = _INDEX_CSS
 
 
 def _esc(v: Any) -> str:
@@ -443,25 +410,38 @@ def _render_nav(active: str) -> str:
             f'{"".join(links)}'
             f'</div>'
         )
-    # Tiny inline script: tapping a nav link on mobile closes the
-    # hamburger panel so the next page doesn't load with the menu still
-    # open. No-op on desktop where the toggle isn't visible.
-    auto_close = (
+    # Theme toggle + mobile menu auto-close. The early theme-set lives in the
+    # <head> (in _render_page) to avoid a flash; this just keeps the label synced
+    # and lets a nav tap close the mobile drawer.
+    script = (
         '<script>'
-        'document.addEventListener("DOMContentLoaded",function(){'
+        'function __toggleTheme(){var d=document.documentElement;'
+        'var n=d.getAttribute("data-theme")==="light"?"dark":"light";'
+        'd.setAttribute("data-theme",n);try{localStorage.setItem("smta-theme",n)}catch(e){}'
+        '__themeLabel()}'
+        'function __themeLabel(){var t=document.documentElement.getAttribute("data-theme")==="light"?"light":"dark";'
+        'var el=document.getElementById("theme-label");if(el)el.textContent=t==="light"?"☀ Light":"☾ Dark"}'
+        'document.addEventListener("DOMContentLoaded",function(){__themeLabel();'
         'var t=document.getElementById("nav-toggle");if(!t)return;'
-        'document.querySelectorAll(".nav-links a").forEach(function(a){'
+        'document.querySelectorAll(".nav a").forEach(function(a){'
         'a.addEventListener("click",function(){t.checked=false})})});'
         '</script>'
     )
     return (
-        f'<nav class="nav">'
-        f'<a href="/today" class="nav-brand">📊 SMTA</a>'
-        f'<input type="checkbox" id="nav-toggle" class="nav-toggle-input">'
-        f'<label for="nav-toggle" class="nav-toggle" aria-label="Open menu">☰</label>'
-        f'<div class="nav-links">{"".join(groups_html)}</div>'
-        f'</nav>'
-        f'{auto_close}'
+        '<input type="checkbox" id="nav-toggle" class="nav-toggle-input">'
+        '<header class="topbar">'
+        '<a href="/today" class="nav-brand">📊 SMTA</a>'
+        '<label for="nav-toggle" class="nav-toggle" aria-label="Open menu">☰</label>'
+        '</header>'
+        '<label for="nav-toggle" class="nav-scrim" aria-hidden="true"></label>'
+        '<aside class="nav">'
+        '<a href="/today" class="nav-brand">📊 SMTA</a>'
+        f'{"".join(groups_html)}'
+        '<div class="nav-spacer"></div>'
+        '<button type="button" class="theme-toggle" onclick="__toggleTheme()">'
+        '<span id="theme-label">☾ Dark</span></button>'
+        '</aside>'
+        f'{script}'
     )
 
 
@@ -469,18 +449,24 @@ def _render_page(
     title: str, heading: str, body: str, css: str, active_nav: str,
     extra_head: str = "",
 ) -> str:
-    """Shared HTML wrapper: head + nav bar + page body + gesture support."""
+    """Shared HTML wrapper: sidebar shell + page content. Sidebar collapses to a
+    top-bar drawer on mobile; theme (dark/light) is set pre-paint from storage."""
+    theme_init = ('<script>(function(){try{if(localStorage.getItem("smta-theme")==="light")'
+                  'document.documentElement.setAttribute("data-theme","light")}catch(e){}})();</script>')
     return f"""<!doctype html>
 <html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title>
+{theme_init}
 <style>{css}</style>
 {extra_head}
 </head><body data-active-nav="{html.escape(active_nav)}">
 {_render_nav(active_nav)}
-<h1>{html.escape(heading)}</h1>
+<main class="content">
+<div class="page-head"><h1>{html.escape(heading)}</h1></div>
 {body}
+</main>
 {_PTR_INDICATOR_HTML}
 {_GESTURES_SCRIPT}
 </body></html>"""
@@ -2127,10 +2113,12 @@ def _render_detail(alert: dict, journal: list[dict], chat: list[dict]) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Alert {html.escape(aid)} - Trading Assistant</title>
+<script>(function(){{try{{if(localStorage.getItem("smta-theme")==="light")document.documentElement.setAttribute("data-theme","light")}}catch(e){{}}}})();</script>
 <style>{_DETAIL_CSS}</style>
 </head><body>
 {_render_nav("alerts")}
-<h1>Alert {html.escape(aid)}</h1>
+<main class="content">
+<div class="page-head"><h1>Alert {html.escape(aid)}</h1></div>
 <div class="muted" style="margin-bottom:1rem">{created} UTC</div>
 
 <div class="section">
@@ -2280,6 +2268,7 @@ function renderJournal(items) {{
   }}).join("");
 }}
 </script>
+</main>
 </body></html>"""
 
 
