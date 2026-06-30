@@ -4,6 +4,50 @@
 
 ---
 
+## 2026-06-29 — Web app revamp: mobile-first column → desktop analytics dashboard
+
+**What was worked on (plain language):**
+- Full redesign of the tailnet web app. It was a competent *phone* app being viewed on a
+  *desktop* — hard-capped at a 760px centered column with a mobile slide-down menu. Turned it into
+  a proper desktop dashboard, kept it responsive so the phone view still works.
+- Decided up front (with the user, before any code): evolve the existing server-rendered FastAPI app
+  (NOT a React rewrite), left-sidebar desktop layout, refined dark + light themes with a toggle.
+- **Phase 1 — shell + tokens:** rebuilt the CSS layer as a design-token system (CSS vars), so all 11
+  pages restyled at once. Left sidebar (brand + nav groups + theme toggle) with a full-width content
+  area on desktop, collapsing to a top-bar drawer on mobile. Theme persists to localStorage, set
+  pre-paint to avoid a flash. Tokenized every shared component + the one page that built its own HTML.
+- **Phase 2 — aesthetic + dashboards:** the user sent a fitness-analytics reference (and asked about
+  Replit/Lovable/MagicPatterns). Honest take given: those are React generators — we can't drop their
+  code in, but their *look* is fully replicable in our tokens, so no stack switch. Adopted the
+  reference's language: warm-tinted dark palette, **deeper teal accent** (started brighter/mint, user
+  said too neon → darkened; tried rust buttons, user said the orange looked odd → buttons back on
+  teal). Built a dashboard component system — 12-col grid, stat cards with uppercase dotted "kicker"
+  labels, delta chips, dotted status pills, and free inline-SVG **sparkline + donut gauge** helpers.
+- Converted the five data-heavy pages to the dashboard layout: **Copilot** (SPY/MTM/collateral stats
+  + positions/condor grid), **Today** (regime/vol/play stats + featured play), **Learning** (accuracy
+  donut + P&L sparkline + 2-up grid), **Macro** (VIX/sector/theta stats + multi-panel), **Trades**
+  (P&L/win-rate stats + history). Left the lists/forms (Journal, Chats, Backtest, Chat, Levels) as
+  clean lists in the new palette — no forced over-design.
+
+**What didn't work / honest gaps:**
+- Bright mint accent + rust buttons were both rejected on sight; the win was iterating fast on single
+  tokens (the whole point of the token system) rather than re-touching every page.
+- I can't see the rendered result — relied on the user as the visual check each round. Worked, but
+  means palette/spacing calls are theirs, not mine.
+- The condor calculator's call strike runs wide (flat-vol BS has no skew) — pre-existing, surfaced
+  again while reviewing Copilot; labeled an estimate.
+
+**Live trading / learning:** untouched — pure presentation-layer work. trader.service redeployed +
+healthy after every change; all routes return 200.
+
+**Tests:** 1254 passing (added sparkline + gauge helpers w/ tests; updated the nav tests for the new
+sidebar structure; tokenized 10 hardcoded row borders).
+
+**Open for next session:** optional polish (spacing, gauge/sparkline sizes, palette nudges); the user
+may bring more design references to fold into the tokens.
+
+---
+
 ## 2026-06-28 — Copilot to feature-complete + two silent learning-loop failures found & fixed
 
 **What was worked on (plain language):**
