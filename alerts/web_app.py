@@ -1835,82 +1835,91 @@ def _render_today(
     is_skip    = (plan.get("action") == "SKIP") or not plan.get("strategy")
     regime_cls = "status-loss" if is_skip else "status-win"
 
-    play_html = f'''
-<div class="alert-card">
-  <div style="margin-bottom:.6rem">
-    <span class="badge {regime_cls}" style="font-size:.85rem">{regime_plain}</span>
-    <span class="muted" style="float:right">{plan_date}</span>
-  </div>
-  <div style="font-size:1.1rem;margin-bottom:.4rem"><b>{play}</b></div>
-  <div class="grid">
-    <div><span>Strategy</span><b>{strategy}</b></div>
-    <div><span>Risk / Reward</span><b>{rr}</b></div>
-    <div><span>Days to expiry</span><b>{dte}</b></div>
-    <div><span>Max win / loss</span><b>{max_p_str} / {max_l_str}</b></div>
-  </div>
-  <div class="muted" style="margin-top:.5rem">Exit: {exit_rule}</div>
-</div>'''
+    from alerts.sparkline import sparkline_svg, delta_chip
+    flag = vix_ts.get("flag")
+    spot = (spy_closes or [None])[-1] if spy_closes else None
 
-    summary_html = (
-        f'<div class="alert-card"><div class="muted" style="text-transform:uppercase;'
-        f'font-size:.75rem;margin-bottom:.4rem">Why this trade today</div>'
-        f'<div>{summary}</div></div>'
-        if summary else ""
+    # ── Stat-card row ───────────────────────────────────
+    spy_val = f'${spot:,.2f}' if isinstance(spot, (int, float)) else '—'
+    spark = (sparkline_svg(spy_closes, width=140, height=38)
+             if spy_closes and len(spy_closes) >= 2 else '')
+    day = ''
+    if spy_closes and len(spy_closes) >= 2 and spy_closes[-2]:
+        day = delta_chip(round((spy_closes[-1] - spy_closes[-2]) / spy_closes[-2] * 100, 2))
+    vix_label = _esc(_VIX_FLAG_LABEL.get(flag, flag)) if flag else '—'
+    regime_val_cls = "pnl-neg" if is_skip else "pnl-pos"
+    TV = 'font-size:1.35rem'   # text-value cards run smaller than numeric ones
+    stat_row = (
+        '<div class="dash">'
+        + _stat_card('Market <span class="sep">·</span> SPY', spy_val,
+                     sub='live underlying', right_html=spark + day, span='span-3')
+        + _stat_card('Today <span class="sep">·</span> regime',
+                     f'<span class="{regime_val_cls}" style="{TV}">{regime_plain}</span>',
+                     sub=('standing down' if is_skip else 'tradeable'), span='span-3')
+        + _stat_card('Macro <span class="sep">·</span> volatility',
+                     f'<span style="{TV}">{vix_label}</span>', sub='VIX regime', span='span-3')
+        + _stat_card('Play <span class="sep">·</span> structure',
+                     f'<span style="{TV}">{strategy}</span>',
+                     sub=f'RR {rr} &middot; {dte}d &middot; {max_p_str}/{max_l_str}', span='span-3')
+        + '</div>'
     )
 
+    # ── Featured play + market conditions ───────────────
+    play_card = (
+        '<div class="card span-8">'
+        f'<div class="kicker"><span class="dot"></span>Today\'s play <span class="sep">·</span> {plan_date}</div>'
+        f'<div style="font-size:1.15rem;margin-bottom:.7rem"><b>{play}</b> '
+        f'<span class="badge {regime_cls}">{regime_plain}</span></div>'
+        '<div class="grid">'
+        f'<div><span>Strategy</span><b>{strategy}</b></div>'
+        f'<div><span>Risk / reward</span><b>{rr}</b></div>'
+        f'<div><span>Days to expiry</span><b>{dte}</b></div>'
+        f'<div><span>Max win / loss</span><b>{max_p_str} / {max_l_str}</b></div>'
+        '</div>'
+        f'<div class="muted" style="margin-top:.7rem">Exit: {exit_rule}</div>'
+        + (f'<div style="margin-top:.9rem;padding-top:.9rem;border-top:1px solid var(--border)">'
+           f'<div class="kicker"><span class="dot"></span>Why this trade today</div>{summary}</div>'
+           if summary else '')
+        + '</div>'
+    )
+
+    # Market conditions
+    macro_bits = []
+    if flag:
+        macro_bits.append(f'<div><span>Volatility</span><b>{_esc(_VIX_FLAG_LABEL.get(flag, flag))}</b></div>')
+    signal = sector.get("signal")
+    if signal:
+        macro_bits.append(f'<div><span>Sector strength</span><b>{_esc(_SECTOR_SIGNAL_LABEL.get(signal, signal))}</b></div>')
+    if events:
+        events_str = ", ".join(f"{_esc(e.get('event'))} ({_esc(e.get('days_away'))}d)" for e in events)
+        macro_bits.append(f'<div><span>Events next 48h</span><b>{events_str}</b></div>')
+    macro_card = (
+        '<div class="card span-4"><div class="kicker"><span class="dot"></span>Market conditions</div>'
+        f'<div class="grid">{"".join(macro_bits)}</div></div>'
+    ) if macro_bits else ''
+
+    # ── Conditions + levels grid ────────────────────────
     def _condition_card(label, items, css_cls):
         if not items:
             return ""
         rows = "".join(
-            f'<div style="padding:.35rem 0;border-bottom:1px solid var(--border)">• {_esc(s)}</div>'
-            for s in items
-        )
-        return f'''
-<div class="alert-card">
-  <div class="muted" style="text-transform:uppercase;font-size:.75rem;margin-bottom:.4rem">
-    <span class="badge {css_cls}" style="font-size:.7rem">{label}</span>
-  </div>
-  {rows}
-</div>'''
+            f'<div style="padding:.4rem 0;border-bottom:1px solid var(--border)">• {_esc(s)}</div>'
+            for s in items)
+        return ('<div class="card span-4">'
+                f'<div class="kicker"><span class="badge {css_cls}">{_esc(label)}</span></div>'
+                f'{rows}</div>')
 
-    skip_html  = _condition_card("Skip this trade if",  skips,   "status-loss")
-    watch_html = _condition_card("Watch for",            watches, "status-be")
+    skip_html  = _condition_card("Skip this trade if", skips, "status-loss")
+    watch_html = _condition_card("Watch for", watches, "status-be")
+    walls_inner = _render_spy_walls_summary(spy_walls or {}, spot)
+    walls_card = (
+        '<div class="card span-4"><div class="kicker"><span class="dot"></span>'
+        f'Price vs heavy strikes</div>{walls_inner}</div>'
+    ) if walls_inner else ''
 
-    # Market conditions summary — plain English labels
-    macro_bits = []
-    flag = vix_ts.get("flag")
-    if flag:
-        macro_bits.append(
-            f'<div><span>Volatility</span>'
-            f'<b>{_esc(_VIX_FLAG_LABEL.get(flag, flag))}</b></div>'
-        )
-    signal = sector.get("signal")
-    if signal:
-        macro_bits.append(
-            f'<div><span>Sector strength</span>'
-            f'<b>{_esc(_SECTOR_SIGNAL_LABEL.get(signal, signal))}</b></div>'
-        )
-    if events:
-        events_str = ", ".join(
-            f"{_esc(e.get('event'))} ({_esc(e.get('days_away'))}d)" for e in events
-        )
-        macro_bits.append(f'<div><span>Events next 48h</span><b>{events_str}</b></div>')
-
-    macro_html = ""
-    if macro_bits:
-        macro_html = f'''
-<div class="alert-card">
-  <div class="muted" style="text-transform:uppercase;font-size:.75rem;margin-bottom:.4rem">
-    Market conditions
-  </div>
-  <div class="grid">{"".join(macro_bits)}</div>
-</div>'''
-
-    spy_thumb = _render_spy_thumbnail(spy_closes or [])
-    spy_spot  = (spy_closes or [None])[-1] if spy_closes else None
-    walls_html = _render_spy_walls_summary(spy_walls or {}, spy_spot)
-
-    body = play_html + spy_thumb + walls_html + summary_html + skip_html + watch_html + macro_html
+    cond_grid = (f'<div class="dash">{skip_html}{watch_html}{walls_card}</div>'
+                 if (skip_html or watch_html or walls_card) else '')
+    body = stat_row + f'<div class="dash">{play_card}{macro_card}</div>' + cond_grid
     return _render_page(
         title       = "Trading Assistant - Today",
         heading     = "Today's Play",
