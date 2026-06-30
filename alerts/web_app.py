@@ -1181,7 +1181,7 @@ def _render_backtest(
             else "pnl-zero"
         )
         regime_rows.append(f'''
-<div style="padding:.45rem 0;border-bottom:1px solid #21262d">
+<div style="padding:.45rem 0;border-bottom:1px solid var(--border)">
   <div style="display:flex;justify-content:space-between">
     <span><b>{_esc(r.get("regime"))}</b>
           <span class="badge {badge_cls}" style="font-size:.65rem;margin-left:.4rem">{badge_txt}</span></span>
@@ -1208,7 +1208,7 @@ def _render_backtest(
             sd = f"{sharpe_delta:+.2f}" if isinstance(sharpe_delta, (int, float)) else "—"
             pd = f"${pnl_delta:+,.0f}"  if isinstance(pnl_delta, (int, float))    else "—"
             rows.append(
-                f'<div style="padding:.4rem 0;border-bottom:1px solid #21262d">'
+                f'<div style="padding:.4rem 0;border-bottom:1px solid var(--border)">'
                 f'<div><b>{_esc(spec.get("var") or spec.get("id"))}</b> '
                 f'<span class="muted">→ {_esc(spec.get("proposed_value"))}</span></div>'
                 f'<div class="muted" style="margin-top:.15rem;font-size:.8rem">'
@@ -1261,7 +1261,7 @@ def _render_backtest(
         kb_rows = []
         for g in kb_groups:
             kb_rows.append(
-                f'<div style="padding:.45rem 0;border-bottom:1px solid #21262d">'
+                f'<div style="padding:.45rem 0;border-bottom:1px solid var(--border)">'
                 f'<div style="display:flex;justify-content:space-between">'
                 f'<b>{_esc(g.get("category"))}</b>'
                 f'<span class="badge">{g.get("count")}</span></div>'
@@ -1340,35 +1340,27 @@ def _render_learning(
         if sk_scored else "no scored skips yet"
     )
 
-    # Cumulative paper-P&L sparkline (mirrors the SPY sparkline on /today).
-    # Only render when we have enough points; the helper itself bails on <2.
+    # ── Stat-card row (dashboard style): donut for accuracy, sparkline for P&L ─
+    from alerts.sparkline import sparkline_svg, gauge_svg
     cum_series = paper.get("cumulative_pnl_series") or []
-    spark_html = ""
-    if len(cum_series) >= 2:
-        spark_svg  = _render_sparkline_svg(cum_series)
-        spark_html = (
-            '<div class="muted" style="font-size:.75rem;margin:.4rem 0 .1rem">'
-            f'Cumulative paper P&amp;L over {len(cum_series) - 1} closed trades'
-            '</div>'
-            f'{spark_svg}'
-        )
-
-    summary_html = f'''
-<div class="alert-card">
-  <div><b>Live Track Record</b>
-       <span class="muted" style="float:right;font-size:.75rem">predictions + paper</span></div>
-  <div class="grid" style="margin-top:.5rem">
-    <div><span>Prediction accuracy (60d)</span><b class="{acc_cls}">{acc_p_str}</b></div>
-    <div><span>Resolved sample</span><b>{acc_n}</b></div>
-    <div><span>Skip quality (60d)</span><b class="{sk_cls}">{sk_str}</b>
-         <span class="muted" style="font-size:.7rem;display:block">{sk_detail}</span></div>
-    <div><span>Paper P&amp;L (closed)</span><b class="{pnl_cls}">{pnl_str}</b></div>
-    <div><span>Paper win rate</span><b>{wr_paper_str}</b></div>
-    <div><span>Open paper positions</span><b>{open_count}</b></div>
-    <div><span>Closed paper positions</span><b>{closed_count}</b></div>
-  </div>
-  {spark_html}
-</div>'''
+    gauge = (gauge_svg(acc_p) if (isinstance(acc_p, (int, float)) and acc_n) else "")
+    pnl_spark = (sparkline_svg(cum_series, width=130, height=36,
+                               stroke=("var(--ok)" if pnl >= 0 else "var(--err)"))
+                 if len(cum_series) >= 2 else "")
+    summary_html = (
+        '<div class="dash">'
+        + _stat_card('Predictions <span class="sep">·</span> accuracy 60d',
+                     f'<span class="{acc_cls}">{acc_p_str}</span>',
+                     sub=f'{acc_n} resolved', right_html=gauge, span="span-3")
+        + _stat_card('Paper <span class="sep">·</span> P&amp;L',
+                     f'<span class="{pnl_cls}">{pnl_str}</span>',
+                     sub=f'{closed_count} closed', right_html=pnl_spark, span="span-3")
+        + _stat_card('Paper <span class="sep">·</span> win rate', wr_paper_str,
+                     sub=f'{open_count} open', span="span-3")
+        + _stat_card('Skips <span class="sep">·</span> right call',
+                     f'<span class="{sk_cls}">{sk_str}</span>', sub=sk_detail, span="span-3")
+        + '</div>'
+    )
 
     # ── Recent predictions table ───────────────────────
     if predictions:
@@ -1405,7 +1397,7 @@ def _render_learning(
             conf = p.get("confidence")
             conf_str = f"{conf:.0%}" if isinstance(conf, (int, float)) else "—"
             pred_rows.append(
-                f'<div style="padding:.45rem 0;border-bottom:1px solid #21262d">'
+                f'<div style="padding:.45rem 0;border-bottom:1px solid var(--border)">'
                 f'<div style="display:flex;justify-content:space-between;align-items:baseline">'
                 f'<span><b>{_esc(p.get("date"))}</b> · '
                 f'{_esc(p.get("regime"))} · '
@@ -1416,18 +1408,17 @@ def _render_learning(
                 f'</div>'
             )
         pred_html = (
-            f'<div class="alert-card">'
-            f'<div><b>Recent Predictions</b> '
-            f'<span class="muted" style="font-size:.75rem">— last {len(predictions)}</span></div>'
-            f'<div style="margin-top:.4rem">{"".join(pred_rows)}</div>'
-            f'</div>'
+            '<div class="card span-6">'
+            '<div class="kicker"><span class="dot"></span>Recent predictions '
+            f'<span class="sep">·</span> last {len(predictions)}</div>'
+            f'{"".join(pred_rows)}'
+            '</div>'
         )
     else:
         pred_html = (
-            '<div class="alert-card">'
-            '<div><b>Recent Predictions</b></div>'
-            '<div class="muted" style="margin-top:.5rem">'
-            'No predictions logged yet. The 09:15 ET morning brief writes one each weekday.</div>'
+            '<div class="card span-6">'
+            '<div class="kicker"><span class="dot"></span>Recent predictions</div>'
+            '<div class="empty">No predictions logged yet. The 09:15 ET brief writes one each weekday.</div>'
             '</div>'
         )
 
@@ -1437,7 +1428,7 @@ def _render_learning(
         open_rows = []
         for t in open_trades:
             open_rows.append(
-                f'<div style="padding:.4rem 0;border-bottom:1px solid #21262d">'
+                f'<div style="padding:.4rem 0;border-bottom:1px solid var(--border)">'
                 f'<div style="display:flex;justify-content:space-between">'
                 f'<span><b>{_esc(t.get("ticker"))}</b> · '
                 f'{_esc(t.get("strategy") or t.get("option_type"))}</span>'
@@ -1448,11 +1439,11 @@ def _render_learning(
                 f'</div>'
             )
         open_html = (
-            f'<div class="alert-card">'
-            f'<div><b>Open Paper Positions</b> '
-            f'<span class="badge">{len(open_trades)}</span></div>'
-            f'<div style="margin-top:.4rem">{"".join(open_rows)}</div>'
-            f'</div>'
+            '<div class="card span-6">'
+            '<div class="kicker"><span class="dot"></span>Open paper positions '
+            f'<span class="sep">·</span> {len(open_trades)}</div>'
+            f'{"".join(open_rows)}'
+            '</div>'
         )
     else:
         open_html = ""  # don't render empty section — keep page tight
@@ -1469,7 +1460,7 @@ def _render_learning(
             outcome   = t.get("outcome", "—")
             badge_cls = "status-win" if outcome == "win" else "status-loss" if outcome == "loss" else "status-open"
             closed_rows.append(
-                f'<div style="padding:.45rem 0;border-bottom:1px solid #21262d">'
+                f'<div style="padding:.45rem 0;border-bottom:1px solid var(--border)">'
                 f'<div style="display:flex;justify-content:space-between">'
                 f'<span><b>{_esc(t.get("ticker"))}</b> · '
                 f'{_esc(t.get("strategy") or t.get("option_type"))} '
@@ -1481,19 +1472,18 @@ def _render_learning(
                 f'</div>'
             )
         closed_html = (
-            f'<div class="alert-card">'
-            f'<div><b>Closed Paper Trades</b> '
-            f'<span class="muted" style="font-size:.75rem">— last {min(15, len(closed_trades))}</span></div>'
-            f'<div style="margin-top:.4rem">{"".join(closed_rows)}</div>'
-            f'</div>'
+            '<div class="card span-6">'
+            '<div class="kicker"><span class="dot"></span>Closed paper trades '
+            f'<span class="sep">·</span> last {min(15, len(closed_trades))}</div>'
+            f'{"".join(closed_rows)}'
+            '</div>'
         )
     else:
         closed_html = (
-            '<div class="alert-card">'
-            '<div><b>Closed Paper Trades</b></div>'
-            '<div class="muted" style="margin-top:.5rem">'
-            'No closed paper positions yet. Paper trades open at 09:16 ET on tradeable days '
-            'and close at expiry or stop.</div>'
+            '<div class="card span-6">'
+            '<div class="kicker"><span class="dot"></span>Closed paper trades</div>'
+            '<div class="empty">No closed paper positions yet. They open at 09:16 ET on '
+            'tradeable days and close at expiry or stop.</div>'
             '</div>'
         )
 
@@ -1504,7 +1494,7 @@ def _render_learning(
             conf = e.get("confidence")
             conf_str = f"{conf:.2f}" if isinstance(conf, (int, float)) else "—"
             kb_rows.append(
-                f'<div style="padding:.45rem 0;border-bottom:1px solid #21262d">'
+                f'<div style="padding:.45rem 0;border-bottom:1px solid var(--border)">'
                 f'<div style="display:flex;justify-content:space-between">'
                 f'<b>{_esc(e.get("category"))}</b>'
                 f'<span class="muted" style="font-size:.75rem">{_esc(e.get("date"))} · conf {conf_str}</span></div>'
@@ -1512,16 +1502,17 @@ def _render_learning(
                 f'</div>'
             )
         kb_html = (
-            f'<div class="alert-card">'
-            f'<div><b>Recent KB Entries</b> '
-            f'<span class="muted" style="font-size:.75rem">— last {min(10, len(kb_recent))}</span></div>'
-            f'<div style="margin-top:.4rem">{"".join(kb_rows)}</div>'
-            f'</div>'
+            '<div class="card span-6">'
+            '<div class="kicker"><span class="dot"></span>Recent KB entries '
+            f'<span class="sep">·</span> last {min(10, len(kb_recent))}</div>'
+            f'{"".join(kb_rows)}'
+            '</div>'
         )
     else:
         kb_html = ""
 
-    body = summary_html + pred_html + open_html + closed_html + kb_html
+    body = (summary_html
+            + f'<div class="dash">{pred_html}{kb_html}{closed_html}{open_html}</div>')
     return _render_page(
         title       = "Trading Assistant - Learning",
         heading     = "Self-Learning Track Record",
@@ -1871,7 +1862,7 @@ def _render_today(
         if not items:
             return ""
         rows = "".join(
-            f'<div style="padding:.35rem 0;border-bottom:1px solid #21262d">• {_esc(s)}</div>'
+            f'<div style="padding:.35rem 0;border-bottom:1px solid var(--border)">• {_esc(s)}</div>'
             for s in items
         )
         return f'''
@@ -2012,7 +2003,7 @@ def _render_macro(vix: dict | None, sector: dict | None,
     if earnings:
         rows = "".join(
             f'<div style="display:flex;justify-content:space-between;'
-            f'padding:.4rem 0;border-bottom:1px solid #21262d">'
+            f'padding:.4rem 0;border-bottom:1px solid var(--border)">'
             f'<span><b>{_esc(e.get("ticker"))}</b></span>'
             f'<span class="muted">{_esc(e.get("earnings_date"))} '
             f'<span class="badge" style="margin-left:.4rem">{_esc(e.get("days_away"))}d</span>'
@@ -2046,7 +2037,7 @@ def _render_macro(vix: dict | None, sector: dict | None,
             warn = p.get("warning")
             warn_html = f' · ⚠ {_esc(warn)}' if warn else ''
             return (
-                f'<div style="padding:.4rem 0;border-bottom:1px solid #21262d">'
+                f'<div style="padding:.4rem 0;border-bottom:1px solid var(--border)">'
                 f'<div style="display:flex;justify-content:space-between">'
                 f'<b>{_esc(p.get("ticker"))} · {_esc(p.get("strategy") or "")}</b>'
                 f'<span class="muted">{p.get("contracts")}c</span></div>'

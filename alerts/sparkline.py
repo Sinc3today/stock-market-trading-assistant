@@ -32,6 +32,31 @@ def sparkline_svg(values, width: int = 120, height: int = 32,
     )
 
 
+def gauge_svg(pct, size: int = 96, thickness: int = 10,
+              stroke: str = "var(--accent)", track: str = "var(--border)") -> str:
+    """A donut gauge (track ring + value arc + center %), like the reference's
+    'Weekly Goal 80%'. Empty string on bad input; clamps 0-100."""
+    import math
+    try:
+        p = max(0.0, min(100.0, float(pct)))
+    except (TypeError, ValueError):
+        return ""
+    r = (size - thickness) / 2
+    circ = 2 * math.pi * r
+    dash = circ * p / 100
+    c = size / 2
+    return (
+        f'<svg class="gauge" viewBox="0 0 {size} {size}" width="{size}" height="{size}" aria-hidden="true">'
+        f'<circle cx="{c}" cy="{c}" r="{r:.1f}" fill="none" stroke="{track}" stroke-width="{thickness}"/>'
+        f'<circle cx="{c}" cy="{c}" r="{r:.1f}" fill="none" stroke="{stroke}" stroke-width="{thickness}" '
+        f'stroke-linecap="round" stroke-dasharray="{dash:.1f} {circ:.1f}" '
+        f'transform="rotate(-90 {c} {c})"/>'
+        f'<text x="{c}" y="{c}" text-anchor="middle" dominant-baseline="central" '
+        f'fill="var(--fg)" font-size="{size * 0.26:.0f}" font-weight="600">{p:.0f}%</text>'
+        f'</svg>'
+    )
+
+
 def delta_chip(pct, suffix: str = "%") -> str:
     """A colored up/down/flat delta pill, e.g. ↑ 11.5%."""
     try:

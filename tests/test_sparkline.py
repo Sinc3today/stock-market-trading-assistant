@@ -29,6 +29,21 @@ def test_sparkline_too_few_points_returns_empty():
     assert sparkline_svg([5]) == ""
 
 
+def test_gauge_renders_arc_and_percent():
+    from alerts.sparkline import gauge_svg
+    svg = gauge_svg(68)
+    assert svg.startswith("<svg") and "68%" in svg
+    # two rings: a track + the value arc (stroke-dasharray)
+    assert svg.count("<circle") == 2 and "stroke-dasharray" in svg
+
+
+def test_gauge_clamps_and_handles_bad_input():
+    from alerts.sparkline import gauge_svg
+    assert "100%" in gauge_svg(150)        # clamp high
+    assert "0%" in gauge_svg(-5)           # clamp low
+    assert gauge_svg(None) == ""
+
+
 def test_delta_chip_direction_and_class():
     from alerts.sparkline import delta_chip
     up = delta_chip(11.5)
