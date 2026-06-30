@@ -306,10 +306,10 @@ textarea,input,select{width:100%;background:var(--bg);border:1px solid var(--bor
        border-radius:var(--r-sm);padding:.5rem .6rem;color:var(--fg);font-family:inherit;font-size:.92rem}
 textarea:focus,input:focus,select:focus{outline:2px solid var(--accent-weak);border-color:var(--accent)}
 textarea{resize:vertical;min-height:60px}
-button{background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent);
+button{background:var(--highlight);color:#fff;border:1px solid var(--highlight);
        border-radius:var(--r-sm);padding:.55rem 1rem;font-weight:600;cursor:pointer;
        font-size:.9rem;font-family:inherit}
-button:hover{filter:brightness(1.07)}
+button:hover{filter:brightness(1.08)}
 button:disabled{background:var(--surface-2);color:var(--fg-subtle);border-color:var(--border);
        cursor:not-allowed;filter:none}
 .pnl-pos{color:var(--ok)}.pnl-neg{color:var(--err)}.pnl-zero{color:var(--fg-muted)}
@@ -703,8 +703,9 @@ _COPILOT_CSS = """
 .legs{margin:.4rem 0;display:flex;flex-direction:column;gap:.2rem}
 .leg{font-family:var(--font-mono,ui-monospace,monospace);font-size:.95rem;letter-spacing:.02em}
 .cp-h{margin:1.4rem 0 .5rem;font-size:1rem;color:var(--fg-muted,#52525b);text-transform:uppercase;letter-spacing:.04em}
-.btn-primary{appearance:none;border:1px solid var(--accent,#4f46e5);background:var(--accent,#4f46e5);color:#fff;
+.btn-primary{appearance:none;border:1px solid var(--highlight);background:var(--highlight);color:#fff;
   border-radius:6px;padding:.45rem .8rem;font-size:.9rem;font-weight:600;cursor:pointer}
+.btn-primary:hover{filter:brightness(1.08)}
 .btn-primary:active{transform:translateY(1px)}
 .btn-ghost{display:inline-block;appearance:none;border:1px solid var(--border,#e4e4e7);background:var(--surface,#fff);
   color:var(--fg,#18181b);border-radius:6px;padding:.45rem .8rem;font-size:.9rem;font-weight:600;
