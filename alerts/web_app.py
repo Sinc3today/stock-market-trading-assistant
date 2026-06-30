@@ -651,10 +651,32 @@ def _trade_status(trade: dict) -> tuple[str, str]:
 
 
 def _render_trades(trades: list[dict]) -> str:
-    """Cross-trade list view."""
+    """Cross-trade list view with a summary stat row."""
     if not trades:
         body = '<div class="empty">No trades recorded yet.</div>'
     else:
+        wins   = sum(1 for t in trades if t.get("outcome") == "win")
+        losses = sum(1 for t in trades if t.get("outcome") == "loss")
+        realized = sum((t.get("pnl_dollars") or 0) for t in trades
+                       if isinstance(t.get("pnl_dollars"), (int, float)))
+        open_n = sum(1 for t in trades if (t.get("outcome") or "open") == "open")
+        total  = len(trades)
+        wr     = (wins / (wins + losses) * 100) if (wins + losses) else None
+        pnl_cls = "pnl-pos" if realized > 0 else "pnl-neg" if realized < 0 else "pnl-zero"
+        wr_str = f"{wr:.0f}%" if wr is not None else "—"
+        stat_row = (
+            '<div class="dash">'
+            + _stat_card('Trades <span class="sep">·</span> realized P&amp;L',
+                         f'<span class="{pnl_cls}">${realized:+,.0f}</span>',
+                         sub=f'{wins}W / {losses}L', span='span-3')
+            + _stat_card('Trades <span class="sep">·</span> win rate', wr_str,
+                         sub=f'{wins + losses} closed', span='span-3')
+            + _stat_card('Trades <span class="sep">·</span> open', str(open_n),
+                         sub='live + paper', span='span-3')
+            + _stat_card('Trades <span class="sep">·</span> logged', str(total),
+                         sub='all time', span='span-3')
+            + '</div>'
+        )
         rows = []
         # Newest first — trades.json is naturally append order.
         for t in reversed(trades):
@@ -683,7 +705,12 @@ def _render_trades(trades: list[dict]) -> str:
   </div>
   <div class="muted" style="margin-top:.25rem">{entry_ts}</div>
 </div>''')
-        body = "\n".join(rows)
+        list_card = (
+            '<div class="card span-12"><div class="kicker"><span class="dot"></span>'
+            f'Trade history <span class="sep">·</span> {total} logged</div>'
+            f'{"".join(rows)}</div>'
+        )
+        body = stat_row + f'<div class="dash">{list_card}</div>'
 
     return _render_page(
         title       = "Trading Assistant - Trades",
@@ -2087,7 +2114,43 @@ def _render_macro(vix: dict | None, sector: dict | None,
 
     baseline_html = _render_baseline_card()
 
-    body = vix_html + sector_html + earnings_html + greeks_html + baseline_html
+    # ── Stat row ────────────────────────────────────────
+    vd = vix or {}
+    sd = sector or {}
+    gt = (greeks or {}).get("total") or {}
+    vix_now = vd.get("VIX")
+    vix_now_s = f'{vix_now:.1f}' if isinstance(vix_now, (int, float)) else '—'
+    vflag = vd.get("flag")
+    ratio = vd.get("ratio")
+    ratio_s = f'{ratio:.3f}' if isinstance(ratio, (int, float)) else '—'
+    sig = sd.get("signal")
+    sig_plain = _SECTOR_SIGNAL_LABEL.get(sig, sig) if sig else '—'
+    theta = gt.get("theta")
+    theta_s = f'{theta:+.1f}' if isinstance(theta, (int, float)) else '—'
+    open_ct = (greeks or {}).get("open_trade_count") or 0
+    TV = 'font-size:1.4rem'
+    stat_row = (
+        '<div class="dash">'
+        + _stat_card('Volatility <span class="sep">·</span> VIX', vix_now_s,
+                     sub=(_esc(_VIX_FLAG_LABEL.get(vflag, vflag)) if vflag else 'today'), span='span-3')
+        + _stat_card('Volatility <span class="sep">·</span> term ratio', ratio_s,
+                     sub='9D / 3M', span='span-3')
+        + _stat_card('Breadth <span class="sep">·</span> sectors',
+                     f'<span style="{TV}">{_esc(sig_plain)}</span>', sub='vs market', span='span-3')
+        + _stat_card('Portfolio <span class="sep">·</span> theta/day',
+                     f'<span style="{TV}">{theta_s}</span>', sub=f'{open_ct} open', span='span-3')
+        + '</div>'
+    )
+
+    def _cell(html_block, span):
+        return f'<div class="{span}">{html_block}</div>' if html_block else ''
+
+    body = (
+        stat_row
+        + f'<div class="dash">{_cell(vix_html, "span-6")}{_cell(sector_html, "span-6")}</div>'
+        + f'<div class="dash">{_cell(greeks_html, "span-8")}{_cell(earnings_html, "span-4")}</div>'
+        + baseline_html
+    )
     return _render_page(
         title       = "Trading Assistant - Macro",
         heading     = "Macro Snapshot",
