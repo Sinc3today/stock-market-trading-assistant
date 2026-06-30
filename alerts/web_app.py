@@ -246,7 +246,7 @@ _BASE_CSS = """
 :root{
   --bg:#100f0d;--surface:#1a1714;--surface-2:#221e1a;--border:#2d2823;--border-strong:#3c362d;
   --fg:#ece7df;--fg-muted:#a39b8d;--fg-subtle:#6f675b;
-  --accent:#3fd9c0;--accent-fg:#06140f;--accent-weak:#0e2a25;
+  --accent:#1f9e8c;--accent-fg:#ffffff;--accent-weak:#0e2a25;
   --highlight:#c25a34;--highlight-weak:#2a1810;
   --data-blue:#4c8dff;--data-coral:#f3766b;
   --ok:#3fd9a8;--ok-weak:#0e2a22;--warn:#e0a83a;--warn-weak:#2a2210;
@@ -306,7 +306,7 @@ textarea,input,select{width:100%;background:var(--bg);border:1px solid var(--bor
        border-radius:var(--r-sm);padding:.5rem .6rem;color:var(--fg);font-family:inherit;font-size:.92rem}
 textarea:focus,input:focus,select:focus{outline:2px solid var(--accent-weak);border-color:var(--accent)}
 textarea{resize:vertical;min-height:60px}
-button{background:var(--highlight);color:#fff;border:1px solid var(--highlight);
+button{background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent);
        border-radius:var(--r-sm);padding:.55rem 1rem;font-weight:600;cursor:pointer;
        font-size:.9rem;font-family:inherit}
 button:hover{filter:brightness(1.08)}
@@ -703,7 +703,7 @@ _COPILOT_CSS = """
 .legs{margin:.4rem 0;display:flex;flex-direction:column;gap:.2rem}
 .leg{font-family:var(--font-mono,ui-monospace,monospace);font-size:.95rem;letter-spacing:.02em}
 .cp-h{margin:1.4rem 0 .5rem;font-size:1rem;color:var(--fg-muted,#52525b);text-transform:uppercase;letter-spacing:.04em}
-.btn-primary{appearance:none;border:1px solid var(--highlight);background:var(--highlight);color:#fff;
+.btn-primary{appearance:none;border:1px solid var(--accent);background:var(--accent);color:var(--accent-fg);
   border-radius:6px;padding:.45rem .8rem;font-size:.9rem;font-weight:600;cursor:pointer}
 .btn-primary:hover{filter:brightness(1.08)}
 .btn-primary:active{transform:translateY(1px)}
