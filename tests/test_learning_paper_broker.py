@@ -87,6 +87,51 @@ def test_tradeable_play_records_trade_and_prediction(isolated_dirs):
     assert pred["entry_spy"] == 720.0
 
 
+def test_prediction_uses_attached_forecast_not_strategy_mirror(isolated_dirs):
+    # The independent directional forecast must win over the strategy's implied
+    # direction. Guard against the wiring silently reverting to _infer_direction.
+    play = _tradeable_play()                      # debit_spread -> mirror says bullish
+    play["forecast"] = {"direction": "bearish", "expected_move_pct": 1.2,
+                        "confidence": 0.7, "reasons": ["MA stack down"]}
+    PaperBroker().execute(play)
+    pred = PredictionLog().get(date.today().isoformat())
+    assert pred["direction"] == "bearish"         # forecast, NOT the strategy mirror
+    assert pred["expected_move_pct"] == 1.2       # band persisted for neutral-scoring
+
+
+def test_prediction_falls_back_when_no_forecast(isolated_dirs):
+    play = _tradeable_play()                       # no forecast attached
+    PaperBroker().execute(play)
+    pred = PredictionLog().get(date.today().isoformat())
+    assert pred["direction"] == "bullish"          # strategy-mirror fallback
+    assert pred["expected_move_pct"] is None
+
+
+def test_plan_to_play_carries_forecast_both_paths():
+    # THE silent-drop point: the forecast must survive the plan -> play reshape,
+    # for tradeable AND skip plans, or the prediction loses it.
+    fc = {"direction": "bearish", "expected_move_pct": 1.1}
+    tradeable = {"date": "2026-07-02", "strategy": "iron_condor",
+                 "legs": [{"strike": 700}], "regime": "choppy_low_vol", "forecast": fc}
+    assert PaperBroker._plan_to_play(tradeable)["forecast"] == fc
+    skip = {"date": "2026-07-02", "action": "SKIP", "forecast": fc}
+    assert PaperBroker._plan_to_play(skip)["forecast"] == fc
+
+
+def test_format_plan_persists_forecast():
+    # The other drop point: the plan written to spy_daily_plans.json must include
+    # the forecast so the broker (which reads the stored plan) can use it.
+    from types import SimpleNamespace
+    from signals.spy_daily_strategy import SPYDailyStrategy
+    rr = SimpleNamespace(regime=SimpleNamespace(value="choppy_low_vol"),
+                         play="Iron condor", confidence=0.8,
+                         metrics={"spy_close": 740.0}, reasons=["a", "b"])
+    fc = {"direction": "neutral", "expected_move_pct": 1.2}
+    plan = SPYDailyStrategy._format_plan(date.today(), rr,
+                                         {"strategy": "iron_condor", "legs": []}, fc)
+    assert plan["forecast"] == fc
+
+
 def test_skip_day_logs_prediction_only(isolated_dirs):
     result = PaperBroker().execute(_skip_play())
     assert result["recorded"] is False

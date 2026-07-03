@@ -184,7 +184,7 @@ class SPYDailyStrategy:
             dte_target   = dte_target,
         )
 
-        plan = self._format_plan(today, regime_result, options_payload)
+        plan = self._format_plan(today, regime_result, options_payload, forecast)
         plan["track"] = track_name
         card = PlayCard(
             date            = today.isoformat(),
@@ -334,7 +334,7 @@ class SPYDailyStrategy:
 
     @staticmethod
     def _format_plan(
-        today: date, rr: RegimeResult, opts: dict
+        today: date, rr: RegimeResult, opts: dict, forecast: dict | None = None
     ) -> dict:
         """
         Structured dict written to logs/spy_daily_plans.json by PlanLogger.
@@ -355,6 +355,11 @@ class SPYDailyStrategy:
             "exit_rule":        opts.get("exit_rule"),
             "regime_metrics":   rr.metrics,
             "thesis":           " | ".join(rr.reasons),
+            # Independent next-day directional forecast — MUST persist here so the
+            # paper broker (which reads the stored plan, not the PlayCard) uses it
+            # for the prediction. Dropping it silently reverts to the old
+            # strategy-mirror direction. See test_forecast_persists_in_plan.
+            "forecast":         forecast,
             "executed":         False,   # flip to True when you actually fill
             "trade_id":         None,    # link to TradeRecorder ID after fill
         }

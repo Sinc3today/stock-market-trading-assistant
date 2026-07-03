@@ -143,6 +143,7 @@ class PaperBroker:
                 # baseline price (entry_spy) for skip-scoring downstream.
                 "metrics":    plan.get("regime_metrics", {}) or {},
                 "intended_direction": plan.get("intended_direction"),
+                "forecast":   plan.get("forecast"),
                 "options":    {},
             }
         # tradeable ONLY when the plan carries a real options structure. A
@@ -168,6 +169,7 @@ class PaperBroker:
                 "recommended_dte": plan.get("recommended_dte"),
                 "exit_rule":       plan.get("exit_rule"),
             },
+            "forecast":   plan.get("forecast"),
         }
 
     def execute(self, play: dict) -> dict:
