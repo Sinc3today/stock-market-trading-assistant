@@ -14,6 +14,50 @@ from __future__ import annotations
 from loguru import logger
 
 
+class DataFailureTracker:
+    """Escalate when the watchdog can't get a spot price (audit T1.4: Polygon
+    failures used to silently disable stop coverage). record_failure() returns
+    True exactly when an alert should fire: `threshold` consecutive failures,
+    at most once per day; any success resets the streak."""
+
+    def __init__(self, threshold: int = 3):
+        self.threshold = threshold
+        self.consecutive = 0
+        self.alerted_on = None
+
+    def record_success(self) -> None:
+        self.consecutive = 0
+
+    def record_failure(self, today) -> bool:
+        self.consecutive += 1
+        if self.consecutive >= self.threshold and self.alerted_on != today:
+            self.alerted_on = today
+            self.consecutive = 0          # restart the streak for today
+            return True
+        return False
+
+
+def resolve_spot(primary_fn, fallback_fn):
+    """First working spot price from primary (Polygon) then fallback (yfinance).
+    None only when both fail."""
+    for fn in (primary_fn, fallback_fn):
+        try:
+            v = fn()
+            if v is not None:
+                return float(v)
+        except Exception as e:
+            logger.warning(f"stop_watchdog spot source failed: {e}")
+    return None
+
+
+def yf_spot(ticker: str = "SPY"):
+    """yfinance last price — the watchdog's fallback spot source."""
+    import yfinance as yf
+    info = yf.Ticker(ticker).fast_info
+    v = getattr(info, "last_price", None) or info.get("lastPrice")
+    return float(v) if v else None
+
+
 def short_strikes(legs):
     """(short_put, short_call) from a position's legs; either may be None."""
     sp = sc = None

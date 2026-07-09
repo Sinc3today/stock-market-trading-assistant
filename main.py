@@ -173,6 +173,7 @@ _stop_alerted: set = set()
 _stop_alerted_date: list = [None]
 _exit_alerted: set = set()
 _exit_alerted_date: list = [None]
+_spot_failures = _stop_wd.DataFailureTracker(threshold=3)
 
 
 def run_live_exit_alerts():
@@ -216,17 +217,50 @@ def run_stop_watchdog():
         _stop_alerted.clear(); _stop_alerted_date[0] = now.date()
     try:
         from journal.trade_recorder import TradeRecorder
-        df = PolygonClient().get_bars("SPY", config.SWING_PRIMARY_TIMEFRAME,
-                                      limit=1, days_back=3)
-        if df is None or len(df) == 0:
+
+        def _polygon_spot():
+            df = PolygonClient().get_bars("SPY", config.SWING_PRIMARY_TIMEFRAME,
+                                          limit=1, days_back=3)
+            return float(df["close"].iloc[-1]) if df is not None and len(df) else None
+
+        # Polygon first, yfinance fallback; escalate loudly if BOTH are down —
+        # a silent data failure means stop coverage is off (audit T1.4).
+        spot = _stop_wd.resolve_spot(_polygon_spot, _stop_wd.yf_spot)
+        if spot is None:
+            if _spot_failures.record_failure(today=now.date()) and pushover:
+                pushover.send("⚠️ Stop coverage degraded",
+                              "Can't fetch SPY from Polygon OR yfinance — the stop "
+                              "watchdog is blind. Watch your positions manually.",
+                              priority=1)
             return
-        spot = float(df["close"].iloc[-1])
+        _spot_failures.record_success()
         n = _stop_wd.check_open_positions(TradeRecorder(), spot, pushover,
                                           _stop_alerted, config.STOP_WATCHDOG_BUFFER_PCT)
         if n:
             logger.info(f"stop_watchdog: {n} stop alert(s) fired at SPY ${spot:.2f}")
     except Exception as e:
         logger.exception(f"stop_watchdog failed: {e}")
+
+
+def run_premarket_gap_check():
+    """09:15 ET: if SPY gapped overnight to at/near any open short strike, alert
+    BEFORE the bell instead of discovering it at the first 9:30 watchdog tick
+    (audit T1.4 — weekend/overnight gaps were unmonitored)."""
+    eastern = pytz.timezone("US/Eastern")
+    now = datetime.now(eastern)
+    if not config.is_trading_day(now):
+        return
+    try:
+        from journal.trade_recorder import TradeRecorder
+        spot = _stop_wd.yf_spot()          # yfinance carries pre-market context
+        if spot is None:
+            return
+        n = _stop_wd.check_open_positions(TradeRecorder(), spot, pushover,
+                                          _stop_alerted, config.STOP_WATCHDOG_BUFFER_PCT)
+        if n:
+            logger.warning(f"premarket gap check: {n} alert(s) at SPY ${spot:.2f}")
+    except Exception as e:
+        logger.exception(f"premarket gap check failed: {e}")
 
 
 # ─────────────────────────────────────────
@@ -303,6 +337,15 @@ def start_scheduler():
         CronTrigger(day_of_week="mon-fri", hour="9-16", minute="7,22,37,52", timezone=eastern),
         id="live_exit_alerts",
         name="Live-book exit alerts",
+    )
+
+    # Pre-market gap check — 09:15 ET. Overnight/weekend gaps to a short strike
+    # alert before the bell, not at the first 9:30 watchdog tick.
+    scheduler.add_job(
+        run_premarket_gap_check,
+        CronTrigger(day_of_week="mon-fri", hour=9, minute=15, timezone=eastern),
+        id="premarket_gap_check",
+        name="Pre-market gap check",
     )
 
     # Options flow scan — 9:35 AM ET weekdays
