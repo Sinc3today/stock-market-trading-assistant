@@ -224,6 +224,32 @@ def job_spy_entry(polygon_client, ivr_client):
         logger.warning(f"spy_entry: ivr fetch failed ({e}); defaulting to 0.0")
         ivr = 0.0
     _run_daily_dipbuy(polygon_client, ivr=ivr)
+    _run_qqq_condor_forward(polygon_client)
+
+
+def _run_qqq_condor_forward(polygon_client) -> None:
+    """QQQ condor PAPER candidate on condor-regime days (Standing Rule #10 —
+    isolated). Regime comes from today's saved plan (the same call the SPY
+    condor trades on); QQQ priced at VXN. Zero real capital — see the promotion
+    bar in learning/qqq_condor_forward."""
+    try:
+        from datetime import date as _date
+        from journal.plan_logger import PlanLogger
+        plan = PlanLogger().get_plan(_date.today().isoformat()) or {}
+        if plan.get("strategy") != "iron_condor":
+            return
+        df = polygon_client.get_bars(
+            "QQQ", timeframe=config.SWING_PRIMARY_TIMEFRAME, limit=3, days_back=5)
+        if df is None or not len(df):
+            return
+        qqq_spot = float(df["close"].iloc[-1])
+        from alerts.stop_watchdog import yf_spot
+        vxn = yf_spot("^VXN") or 20.0
+        from learning.qqq_condor_forward import maybe_open_qqq_condor
+        from journal.trade_recorder import TradeRecorder
+        maybe_open_qqq_condor(TradeRecorder(), qqq_spot=qqq_spot, vxn=vxn)
+    except Exception as e:
+        logger.warning(f"qqq condor forward-test failed (ignored): {e}")
 
 
 def job_spy_track_play(polygon_client, vix_client, ivr_client, post_fn,

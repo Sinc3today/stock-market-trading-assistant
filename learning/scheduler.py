@@ -255,6 +255,18 @@ def job_dipbuy_resolver(polygon_client, vix_client=None):
         logger.info(f"learning.dipbuy_resolver -> {len(closed)} candidate closes")
     except Exception as e:
         logger.exception(f"learning.dipbuy_resolver failed: {e}")
+    # QQQ condor candidates — same slot, separately wrapped (Standing Rule #10)
+    try:
+        from learning.qqq_condor_forward import resolve_qqq_condors
+        from alerts.stop_watchdog import yf_spot
+        qqq_spot = yf_spot("QQQ")
+        vxn = yf_spot("^VXN") or 20.0
+        if qqq_spot:
+            closed_q = resolve_qqq_condors(TradeRecorder(), qqq_spot=qqq_spot, vxn=vxn)
+            if closed_q:
+                logger.info(f"qqq_condor_forward -> {len(closed_q)} candidate closes")
+    except Exception as e:
+        logger.exception(f"qqq_condor_forward resolver failed: {e}")
 
 
 def job_reflector(post_fn=None):
