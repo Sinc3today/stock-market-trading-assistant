@@ -34,7 +34,7 @@ def test_build_approve_alert_has_legs_expiry_and_copilot_link():
     assert "BUY $695 PUT" in a["body"]
     assert "SELL $700 PUT" in a["body"]
     # body shows expiry + net credit/debit
-    assert "2026-07-17" in a["body"]
+    assert "07-17-26" in a["body"]       # house display style (MM-DD-YY)
     assert "1.1" in a["body"]
     # one-tap link straight to the copilot screen
     assert a["url"] == "http://nucbox:8002/copilot"

@@ -17,10 +17,11 @@ from alerts.stop_watchdog import rh_leg_lines
 
 
 def _expiry(trade: dict) -> str:
+    from alerts.fmt import fmt_date
     for leg in (trade.get("legs") or []):
         e = leg.get("expiry") or leg.get("expiration")
         if e:
-            return str(e)[:10]
+            return fmt_date(str(e)[:10])   # house style: MM-DD-YY
     return trade.get("dte_bucket") or "—"
 
 

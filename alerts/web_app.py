@@ -424,6 +424,10 @@ def _esc(v: Any) -> str:
     return html.escape(str(v if v is not None else "—"))
 
 
+# House date/time style (2026-07-10): MM-DD-YY + 12-hour at the display edge.
+from alerts.fmt import fmt_date as _fdate, fmt_dt as _fdt
+
+
 # Lean IA (2026-07-10 cleanup): four pages the user actually lives in.
 # Retired from nav (routes stay alive for old links): alerts feed, journal,
 # chats, levels, macro, chat, backtest — the Discord-era workflow.
@@ -682,7 +686,7 @@ def _render_index(alerts: list[dict]) -> str:
             regime    = _esc(a.get("regime") or "")
             play      = _esc(a.get("play") or a.get("strategy") or "")
             direction = _esc(a.get("direction") or "")
-            created   = _esc((a.get("created_at") or "")[:19].replace("T", " "))
+            created   = _esc(_fdt(a.get("created_at") or ""))
             rows.append(f'''
 <a class="alert-card" href="/alerts/{html.escape(a["alert_id"])}">
   <div><b>{ticker}</b> &middot; {direction} &middot; {play}</div>
@@ -744,7 +748,7 @@ def _render_trades(trades: list[dict]) -> str:
             ticker    = _esc(t.get("ticker") or "?")
             direction = _esc(t.get("direction") or "")
             strategy  = _esc((t.get("strategy") or t.get("trade_type") or "").replace("_", " "))
-            entry_ts  = _esc((t.get("entry_timestamp") or t.get("entry_date") or "")[:19].replace("T", " "))
+            entry_ts  = _esc(_fdt(t.get("entry_timestamp") or t.get("entry_date") or ""))
             pnl       = t.get("pnl_dollars")
             pnl_cls   = "pnl-pos" if (pnl or 0) > 0 else "pnl-neg" if (pnl or 0) < 0 else "pnl-zero"
             pnl_str   = f"${pnl:+,.2f}" if isinstance(pnl, (int, float)) else "—"
@@ -865,7 +869,7 @@ def _render_condor_calc(spot, vix) -> str:
         '<div class="muted" style="margin-top:.25rem">'
         f'Est. credit ${c["credit"]:.2f} &middot; max profit ${c["max_profit"]:.0f} &middot; '
         f'max loss ${c["max_loss"]:.0f} &middot; breakevens '
-        f'{c["breakeven_low"]:g}–{c["breakeven_high"]:g} &middot; exp {_esc(c["expiry"])}</div>'
+        f'{c["breakeven_low"]:g}–{c["breakeven_high"]:g} &middot; exp {_esc(_fdate(c["expiry"]))}</div>'
         f'<a class="btn-ghost" style="margin-top:.6rem" href="{log_url}">Log this condor</a>'
         '</div>'
     )
@@ -893,7 +897,7 @@ def _render_butterfly_calc(spot, vix) -> str:
         '<div class="muted" style="margin-top:.25rem">'
         f'Cost (= max loss, no collateral) <b>${b["capital"]:,.0f}</b> &middot; '
         f'max profit ${b["max_profit"]:,.0f} at pin &middot; profits '
-        f'{b["breakeven_low"]:g}–{b["breakeven_high"]:g} &middot; exp {_esc(b["expiry"])}</div>'
+        f'{b["breakeven_low"]:g}–{b["breakeven_high"]:g} &middot; exp {_esc(_fdate(b["expiry"]))}</div>'
         '<div class="cp-note" style="margin-top:.4rem">~half a condor\'s capital; '
         'lower win-rate &amp; ROC (see STRUCTURE_COMPARISON). Log it via screenshot '
         'after placing — the 4-slot form can\'t hold a butterfly.</div>'
@@ -1020,14 +1024,14 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None) -> str:
         for leg in (t.get("legs") or []):
             e = leg.get("expiration") or leg.get("expiry")
             if e:
-                return str(e)[:10]
+                return _fdate(str(e)[:10])
         return t.get("dte_bucket") or "—"
 
     def _strat(t):
         return _esc((t.get("strategy") or t.get("trade_type") or "").replace("_", " "))
 
     def _when(t):
-        return _esc(t.get("entry_date") or "")
+        return _esc(_fdt(t.get("entry_date")) if t.get("entry_date") else "")
 
     if live:
         cards = []
@@ -1136,6 +1140,8 @@ def _render_copilot_log(prefill: dict | None = None, error: str | None = None,
     without app-switching; (2) confirm a bot play you placed ('I placed it');
     (3) type it. You always confirm your real credit + contracts before logging."""
     pf = prefill or {}
+    if pf.get("expiry"):
+        pf = {**pf, "expiry": _fdate(pf["expiry"])}   # display style in the input
 
     def _v(k):
         return _esc(str(pf.get(k, "")))
@@ -1166,8 +1172,8 @@ def _render_copilot_log(prefill: dict | None = None, error: str | None = None,
         '<form class="cp-form" method="post" action="/copilot/log">'
         f'<input type="hidden" name="bot_mark" value="{_v("bot_mark")}">'
         f'<label>Ticker</label><input name="ticker" value="{_v("ticker") or "SPY"}">'
-        f'<label>Expiration (YYYY-MM-DD)</label>'
-        f'<input name="expiry" value="{_v("expiry")}" placeholder="2026-07-24">'
+        f'<label>Expiration (MM-DD-YY)</label>'
+        f'<input name="expiry" value="{_v("expiry")}" placeholder="07-24-26">'
         '<label>Your actual fill — confirm these</label>'
         '<div class="cp-grid">'
         f'<div><label>Net credit / debit (per share)</label>'
@@ -1227,7 +1233,7 @@ def _render_journal(entries: list[dict]) -> str:
             pnl_cls = "pnl-pos" if (pnl or 0) > 0 else "pnl-neg" if (pnl or 0) < 0 else "pnl-zero"
             pnl_str = f"${pnl:+,.2f}" if isinstance(pnl, (int, float)) else ""
             notes   = _esc((j.get("notes") or "")[:200])
-            created = _esc((j.get("created_at") or "")[:19].replace("T", " "))
+            created = _esc(_fdt(j.get("created_at") or ""))
             aid     = html.escape(j.get("alert_id") or "")
             rows.append(f'''
 <a class="alert-card" href="/alerts/{aid}">
@@ -1533,7 +1539,7 @@ def _render_learning(
             pred_rows.append(
                 f'<div style="padding:.45rem 0;border-bottom:1px solid var(--border)">'
                 f'<div style="display:flex;justify-content:space-between;align-items:baseline">'
-                f'<span><b>{_esc(p.get("date"))}</b> · '
+                f'<span><b>{_esc(_fdate(p.get("date")))}</b> · '
                 f'{_esc(p.get("regime"))} · '
                 f'{_esc(p.get("direction"))} '
                 f'<span class="muted" style="font-size:.75rem">({conf_str})</span></span>'
@@ -1566,7 +1572,7 @@ def _render_learning(
                 f'<div style="display:flex;justify-content:space-between">'
                 f'<span><b>{_esc(t.get("ticker"))}</b> · '
                 f'{_esc(t.get("strategy") or t.get("option_type"))}</span>'
-                f'<span class="muted">opened {_esc(t.get("entry_date"))}</span>'
+                f'<span class="muted">opened {_esc(_fdt(t.get("entry_date")))}</span>'
                 f'</div>'
                 f'<div class="muted" style="margin-top:.15rem;font-size:.8rem">'
                 f'{_esc((t.get("notes_entry") or "")[:140])}</div>'
@@ -1602,7 +1608,7 @@ def _render_learning(
                 f'<span class="{pnl_t_cls}"><b>${pnl_t:+,.2f}</b></span>'
                 f'</div>'
                 f'<div class="muted" style="margin-top:.15rem;font-size:.75rem">'
-                f'closed {_esc(t.get("exit_date"))} · cumulative ${cum:+,.2f}</div>'
+                f'closed {_esc(_fdt(t.get("exit_date")))} · cumulative ${cum:+,.2f}</div>'
                 f'</div>'
             )
         closed_html = (
@@ -1631,7 +1637,7 @@ def _render_learning(
                 f'<div style="padding:.45rem 0;border-bottom:1px solid var(--border)">'
                 f'<div style="display:flex;justify-content:space-between">'
                 f'<b>{_esc(e.get("category"))}</b>'
-                f'<span class="muted" style="font-size:.75rem">{_esc(e.get("date"))} · conf {conf_str}</span></div>'
+                f'<span class="muted" style="font-size:.75rem">{_esc(_fdate(e.get("date")))} · conf {conf_str}</span></div>'
                 f'<div class="muted" style="margin-top:.15rem">{_esc((e.get("claim") or "")[:240])}</div>'
                 f'</div>'
             )
@@ -1964,7 +1970,7 @@ def _render_today(
     vix_ts       = macro.get("vix_ts") or {}
     sector       = macro.get("sector") or {}
     events       = macro.get("events") or []
-    plan_date    = _esc(plan.get("date") or "")
+    plan_date    = _esc(_fdate(plan.get("date") or ""))
 
     is_skip    = (plan.get("action") == "SKIP") or not plan.get("strategy")
     regime_cls = "status-loss" if is_skip else "status-win"
@@ -2075,7 +2081,7 @@ def _render_macro(vix: dict | None, sector: dict | None,
         flag_plain = _VIX_FLAG_LABEL.get(flag, flag)
         ratio      = vix.get("ratio")
         ratio_str  = f"{ratio:.3f}" if isinstance(ratio, (int, float)) else "—"
-        asof_str   = _esc((vix.get("asof") or "")[:19].replace("T", " "))
+        asof_str   = _esc(_fdt(vix.get("asof") or ""))
 
         def _fmt(v): return f"{v:.2f}" if isinstance(v, (int, float)) else "—"
 
@@ -2117,7 +2123,7 @@ def _render_macro(vix: dict | None, sector: dict | None,
         leaders     = sector.get("leaders")  or []
         laggards    = sector.get("laggards") or []
         horizon     = sector.get("horizon") or 20
-        s_asof      = _esc((sector.get("asof") or "")[:19].replace("T", " "))
+        s_asof      = _esc(_fdt(sector.get("asof") or ""))
 
         def _row(items, color_cls):
             return "".join(
@@ -2324,7 +2330,7 @@ def _render_chats(threads: list[dict]) -> str:
             regime  = _esc(c.get("regime") or "")
             count   = int(c.get("msg_count") or 0)
             last    = _esc((c.get("last_msg") or "")[:140])
-            last_at = _esc((c.get("last_msg_at") or "")[:19].replace("T", " "))
+            last_at = _esc(_fdt(c.get("last_msg_at") or ""))
             aid     = html.escape(c.get("alert_id") or "")
             rows.append(f'''
 <a class="alert-card" href="/alerts/{aid}">
@@ -2372,7 +2378,7 @@ def _render_detail(alert: dict, journal: list[dict], chat: list[dict]) -> str:
         f'<div><span>{html.escape(label)}</span><b>{_esc(value)}</b></div>'
         for label, value in fields
     )
-    created = _esc((alert.get("created_at") or "")[:19].replace("T", " "))
+    created = _esc(_fdt(alert.get("created_at") or ""))
 
     # Pre-render existing chat history server-side; new turns appended via JS.
     chat_html = "".join(

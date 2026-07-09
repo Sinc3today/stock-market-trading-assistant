@@ -87,7 +87,8 @@ def check_live_exits(recorder, pushover, alerted: set, *, mtm_fn=_default_mtm,
         if key_d not in alerted and exp is not None:
             dte = (exp - today).days
             if dte <= dte_close:
-                msg = (f"{strat} is {dte} days from expiry ({exp.isoformat()}). "
+                from alerts.fmt import fmt_date
+                msg = (f"{strat} is {dte} days from expiry ({fmt_date(exp)}). "
                        f"The paper book closes at {dte_close} DTE — gamma risk "
                        f"grows from here. Consider closing on Robinhood.")
                 logger.info(f"live_exits: {tid} time exit — {dte} DTE")

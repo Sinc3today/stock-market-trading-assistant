@@ -99,7 +99,7 @@ def test_prefill_from_play_fills_strikes_but_not_fill():
     pf = prefill_from_play(play)
     assert pf["bc"] == "776" and pf["sc"] == "771"
     assert pf["bp"] == "695" and pf["sp"] == "700"
-    assert pf["expiry"] == "2026-07-24"
+    assert pf["expiry"] == "07-24-26"    # house display style (MM-DD-YY)
     # the fields that were wrong before stay blank — user must confirm them
     assert pf["entry_price"] == ""
     assert pf["contracts"] == ""
@@ -119,7 +119,7 @@ def test_prefill_from_extracted_maps_legs_to_slots():
     }
     pf = prefill_from_extracted(extracted)
     assert pf["ticker"] == "SPY"
-    assert pf["expiry"] == "2026-07-17"
+    assert pf["expiry"] == "07-17-26"    # house display style (MM-DD-YY)
     assert pf["entry_price"] == "1.1"
     assert pf["bc"] == "781" and pf["sc"] == "776"
     assert pf["bp"] == "695" and pf["sp"] == "700"

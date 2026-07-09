@@ -34,7 +34,9 @@ def build_live_trade_kwargs(form: dict) -> dict:
     Raises ValueError if no legs were provided.
     """
     ticker = ((form.get("ticker") or "SPY").strip() or "SPY").upper()
-    expiry = (form.get("expiry") or "").strip() or None
+    # Accept MM-DD-YY (house display style) or ISO; STORE ISO (parsers depend on it)
+    from alerts.fmt import parse_date_flex
+    expiry = parse_date_flex(form.get("expiry")) or None
     bc, sc, bp, sp = _f(form, "bc"), _f(form, "sc"), _f(form, "bp"), _f(form, "sp")
 
     legs = []
@@ -109,9 +111,10 @@ def prefill_from_play(play: dict) -> dict:
         if not expiry:
             expiry = str(leg.get("expiration") or leg.get("expiry") or "")[:10]
     bm = play.get("entry_price")
+    from alerts.fmt import fmt_date
     return {
         "ticker": (play.get("ticker") or "SPY"),
-        "expiry": expiry,
+        "expiry": fmt_date(expiry) if expiry else "",   # display style in the form
         "entry_price": "",     # your real credit/debit — you fill this
         "contracts": "",       # your real size — you fill this
         "max_profit": "",
@@ -136,9 +139,11 @@ def prefill_from_extracted(extracted: dict) -> dict:
     ep = extracted.get("entry_price")
     mp = extracted.get("max_profit")
     ml = extracted.get("max_loss")
+    from alerts.fmt import fmt_date
+    exp = extracted.get("expiry") or ""
     return {
         "ticker": (extracted.get("ticker") or "SPY"),
-        "expiry": (extracted.get("expiry") or ""),
+        "expiry": fmt_date(exp) if exp else "",
         "entry_price": ("" if ep is None else f"{ep:g}"),
         "max_profit": ("" if mp is None else f"{mp:g}"),
         "max_loss": ("" if ml is None else f"{ml:g}"),
