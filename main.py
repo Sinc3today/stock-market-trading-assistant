@@ -171,6 +171,32 @@ def run_intraday_scan():
 from alerts import stop_watchdog as _stop_wd
 _stop_alerted: set = set()
 _stop_alerted_date: list = [None]
+_exit_alerted: set = set()
+_exit_alerted_date: list = [None]
+
+
+def run_live_exit_alerts():
+    """Every 15 min during market hours: high-priority alert when a LIVE (real
+    money) position hits the 70% profit target or the 21-DTE time exit — the
+    paper book auto-closes there, but the user must close RH positions manually.
+    Exit signals are never gated by the entry window."""
+    eastern = pytz.timezone("US/Eastern")
+    now = datetime.now(eastern)
+    if not config.is_trading_day(now):
+        return
+    from datetime import time as _time
+    if not (_time(9, 30) <= now.time() <= _time(16, 0)):
+        return
+    if _exit_alerted_date[0] != now.date():               # daily reset
+        _exit_alerted.clear(); _exit_alerted_date[0] = now.date()
+    try:
+        from journal.trade_recorder import TradeRecorder
+        from alerts.live_exits import check_live_exits
+        n = check_live_exits(TradeRecorder(), pushover, _exit_alerted)
+        if n:
+            logger.info(f"live_exits: {n} exit alert(s) fired")
+    except Exception as e:
+        logger.exception(f"live_exits failed: {e}")
 
 
 def run_stop_watchdog():
@@ -268,6 +294,15 @@ def start_scheduler():
         CronTrigger(day_of_week="mon-fri", hour="9-16", minute="*/5", timezone=eastern),
         id="stop_watchdog",
         name="Smart-stop watchdog",
+    )
+
+    # Live-book exit alerts — every 15 min, market hours (self-gated). High-
+    # priority push when a real position hits the profit target / time exit.
+    scheduler.add_job(
+        run_live_exit_alerts,
+        CronTrigger(day_of_week="mon-fri", hour="9-16", minute="7,22,37,52", timezone=eastern),
+        id="live_exit_alerts",
+        name="Live-book exit alerts",
     )
 
     # Options flow scan — 9:35 AM ET weekdays
