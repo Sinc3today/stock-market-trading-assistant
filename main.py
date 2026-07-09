@@ -532,6 +532,7 @@ if __name__ == "__main__":
             ivr_client     = ivr_client,
             post_fn        = notifier.message,
             event_calendar = event_cal,   # pass the EventCalendar object, not its block-date list
+            play_fn        = notifier.play,   # daily "today's call" push (T1.5)
         )
         logger.info("✅ SPY daily strategy jobs registered")
         logger.info("   09:15 ET -- Pre-market play")

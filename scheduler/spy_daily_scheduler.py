@@ -114,12 +114,34 @@ def _run_daily_dipbuy(polygon_client, *, ivr: float) -> None:
 # JOB FUNCTIONS
 # ─────────────────────────────────────────
 
+def _todays_call_push(brief: dict, play_fn) -> None:
+    """One priority-1 push every trading morning: the play OR the stand-down and
+    why (audit T1.5 — skip days used to be silent, so 'bot skipped' looked
+    identical to 'bot broke')."""
+    if not play_fn:
+        return
+    regime = str(brief.get("regime") or "?").replace("_", " ")
+    if brief.get("tradeable"):
+        strat = (brief.get("strategy") or (brief.get("options") or {}).get("strategy")
+                 or "play")
+        play_fn(title=f"📊 Today: {str(strat).replace('_', ' ')} ({regime})",
+                body=(f"{brief.get('play') or ''}\n"
+                      f"Entry window opens 09:45 ET — approve alert follows if it "
+                      f"opens. Details: /today"))
+    else:
+        reasons = brief.get("skip_conditions") or brief.get("reasons") or []
+        top = str(reasons[0])[:200] if reasons else "regime gates failed"
+        play_fn(title=f"📊 Today: standing down ({regime})",
+                body=f"No trade today. {top}\nDetails: /today")
+
+
 def job_spy_premarket(
     polygon_client,
     vix_client,
     ivr_client,
     post_fn,              # post_fn(message: str) — main.py wires notifier.message
     event_calendar=None,
+    play_fn=None,         # play_fn(title=, body=) — priority-1 daily call push
 ):
     """
     09:15 ET — Build the morning brief and post to Discord + Pushover.
@@ -166,6 +188,12 @@ def job_spy_premarket(
         # Plan is saved inside briefer; just post to Discord here.
         if post_fn:
             post_fn(brief["discord_message"])
+
+        # Daily call push — play or stand-down, never silent (T1.5).
+        try:
+            _todays_call_push(brief, play_fn)
+        except Exception as e:
+            logger.warning(f"today's-call push failed: {e}")
 
         logger.info(
             f"Morning brief done — "
@@ -268,6 +296,7 @@ def register_spy_jobs(
     ivr_client,
     post_fn,             # post_fn(message: str) — main.py wires notifier.message
     event_calendar=None,
+    play_fn=None,        # play_fn(title=, body=) — daily "today's call" push
 ):
     """
     Register all three SPY daily jobs onto the existing scheduler.
@@ -315,6 +344,7 @@ def register_spy_jobs(
             "ivr_client":     ivr_client,
             "post_fn":        post_fn,
             "event_calendar": event_calendar,
+            "play_fn":        play_fn,
         },
         id      = "spy_premarket",
         name    = "SPY Pre-Market Play",

@@ -67,6 +67,9 @@ def test_cap_blocks_new_disciplined_when_already_at_max(tmp_path, monkeypatch):
     skipped entries)."""
     import config
     monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    # This test exercises the COUNT cap in isolation; the seeded plays share
+    # strikes, which the (newer) concentration guard would block first.
+    monkeypatch.setattr(config, "ENFORCE_CONCENTRATION_GUARD", False)
     broker = PaperBroker()
     # Seed 3 open disciplined trades.
     for i in range(MAX_CONCURRENT_DISCIPLINED):
