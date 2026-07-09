@@ -53,3 +53,26 @@ our 2021-2026 backtest window):
 4. Future work (untested idea, NOT shipped): a term-structure/VIX-slope gate to
    catch the "calm top" pattern Feb-2020 exposed. Needs its own falsification
    pass before any deployment.
+
+## 3. Strike-touch / breach visibility study (`backtests/breach_study.py`)
+
+Daily HIGH/LOW answers the underlying-touch question exactly (5-min data only
+matters for option MTM). Over every condor's pre-21-DTE window (**caveat:
+measures the underlying's full path — an upper bound, since many trades would
+have exited at the 70% profit target before the touch**):
+
+- 74.5% of condor windows saw the underlying cross a short strike at least once
+  — touches are NORMAL for 2.5%-OTM shorts held weeks, and most still resolve
+  profitably (win rate 66.8%). A touch is a management event, not a loss.
+- **First crossing: 77% intraday** (the 5-min watchdog catches it same-day),
+  **23% overnight gaps** (watchdog blind — the new 09:15 pre-market gap check,
+  T1.4, is the mitigation).
+- **67% of crossings had a watchdog-band warning on an EARLIER day** — the
+  0.5% buffer usually gives at least a day's notice.
+- 101 windows crossed intraday but CLOSED back inside — exactly the events
+  close-only marking (and close-only backtests) can't see. Confirms the audit
+  concern quantitatively; the live watchdog covers it.
+
+**Net:** the watchdog architecture (5-min intraday + 09:15 gap check + 0.5%
+early band) covers ~all first-crossing paths. The remaining exposure is the
+overnight gap itself (bounded by defined risk).
