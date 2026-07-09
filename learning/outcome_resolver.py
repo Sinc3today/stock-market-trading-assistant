@@ -38,6 +38,7 @@ from journal.trade_recorder  import TradeRecorder
 
 
 NEUTRAL_TOLERANCE_PCT = 0.25   # |%| inside this = condor still "correct"
+MIN_SCORED_MOVE_PCT   = 0.10   # directional moves below this = "push" (excluded)
 
 
 # ── NOTIFICATION FORMATTER ────────────────────────────
@@ -152,6 +153,12 @@ class OutcomeResolver:
         if entry is None:
             return "partial"   # we have a close but no entry to compare to
         move_pct = (close - entry) / entry * 100
+        # Micro-move floor (audit T2#9): below this, a directional call is a
+        # "push" — the move is inside slippage/noise, so crediting correct OR
+        # wrong just adds noise to the accuracy sample. Neutral is unaffected
+        # (a tiny move is exactly what neutral predicts).
+        if direction in ("bullish", "bearish") and abs(move_pct) < MIN_SCORED_MOVE_PCT:
+            return "push"
         if direction == "bullish":
             return "correct" if move_pct > 0 else "wrong"
         if direction == "bearish":

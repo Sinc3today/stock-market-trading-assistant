@@ -88,6 +88,24 @@ def test_neutral_outside_tolerance(iso_dirs):
     assert result["outcome"] == "wrong"
 
 
+def test_directional_micro_move_scores_push_not_correct(iso_dirs):
+    # Audit T2#9: a +0.03% day is untradeable noise — crediting "correct"
+    # inflates accuracy. Below MIN_SCORED_MOVE_PCT a directional call is a
+    # "push": logged, excluded from the accuracy sample.
+    _seed_prediction("bullish", entry=720.0)
+    result = OutcomeResolver(polygon_client=FakePolygon(close=720.2)).resolve_today()
+    assert result["outcome"] == "push"          # 0.028% move
+    from learning.predictions import PredictionLog
+    acc = PredictionLog().accuracy(n=30)
+    assert acc["sample"] == 0                   # pushes don't count either way
+
+
+def test_directional_real_move_still_scores(iso_dirs):
+    _seed_prediction("bullish", entry=720.0)
+    result = OutcomeResolver(polygon_client=FakePolygon(close=722.0)).resolve_today()
+    assert result["outcome"] == "correct"       # 0.28% move, above the floor
+
+
 def test_neutral_scored_against_prediction_band_not_hardcoded(iso_dirs):
     # the fix: a neutral prediction is scored against ITS OWN VIX-implied band,
     # not the old 0.25%. A 0.7% move is "wrong" under 0.25 but "correct" under a
