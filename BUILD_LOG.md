@@ -4,6 +4,51 @@
 
 ---
 
+## 2026-07-09 — Full audit execution: 17-item health-check/stress-test list, all four tiers
+
+**What was worked on (plain language):**
+- Executed the complete improvement list from the 07-08 health check + adversarial stress test
+  (3 parallel audit agents + operational check → 17 items, 4 tiers).
+- **Tier 1 (protects real money, all deployed):** live-book exit alerts (profit target + 21-DTE —
+  real positions finally get exit signals, not just emergencies); short-strike concentration guard
+  (auto-entries skip when a new short lands within 1.5% of an open one; copilot warns on existing
+  clusters); RH sync close-detection (user closes on RH → journal copy marked closed; no more
+  phantom positions) + session health by last-successful-sync + one-per-day expiry push; stop-
+  watchdog hardening (yfinance fallback, "coverage degraded" alert after 3 data failures, 09:15
+  pre-market gap check); daily "today's call" push (play or stand-down — skip days never silent).
+- **Tier 2 (edge validation — the honest findings):** (1) the condor edge DIES at a 10% entry-credit
+  haircut (+$14.8k → −$7.9k) — hypersensitive to pricing; BUT real fills so far run RICHER than
+  model (+55% on the July condor), so live fill-vs-mark data decides; don't scale on backtest P&L.
+  (2) Threshold walk-forward: no fold picks (32,18) independently, but chasing the IS-optimum loses
+  to the fixed pair OOS — freeze the thresholds, stop tuning. (3) 2019-2020 crash replay: condor
+  NET LOSER over that period (−$3.7k); Feb-2020 calm-top classified as condor weather → 13 entries,
+  0 wins — the gates cannot see fast transitions; defined risk + concentration guard are the real
+  safety net. (4) Breach study: 77% of first strike-crossings intraday (watchdog catches), 23%
+  overnight (gap check catches), 67% pre-warned by the 0.5% band. (5) Directional predictions with
+  |move| < 0.10% now score "push" (excluded) — no more accuracy credit for noise days.
+- **Tier 3 (learning integrity):** hypothesis acceptance bar 0.10→0.15 Sharpe + rotating OOS window
+  (multiple-testing guard); KB confidence decay (halves per 90d — stale claims fade); hypothesis
+  engine reads disciplined-book stats only (learning-book noise excluded; book backfilled).
+- **Tier 4 (hygiene):** CSV refresh weekly→daily + untracked from git; exit-manager SPY/VIX
+  fallbacks (one dead source ≠ zero exits); APScheduler coalesce/misfire guards; PolygonClient
+  reuse; bare-except fixed; proactive bot-RSS check.
+- **Bonus finds:** RH re-link immediately surfaced a never-logged 3-lot Aug condor AND a scale bug
+  in the credit derivation (RH avg_price is signed per-contract) — fixed, validated against the
+  user's known $1.55 fill, journal repaired.
+
+**Live trading / learning:** service redeployed + healthy after each tier; all routes 200. NOTE:
+the new Aug condor's short put (713) doubles an existing disciplined 713 — concentration now
+visible on the copilot risk card (user's call on trimming).
+
+**Tests:** 1288 passing (+30 this session across live_exits, concentration, rh_sync close/scale,
+watchdog hardening, today's-call, hypothesis guard, KB decay/book filter, scoring floor).
+
+**Open for next session:** watch the live fill-vs-mark dataset accumulate (~10 fills decides the
+skew question); calm-top/term-structure gate is a candidate hypothesis (NOT shipped, needs its own
+falsification); consider trimming the doubled 713 short put.
+
+---
+
 ## 2026-06-29 — Web app revamp: mobile-first column → desktop analytics dashboard
 
 **What was worked on (plain language):**
