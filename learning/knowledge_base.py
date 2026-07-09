@@ -126,7 +126,33 @@ class KnowledgeBase:
 
     def recent(self, days: int = 30) -> list[dict]:
         cutoff = (date.today() - timedelta(days=days)).isoformat()
-        return [e for e in self.all() if e.get("date", "") >= cutoff]
+        return [self._with_effective_confidence(e) for e in self.all()
+                if e.get("date", "") >= cutoff]
+
+    # ── Confidence decay (audit T3#12) ─────────────────────
+    # The KB is append-only and nothing ever falsified old claims — a May
+    # observation carried the same weight in July even if the market changed.
+    # effective_confidence halves every DECAY_HALF_LIFE_DAYS so stale claims
+    # fade instead of accumulating as permanent truth. Raw `confidence` on
+    # disk is never mutated.
+    DECAY_HALF_LIFE_DAYS = 90
+
+    @classmethod
+    def effective_confidence(cls, entry: dict, today=None) -> float:
+        raw = entry.get("confidence")
+        if not isinstance(raw, (int, float)):
+            return 0.0
+        try:
+            age = ((today or date.today())
+                   - date.fromisoformat(str(entry.get("date"))[:10])).days
+        except (ValueError, TypeError):
+            return round(float(raw), 3)
+        return round(float(raw) * 0.5 ** (max(0, age) / cls.DECAY_HALF_LIFE_DAYS), 3)
+
+    def _with_effective_confidence(self, entry: dict) -> dict:
+        out = dict(entry)
+        out["effective_confidence"] = self.effective_confidence(entry)
+        return out
 
     def by_category(self, category: str, days: int | None = None) -> list[dict]:
         pool = self.recent(days) if days else self.all()

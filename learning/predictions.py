@@ -165,7 +165,8 @@ class PredictionLog:
     # the hypothesis engine's targeted tuning suggestions.
     _MIN_SUBSTRATEGY_SAMPLES = 3
 
-    def accuracy(self, n: int = 60, by_substrategy: bool = False) -> dict:
+    def accuracy(self, n: int = 60, by_substrategy: bool = False,
+                 book: str | None = None) -> dict:
         """Return rolling accuracy over the last n resolved predictions.
 
         by_substrategy=False (default): returns the aggregate accuracy dict
@@ -177,11 +178,18 @@ class PredictionLog:
             entries, plus an "all" key containing the same aggregate dict.
             Sub-strategies below the minimum sample floor are omitted to avoid
             noisy signals reaching the hypothesis engine.
+
+        book: restrict the sample to one book (audit T3#13 — the hypothesis
+            engine must not tune disciplined thresholds on learning-book noise).
+            Records with no book tag predate the learning book and count as
+            "disciplined".
         """
         rows = [
             r for r in self.recent(n)
             if r.get("resolved") and r.get("outcome") in ("correct", "wrong")
         ]
+        if book is not None:
+            rows = [r for r in rows if (r.get("book") or "disciplined") == book]
 
         def _stats(subset: list[dict]) -> dict:
             if not subset:
