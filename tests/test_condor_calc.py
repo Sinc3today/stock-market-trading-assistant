@@ -37,6 +37,34 @@ def test_shorts_are_near_target_delta():
     assert 0.13 < put_d < 0.27
 
 
+def test_build_butterfly_shape_and_economics():
+    # Low-capital mode: long call fly spanning the condor's zone. Debit = max
+    # loss = the capital tied up (~half a condor's, per STRUCTURE_COMPARISON).
+    from signals.condor_calc import build_butterfly
+    b = build_butterfly(spot=745.0, vix=18.0, dte=45)
+    assert b["lower"] < b["center"] < b["upper"]
+    assert b["center"] == 745.0
+    assert abs((b["upper"] - b["center"]) - (b["center"] - b["lower"])) < 0.01
+    assert b["debit"] > 0
+    assert b["capital"] == round(b["debit"] * 100, 2)     # debit IS the max loss
+    # max profit = half-width - debit (at the center pin)
+    assert b["max_profit"] == round((b["center"] - b["lower"] - b["debit"]) * 100, 2)
+    # breakevens inside the wings
+    assert b["lower"] < b["breakeven_low"] < b["center"] < b["breakeven_high"] < b["upper"]
+    # 4 legs (buy wing, sell 2 center, buy wing), all calls
+    assert len(b["legs"]) == 4
+    assert all(l["option_type"] == "CALL" for l in b["legs"])
+    sells = [l for l in b["legs"] if l["action"] == "SELL"]
+    assert len(sells) == 2 and all(l["strike"] == b["center"] for l in sells)
+
+
+def test_butterfly_cheaper_than_condor():
+    from signals.condor_calc import build_condor, build_butterfly
+    c = build_condor(spot=745.0, vix=18.0)
+    b = build_butterfly(spot=745.0, vix=18.0)
+    assert b["capital"] < c["max_loss"]        # the whole point of low-capital mode
+
+
 def test_higher_vix_widens_the_condor():
     from signals.condor_calc import build_condor
     calm = build_condor(spot=745.0, vix=13.0)

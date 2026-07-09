@@ -810,6 +810,36 @@ def _render_condor_calc(spot, vix) -> str:
     )
 
 
+def _render_butterfly_calc(spot, vix) -> str:
+    """Low-capital alternative to the condor: long call butterfly over the same
+    zone at ~half the capital (docs/STRUCTURE_COMPARISON.md). Debit = max loss —
+    nothing held as collateral."""
+    if not isinstance(spot, (int, float)):
+        return ""
+    from signals.condor_calc import build_butterfly
+    try:
+        b = build_butterfly(spot, vix)
+    except Exception as e:
+        logger.warning(f"butterfly calc failed: {e}")
+        return ""
+    from alerts.stop_watchdog import rh_leg_lines
+    legs = "".join(f"<div class='leg'>{_esc(l)}</div>" for l in rh_leg_lines(b["legs"]))
+    return (
+        '<div class="alert-card">'
+        f'<div class="muted">Long call butterfly {b["lower"]:g}/{b["center"]:g}/{b["upper"]:g} '
+        f'&middot; ~45 DTE &middot; estimate — verify vs the live chain</div>'
+        f"<div class='legs'>{legs}</div>"
+        '<div class="muted" style="margin-top:.25rem">'
+        f'Cost (= max loss, no collateral) <b>${b["capital"]:,.0f}</b> &middot; '
+        f'max profit ${b["max_profit"]:,.0f} at pin &middot; profits '
+        f'{b["breakeven_low"]:g}–{b["breakeven_high"]:g} &middot; exp {_esc(b["expiry"])}</div>'
+        '<div class="cp-note" style="margin-top:.4rem">~half a condor\'s capital; '
+        'lower win-rate &amp; ROC (see STRUCTURE_COMPARISON). Log it via screenshot '
+        'after placing — the 4-slot form can\'t hold a butterfly.</div>'
+        '</div>'
+    )
+
+
 _MTM_CACHE: dict = {}   # trade_id -> (timestamp, mtm dict | None) — live quotes are slow
 
 
@@ -1014,7 +1044,10 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None) -> str:
         '<div class="card span-5">'
         '<div class="kicker"><span class="dot"></span>Condor <span class="sep">·</span> current price</div>'
         '<div class="cp-note">Missed the alert? A condor off SPY right now — mirror it, then log.</div>'
-        f'{_render_condor_calc(spot, vix)}</div>'
+        f'{_render_condor_calc(spot, vix)}'
+        '<div class="kicker" style="margin-top:1rem"><span class="dot"></span>'
+        'Low capital <span class="sep">·</span> butterfly</div>'
+        f'{_render_butterfly_calc(spot, vix)}</div>'
     )
     plays_card = (
         '<div class="card span-12">'

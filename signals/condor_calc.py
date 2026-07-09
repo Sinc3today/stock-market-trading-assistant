@@ -50,6 +50,45 @@ def _nearest_friday(d: date) -> date:
     return d + timedelta(days=(4 - d.weekday()) % 7)
 
 
+def build_butterfly(spot: float, vix: float | None = None, dte: int = 45,
+                    span_pct: float = 0.025, today: date | None = None) -> dict:
+    """Low-capital range-bound structure: long call butterfly spanning the same
+    ±span_pct zone the condor trades (see docs/STRUCTURE_COMPARISON.md — ~half
+    the capital, debit = max loss, lower win rate; the right trade-off when
+    buying power is the constraint)."""
+    sigma = (vix if vix and vix > 0 else 18.0) / 100.0
+    t = max(dte, 1) / 365.0
+    center = float(round(spot))
+    lower = float(round(spot * (1 - span_pct)))
+    upper = float(round(center + (center - lower)))   # symmetric wings
+
+    def px(k):
+        return bs_price("call", spot, k, t, sigma)
+
+    debit = round(px(lower) + px(upper) - 2 * px(center), 2)
+    debit = max(0.05, debit)
+    expiry = _nearest_friday((today or date.today()) + timedelta(days=dte))
+    exp_iso = expiry.isoformat()
+    half = center - lower
+    legs = [
+        {"action": "BUY",  "option_type": "CALL", "strike": lower,  "expiry": exp_iso},
+        {"action": "SELL", "option_type": "CALL", "strike": center, "expiry": exp_iso},
+        {"action": "SELL", "option_type": "CALL", "strike": center, "expiry": exp_iso},
+        {"action": "BUY",  "option_type": "CALL", "strike": upper,  "expiry": exp_iso},
+    ]
+    return {
+        "spot": round(spot, 2),
+        "lower": lower, "center": center, "upper": upper,
+        "debit": debit,
+        "capital": round(debit * 100, 2),          # max loss = the debit
+        "max_profit": round((half - debit) * 100, 2),
+        "breakeven_low": round(lower + debit, 2),
+        "breakeven_high": round(upper - debit, 2),
+        "expiry": exp_iso,
+        "legs": legs,
+    }
+
+
 def build_condor(spot: float, vix: float | None = None, dte: int = 45,
                  short_delta: float = 0.20, wing: float = 5.0,
                  today: date | None = None) -> dict:
