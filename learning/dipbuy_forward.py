@@ -56,11 +56,14 @@ def dip_signal(spy_df) -> str | None:
     return None
 
 
-def maybe_open_dipbuy(spy_df, *, spot, ivr, options_layer, recorder, today=None):
+def maybe_open_dipbuy(spy_df, *, spot, ivr, options_layer, recorder, today=None,
+                      ticker="SPY"):
     """On a fresh oversold cross, build a bull-call debit (~21 DTE) via the same
     OptionsLayer the live bull plays use and record a 1-ct paper trade in the
-    'candidate' book. Idempotent per day. Returns {'recorded': True,
-    'trade_id': tid} or None."""
+    'candidate' book. Idempotent per (ticker, day). Returns {'recorded': True,
+    'trade_id': tid} or None. Multi-instrument since 2026-07-09 (QQQ passed the
+    same OOS gates — docs/DIPBUY_MULTI_INSTRUMENT.md); `spy_df` is the daily df
+    of `ticker`."""
     if not config.DIPBUY_FORWARD_ENABLED:
         return None
     if not config.within_entry_window():
@@ -70,29 +73,30 @@ def maybe_open_dipbuy(spy_df, *, spot, ivr, options_layer, recorder, today=None)
     if sig is None:
         return None
     today = today or _date.today()
-    # idempotency: skip if a candidate trade already opened today
+    # idempotency: skip if a candidate for THIS ticker already opened today
     for t in recorder.get_open_trades():
         if t.get("book") == config.DIPBUY_FORWARD_BOOK and \
+           t.get("ticker") == ticker and \
            str(t.get("entry_date", "")).startswith(today.isoformat()):
-            logger.info("dipbuy_forward: candidate already open today — skip")
+            logger.info(f"dipbuy_forward: {ticker} candidate already open today — skip")
             return None
 
     score_result = {"final_score": 85, "direction": "bullish", "tier": "dipbuy"}
     target, stop = round(spot * 1.03, 2), round(spot * 0.98, 2)
     try:
-        opts = options_layer.analyze("SPY", score_result, spot, target, stop,
+        opts = options_layer.analyze(ticker, score_result, spot, target, stop,
                                      mode="swing", iv_rank=ivr,
                                      dte_target=config.DIPBUY_FORWARD_DTE)
     except Exception as e:
         logger.warning(f"dipbuy_forward: analyze failed: {e}")
         return None
     if not opts or not opts.get("legs"):
-        logger.info("dipbuy_forward: no priceable bull structure today")
+        logger.info(f"dipbuy_forward: no priceable bull structure today ({ticker})")
         return None
 
     from learning.paper_broker import AUTO_SOURCE  # late import avoids circular dep
     tid = recorder.log_entry(
-        ticker="SPY",
+        ticker=ticker,
         entry_price=float(opts.get("entry_price") or opts.get("net_premium") or 1.0),
         size=1,
         trade_type=opts.get("strategy", "bull_debit"),
@@ -102,12 +106,12 @@ def maybe_open_dipbuy(spy_df, *, spot, ivr, options_layer, recorder, today=None)
         legs=opts.get("legs", []),
         max_profit=opts.get("max_profit"),
         max_loss=opts.get("max_loss"),
-        notes=f"[CANDIDATE {today.isoformat()}] {sig} dip-buy forward-test",
+        notes=f"[CANDIDATE {today.isoformat()}] {sig} dip-buy forward-test ({ticker})",
         dte_bucket="dipbuy",
         book=config.DIPBUY_FORWARD_BOOK,
         source=AUTO_SOURCE,
     )
-    logger.info(f"dipbuy_forward: recorded candidate {tid} (entry_spot={spot})")
+    logger.info(f"dipbuy_forward: recorded candidate {tid} ({ticker} entry_spot={spot})")
     return {"recorded": True, "trade_id": tid}
 
 
@@ -129,10 +133,26 @@ def _mark_spread(legs, spot, vix, dte_days) -> float:
     return val
 
 
-def resolve_candidates(recorder, *, spy_close, vix, today=None):
+def _spot_for_ticker(ticker: str, spy_close: float, closes: dict | None):
+    """Per-ticker mark spot: caller-provided override, SPY's close for SPY,
+    else a yfinance last price (multi-instrument since 2026-07-09)."""
+    if closes and ticker in closes:
+        return closes[ticker]
+    if ticker == "SPY":
+        return spy_close
+    try:
+        from alerts.stop_watchdog import yf_spot
+        return yf_spot(ticker)
+    except Exception as e:
+        logger.warning(f"dipbuy_forward: no spot for {ticker}: {e}")
+        return None
+
+
+def resolve_candidates(recorder, *, spy_close, vix, today=None, closes=None):
     """Mark + close open 'candidate' trades: 50%-of-max-profit OR
     DIPBUY_FORWARD_MAX_HOLD_TD trading days held. The caller wraps this per
-    Standing Rule #10. Returns the list of closed trade dicts."""
+    Standing Rule #10. Returns the list of closed trade dicts. Non-SPY
+    candidates are marked at their OWN ticker's spot."""
     today = today or _date.today()
     trades = recorder.get_all_trades()
     closed, dirty = [], False
@@ -141,12 +161,15 @@ def resolve_candidates(recorder, *, spy_close, vix, today=None):
             continue
         if t.get("outcome") not in (None, "open"):
             continue
+        spot = _spot_for_ticker(t.get("ticker", "SPY"), spy_close, closes)
+        if spot is None:
+            continue          # no spot today — try again tomorrow, don't mis-mark
         td = int(t.get("td_held", 0)) + 1
         t["td_held"] = td
         dirty = True
         legs = t.get("legs") or []
         dte_left = max(config.DIPBUY_FORWARD_DTE - td, 1)
-        mark = _mark_spread(legs, spy_close, vix, dte_left)
+        mark = _mark_spread(legs, spot, vix, dte_left)
         pnl  = (mark - float(t.get("entry_price", 0.0))) * 100 * int(t.get("size", 1))
         mp   = t.get("max_profit") or 0.0
         hit_target = mp > 0 and pnl >= config.DIPBUY_FORWARD_TARGET_PCT * mp

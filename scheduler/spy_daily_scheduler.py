@@ -93,21 +93,23 @@ def _run_daily_dipbuy(polygon_client, *, ivr: float) -> None:
     bull-debit on a fresh RSI<30 cross. Self-contained: spot = latest daily
     close (same value the morning brief uses). The OPEN is additionally gated
     to the entry window inside maybe_open_dipbuy."""
-    try:
-        df = polygon_client.get_bars(
-            "SPY", timeframe=config.SWING_PRIMARY_TIMEFRAME, limit=80, days_back=130)
-        if df is None or len(df) < 30:
-            return
-        spot = float(df["close"].iloc[-1])
-        maybe_open_dipbuy(
-            df,
-            spot          = spot,
-            ivr           = ivr,
-            options_layer = OptionsLayer(options_chain=OptionsChain()),
-            recorder      = TradeRecorder(),
-        )
-    except Exception as e:
-        logger.warning(f"dipbuy forward-test failed (ignored): {e}")
+    for ticker in getattr(config, "DIPBUY_TICKERS", ["SPY"]):
+        try:
+            df = polygon_client.get_bars(
+                ticker, timeframe=config.SWING_PRIMARY_TIMEFRAME, limit=80, days_back=130)
+            if df is None or len(df) < 30:
+                continue
+            spot = float(df["close"].iloc[-1])
+            maybe_open_dipbuy(
+                df,
+                spot          = spot,
+                ivr           = ivr,
+                options_layer = OptionsLayer(options_chain=OptionsChain()),
+                recorder      = TradeRecorder(),
+                ticker        = ticker,
+            )
+        except Exception as e:
+            logger.warning(f"dipbuy forward-test failed for {ticker} (ignored): {e}")
 
 
 # ─────────────────────────────────────────

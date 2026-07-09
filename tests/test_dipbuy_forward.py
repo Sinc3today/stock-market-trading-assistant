@@ -175,3 +175,74 @@ def test_resolve_ignores_non_candidate_books():
     out = df_mod.resolve_candidates(rec, spy_close=450.0, vix=18.0,
                                     today=pd.Timestamp("2026-03-20").date())
     assert out == [] and rec.closed == []
+
+
+# ── Multi-instrument (QQQ added 2026-07-09, docs/DIPBUY_MULTI_INSTRUMENT.md) ──
+
+def test_qqq_candidate_records_with_own_ticker(tmp_path, monkeypatch):
+    import config
+    import pandas as pd
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    monkeypatch.setattr(config, "ENFORCE_ENTRY_WINDOW", False)
+    from journal.trade_recorder import TradeRecorder
+    from learning import dipbuy_forward as df_mod
+    monkeypatch.setattr(df_mod, "dip_signal", lambda d: "oversold")
+    df = _declining_df()
+
+    class _OL:
+        def analyze(self, ticker, *a, **k):
+            assert ticker == "QQQ"                    # layer gets the right ticker
+            return {"strategy": "bull_debit", "entry_price": 2.0,
+                    "legs": [{"action": "BUY", "type": "call", "strike": 440},
+                             {"action": "SELL", "type": "call", "strike": 451}],
+                    "max_profit": 900, "max_loss": 200}
+
+    r = df_mod.maybe_open_dipbuy(df, spot=440.0, ivr=30, options_layer=_OL(),
+                                 recorder=TradeRecorder(), ticker="QQQ")
+    assert r and r["recorded"]
+    t = TradeRecorder().get_open_trades()[0]
+    assert t["ticker"] == "QQQ" and t["book"] == config.DIPBUY_FORWARD_BOOK
+
+
+def test_per_ticker_idempotency_spy_and_qqq_both_open(tmp_path, monkeypatch):
+    import config
+    import pandas as pd
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    monkeypatch.setattr(config, "ENFORCE_ENTRY_WINDOW", False)
+    from journal.trade_recorder import TradeRecorder
+    from learning import dipbuy_forward as df_mod
+    monkeypatch.setattr(df_mod, "dip_signal", lambda d: "oversold")
+    df = _declining_df()
+
+    class _OL:
+        def analyze(self, ticker, *a, **k):
+            return {"strategy": "bull_debit", "entry_price": 2.0,
+                    "legs": [{"action": "BUY", "type": "call", "strike": 440}],
+                    "max_profit": 900, "max_loss": 200}
+
+    rec = TradeRecorder()
+    assert df_mod.maybe_open_dipbuy(df, spot=440, ivr=30, options_layer=_OL(),
+                                    recorder=rec, ticker="SPY")
+    # a same-day QQQ candidate must NOT be blocked by the SPY one...
+    assert df_mod.maybe_open_dipbuy(df, spot=440, ivr=30, options_layer=_OL(),
+                                    recorder=rec, ticker="QQQ")
+    # ...but a second QQQ the same day is
+    assert df_mod.maybe_open_dipbuy(df, spot=440, ivr=30, options_layer=_OL(),
+                                    recorder=rec, ticker="QQQ") is None
+
+
+def test_resolver_marks_non_spy_at_own_spot(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from journal.trade_recorder import TradeRecorder
+    from learning.dipbuy_forward import resolve_candidates
+    rec = TradeRecorder()
+    rec.log_entry(ticker="QQQ", entry_price=2.0, size=1, trade_type="debit_spread",
+                  strategy="debit_spread", direction="bullish",
+                  legs=[{"action": "BUY", "type": "call", "strike": 440},
+                        {"action": "SELL", "type": "call", "strike": 451}],
+                  max_profit=900, book=config.DIPBUY_FORWARD_BOOK)
+    # QQQ deep ITM at ITS spot (SPY close would mis-mark badly) -> target close
+    closed = resolve_candidates(rec, spy_close=628.0, vix=18.0,
+                                closes={"QQQ": 470.0})
+    assert len(closed) == 1
