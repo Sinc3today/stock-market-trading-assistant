@@ -31,7 +31,7 @@ from typing import Any
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from fastapi import FastAPI, HTTPException, Cookie, Form, File, UploadFile
+from fastapi import FastAPI, HTTPException, Cookie, Form, File, UploadFile, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from pydantic import BaseModel
 
@@ -223,18 +223,22 @@ _NAV_CSS = """
      background:var(--surface);border-right:1px solid var(--border);
      padding:1rem .8rem;display:flex;flex-direction:column;gap:.15rem;overflow-y:auto}
 .nav-brand{color:var(--fg);text-decoration:none;font-weight:700;font-size:1.05rem;
-           letter-spacing:-.01em;padding:.2rem .55rem .9rem;display:block}
-.nav-group{display:flex;flex-direction:column;gap:.1rem;margin-bottom:.45rem}
-.nav-group-label{display:block;color:var(--fg-subtle);font-size:.66rem;text-transform:uppercase;
-                 letter-spacing:.08em;font-weight:600;padding:.5rem .55rem .2rem}
-.nav a:not(.nav-brand){color:var(--fg-muted);text-decoration:none;font-size:.9rem;font-weight:500;
-       padding:.5rem .6rem;border-radius:var(--r-sm);display:block}
+           letter-spacing:-.01em;padding:.2rem .55rem .9rem;display:flex;
+           align-items:center;gap:.5rem}
+.nav-group{display:flex;flex-direction:column;gap:.15rem;margin-bottom:.45rem}
+.nav-group-label{display:none}
+.nav-ic{display:inline-flex;width:18px;height:18px;flex:0 0 auto;opacity:.85}
+.nav-ic svg{width:100%;height:100%}
+.nav a:not(.nav-brand){color:var(--fg-muted);text-decoration:none;font-size:.92rem;font-weight:500;
+       padding:.55rem .6rem;border-radius:var(--r-sm);display:flex;align-items:center;gap:.6rem}
 .nav a:not(.nav-brand):hover{color:var(--fg);background:var(--surface-2)}
 .nav a.active{color:var(--accent-fg);background:var(--accent)}
+.nav a.active .nav-ic{opacity:1}
 .nav-spacer{flex:1;min-height:.5rem}
 .theme-toggle{background:transparent;border:1px solid var(--border);color:var(--fg-muted);
               border-radius:var(--r-sm);padding:.5rem .6rem;text-align:left;cursor:pointer;
-              font-weight:500;font-size:.85rem;width:100%}
+              font-weight:500;font-size:.85rem;width:100%;display:flex;
+              align-items:center;gap:.6rem}
 .theme-toggle:hover{color:var(--fg);border-color:var(--border-strong);filter:none}
 .topbar{display:none}
 .nav-scrim{display:none}
@@ -420,40 +424,42 @@ def _esc(v: Any) -> str:
     return html.escape(str(v if v is not None else "—"))
 
 
-_NAV_GROUPS = [
-    ("Now", [
-        ("today",  "/today",  "Today"),
-        ("levels", "/levels", "Levels"),
-        ("macro",  "/macro",  "Macro"),
-        ("alerts", "/",       "Alerts"),
-    ]),
-    ("Trades", [
-        ("copilot", "/copilot", "Copilot"),
-        ("trades",  "/trades",  "Trades"),
-        ("journal", "/journal", "Journal"),
-        ("chats",   "/chats",   "Chats"),
-    ]),
-    ("Tools", [
-        ("chat",     "/chat",     "Chat"),
-        ("backtest", "/backtest", "Backtest"),
-        ("learning", "/learning", "Learning"),
-    ]),
+# Lean IA (2026-07-10 cleanup): four pages the user actually lives in.
+# Retired from nav (routes stay alive for old links): alerts feed, journal,
+# chats, levels, macro, chat, backtest — the Discord-era workflow.
+_NAV_ICONS = {
+    # small inline SVGs, stroke = currentColor (design rule: no emoji as UI icons)
+    "copilot":  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5 13.5 13.5 8.5 15.5 10.5 10.5z"/></svg>',
+    "today":    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+    "trades":   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 4 3 6-8"/><path d="M18 6h3v3"/></svg>',
+    "learning": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+}
+_NAV_ITEMS = [
+    ("copilot",  "/copilot",  "Copilot"),
+    ("today",    "/today",    "Today"),
+    ("trades",   "/trades",   "Trades"),
+    ("learning", "/learning", "Learning"),
 ]
+_ICON_BELL = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+              'stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>'
+              '<path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>')
+_ICON_MOON = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+              'stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>')
+_BRAND_GLYPH = ('<svg viewBox="0 0 64 64" width="20" height="20" aria-hidden="true">'
+                '<rect width="64" height="64" rx="14" fill="var(--accent)" opacity=".15"/>'
+                '<polyline points="10,46 24,35 37,42 52,22" fill="none" stroke="var(--accent)" '
+                'stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>'
+                '<circle cx="52" cy="22" r="5" fill="var(--accent)"/></svg>')
 
 
 def _render_nav(active: str) -> str:
-    groups_html = []
-    for label, items in _NAV_GROUPS:
-        links = []
-        for key, href, text in items:
-            cls = "active" if key == active else ""
-            links.append(f'<a href="{href}" class="{cls}">{text}</a>')
-        groups_html.append(
-            f'<div class="nav-group">'
-            f'<span class="nav-group-label">{label}</span>'
-            f'{"".join(links)}'
-            f'</div>'
-        )
+    links = []
+    for key, href, text in _NAV_ITEMS:
+        cls = "active" if key == active else ""
+        icon = _NAV_ICONS.get(key, "")
+        links.append(f'<a href="{href}" class="{cls}">'
+                     f'<span class="nav-ic">{icon}</span>{text}</a>')
+    groups_html = [f'<div class="nav-group">{"".join(links)}</div>']
     # Theme toggle + mobile menu auto-close. The early theme-set lives in the
     # <head> (in _render_page) to avoid a flash; this just keeps the label synced
     # and lets a nav tap close the mobile drawer.
@@ -464,26 +470,29 @@ def _render_nav(active: str) -> str:
         'd.setAttribute("data-theme",n);try{localStorage.setItem("smta-theme",n)}catch(e){}'
         '__themeLabel()}'
         'function __themeLabel(){var t=document.documentElement.getAttribute("data-theme")==="light"?"light":"dark";'
-        'var el=document.getElementById("theme-label");if(el)el.textContent=t==="light"?"☀ Light":"☾ Dark"}'
+        'var el=document.getElementById("theme-label");if(el)el.textContent=t==="light"?"Light":"Dark"}'
         'document.addEventListener("DOMContentLoaded",function(){__themeLabel();'
         'var t=document.getElementById("nav-toggle");if(!t)return;'
         'document.querySelectorAll(".nav a").forEach(function(a){'
         'a.addEventListener("click",function(){t.checked=false})})});'
         '</script>'
     )
+    brand = f'<a href="/copilot" class="nav-brand">{_BRAND_GLYPH}<span>SMTA</span></a>'
     return (
         '<input type="checkbox" id="nav-toggle" class="nav-toggle-input">'
-        '<header class="topbar">'
-        '<a href="/today" class="nav-brand">📊 SMTA</a>'
+        f'<header class="topbar">{brand}'
         '<label for="nav-toggle" class="nav-toggle" aria-label="Open menu">☰</label>'
         '</header>'
         '<label for="nav-toggle" class="nav-scrim" aria-hidden="true"></label>'
         '<aside class="nav">'
-        '<a href="/today" class="nav-brand">📊 SMTA</a>'
+        f'{brand}'
         f'{"".join(groups_html)}'
         '<div class="nav-spacer"></div>'
+        '<button type="button" id="push-toggle" class="theme-toggle" '
+        f'style="margin-bottom:.4rem"><span class="nav-ic">{_ICON_BELL}</span>'
+        '<span id="push-label">Enable notifications</span></button>'
         '<button type="button" class="theme-toggle" onclick="__toggleTheme()">'
-        '<span id="theme-label">☾ Dark</span></button>'
+        f'<span class="nav-ic">{_ICON_MOON}</span><span id="theme-label">Dark</span></button>'
         '</aside>'
         f'{script}'
     )
@@ -501,7 +510,12 @@ def _render_page(
 <html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#100f0d">
 <title>{html.escape(title)}</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
 {theme_init}
 <style>{css}</style>
 {extra_head}
@@ -513,8 +527,55 @@ def _render_page(
 </main>
 {_PTR_INDICATOR_HTML}
 {_GESTURES_SCRIPT}
+{_PUSH_SCRIPT}
 </body></html>"""
 
+
+# PWA push: register the service worker on every load; the sidebar button
+# requests permission + subscribes (VAPID) + posts the subscription. Hidden
+# automatically where Web Push isn't available (plain-http origins, old iOS).
+_PUSH_SCRIPT = """
+<script>
+(function(){
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("/sw.js").catch(function(){});
+  var btn = document.getElementById("push-toggle");
+  if (!btn) return;
+  var lbl = document.getElementById("push-label") || btn;
+  if (!("PushManager" in window) || !window.isSecureContext) { btn.style.display = "none"; return; }
+  function b64ToU8(s){var p="=".repeat((4-s.length%4)%4);var b=(s+p).replace(/-/g,"+").replace(/_/g,"/");
+    var r=atob(b);var a=new Uint8Array(r.length);for(var i=0;i<r.length;i++)a[i]=r.charCodeAt(i);return a;}
+  async function state(){
+    var reg = await navigator.serviceWorker.ready;
+    return await reg.pushManager.getSubscription();
+  }
+  async function refresh(){
+    try { lbl.textContent = (await state()) ? "Notifications: on" : "Enable notifications"; }
+    catch(e){}
+  }
+  btn.addEventListener("click", async function(){
+    try {
+      var reg = await navigator.serviceWorker.ready;
+      var sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await fetch("/push/unsubscribe", {method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({endpoint: sub.endpoint})});
+        await sub.unsubscribe();
+      } else {
+        var perm = await Notification.requestPermission();
+        if (perm !== "granted") { lbl.textContent = "Blocked in settings"; return; }
+        var key = (await (await fetch("/push/vapid-public-key")).json()).key;
+        sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey: b64ToU8(key)});
+        await fetch("/push/subscribe", {method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify(sub.toJSON())});
+      }
+    } catch(e) { lbl.textContent = "Push failed"; }
+    refresh();
+  });
+  refresh();
+})();
+</script>
+"""
 
 # Tiny pull-to-refresh indicator that lives at the top of every page,
 # hidden by default; the gesture script unhides it during a pull.
@@ -2868,6 +2929,72 @@ def _dist(price, level):
 # ROUTES
 # ─────────────────────────────────────────
 
+# ── PWA: static assets, service worker, Web Push endpoints ──────────────────
+
+_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+
+@app.get("/static/{fname}")
+def static_file(fname: str):
+    fp = os.path.join(_STATIC_DIR, os.path.basename(fname))
+    if not os.path.exists(fp):
+        raise HTTPException(status_code=404)
+    return FileResponse(fp)
+
+
+@app.get("/sw.js")
+def service_worker():
+    # must be served from the ROOT so its scope covers the whole app
+    return FileResponse(os.path.join(_STATIC_DIR, "sw.js"),
+                        media_type="application/javascript")
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return FileResponse(os.path.join(_STATIC_DIR, "manifest.webmanifest"),
+                        media_type="application/manifest+json")
+
+
+@app.get("/favicon.svg")
+def favicon_svg():
+    return FileResponse(os.path.join(_STATIC_DIR, "favicon.svg"),
+                        media_type="image/svg+xml")
+
+
+@app.get("/favicon.ico")
+def favicon_ico():
+    return FileResponse(os.path.join(_STATIC_DIR, "favicon.ico"))
+
+
+@app.get("/apple-touch-icon.png")
+def apple_touch_icon():
+    return FileResponse(os.path.join(_STATIC_DIR, "apple-touch-icon.png"))
+
+
+@app.get("/push/vapid-public-key")
+def push_vapid_key():
+    from alerts.webpush import vapid_keys
+    return {"key": vapid_keys()["public_key"]}
+
+
+@app.post("/push/subscribe")
+async def push_subscribe(request: Request):
+    from alerts.webpush import SubscriptionStore
+    sub = await request.json()
+    if not sub.get("endpoint"):
+        raise HTTPException(status_code=400, detail="not a push subscription")
+    added = SubscriptionStore().add(sub)
+    return {"ok": True, "added": added}
+
+
+@app.post("/push/unsubscribe")
+async def push_unsubscribe(request: Request):
+    from alerts.webpush import SubscriptionStore
+    body = await request.json()
+    SubscriptionStore().remove(body.get("endpoint", ""))
+    return {"ok": True}
+
+
 @app.get("/health")
 def health():
     """Health check."""
@@ -2876,7 +3003,14 @@ def health():
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    """Recent alerts list."""
+    """Home = the copilot (2026-07-10 cleanup). The old alert feed lives on at
+    /alerts for old links; it's just out of the nav."""
+    return RedirectResponse("/copilot", status_code=307)
+
+
+@app.get("/alerts", response_class=HTMLResponse)
+def alerts_feed():
+    """Legacy scanner-alert feed (retired from nav, kept for old links)."""
     alerts = alert_store.get_recent_alerts(limit=20)
     return HTMLResponse(_render_index(alerts))
 

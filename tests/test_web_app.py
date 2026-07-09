@@ -143,7 +143,8 @@ def test_recent_alerts_list(client, app_modules, sample_alert):
     alert_store, _ = app_modules
     alert_store.save_alert(sample_alert)
 
-    r = client.get("/")
+    # 2026-07-10 cleanup: the feed moved to /alerts ("/" is now the copilot)
+    r = client.get("/alerts")
     assert r.status_code == 200
     assert "Recent Alerts" in r.text
     assert "SPY"           in r.text
@@ -154,12 +155,11 @@ def test_recent_alerts_list(client, app_modules, sample_alert):
 # ─────────────────────────────────────────
 
 def test_nav_appears_on_index(client):
+    # "/" now lands on the copilot with the lean 4-item nav
     r = client.get("/")
     assert r.status_code == 200
-    # Nav links to all eight views
-    for href in ('href="/today"', 'href="/chat"', 'href="/"',
-                 'href="/trades"', 'href="/journal"', 'href="/chats"',
-                 'href="/macro"', 'href="/backtest"'):
+    for href in ('href="/copilot"', 'href="/today"',
+                 'href="/trades"', 'href="/learning"'):
         assert href in r.text
 
 
@@ -514,8 +514,10 @@ def test_mobile_css_media_query_present(client, app_modules):
 
 
 def test_nav_includes_levels_link(client, app_modules):
+    # 2026-07-10 cleanup: levels is retired from the nav (route stays alive)
     r = client.get("/macro")
-    assert 'href="/levels"' in r.text
+    assert 'href="/levels"' not in r.text
+    assert client.get("/levels").status_code == 200
 
 
 # ─────────────────────────────────────────
@@ -532,19 +534,20 @@ def test_nav_renders_brand_and_hamburger_toggle(client, app_modules):
     assert ":checked ~ .nav"       in r.text
 
 
-def test_nav_renders_three_grouped_sections(client, app_modules):
+def test_nav_renders_lean_flat_list(client, app_modules):
+    # 2026-07-10 cleanup: one flat group, four core pages, SVG icons (no emoji)
     r = client.get("/macro")
-    # Group labels are visible on mobile; rendered for all viewports
-    for label in (">Now<", ">Trades<", ">Tools<"):
-        assert label in r.text
+    assert ">Now<" not in r.text and ">Tools<" not in r.text
+    assert r.text.count('class="nav-ic"') >= 4
 
 
 def test_nav_groups_contain_expected_links(client, app_modules):
     r = client.get("/today")
-    for href in ("/today", "/levels", "/macro", "/",
-                 "/trades", "/journal", "/chats",
-                 "/chat", "/backtest"):
+    for href in ("/copilot", "/today", "/trades", "/learning"):
         assert f'href="{href}"' in r.text
+    # retired pages are OUT of the nav
+    for href in ("/journal", "/chats", "/backtest", "/macro"):
+        assert f'href="{href}"' not in r.text
 
 
 # ─────────────────────────────────────────
@@ -711,8 +714,9 @@ def test_today_renders_without_sparkline_when_polygon_fails(client, app_modules,
     })
     r = client.get("/today")
     assert r.status_code == 200
-    # No sparkline card when Polygon fails (but page still renders)
-    assert "<polyline"        not in r.text
+    # No sparkline CHART when Polygon fails (nav icons legitimately contain
+    # <polyline> now, so target the chart class instead of the raw tag)
+    assert 'class="spark"'    not in r.text
     # H1 gets HTML-escaped, so check for the escaped form
     assert "Today&#x27;s Play"     in r.text
 
@@ -976,7 +980,7 @@ def test_gestures_script_present_on_every_page(client, app_modules):
 def test_active_nav_marker_on_body(client, app_modules):
     """Body data-active-nav attribute is what the swipe-back JS reads to
     decide whether to allow popping history. Verify the marker for each page."""
-    cases = [("/today", "today"), ("/macro", "macro"), ("/", "alerts"),
+    cases = [("/today", "today"), ("/macro", "macro"), ("/", "copilot"),
              ("/trades", "trades"), ("/journal", "journal")]
     for path, expected in cases:
         r = client.get(path)
