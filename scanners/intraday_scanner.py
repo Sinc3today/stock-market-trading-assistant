@@ -45,9 +45,10 @@ from journal.trade_logger import TradeLogger
 
 EASTERN = pytz.timezone("US/Eastern")
 
-# ── Play notification hook ────────────────────────────────────
-# Mirrors the set_discord_fn pattern.  Wired to notifier.play by main.py.
+# ── Play notification hooks ───────────────────────────────────
+# Mirrors the set_discord_fn pattern.  Wired by main.py.
 _PLAY_FN = None
+_APPROVE_FN = None
 
 
 def set_play_fn(fn):
@@ -56,10 +57,33 @@ def set_play_fn(fn):
     _PLAY_FN = fn
 
 
+def set_approve_fn(fn):
+    """Register the EMERGENCY entry-approve hook (notifier.approve) — the same
+    can't-miss alert the 45DTE daily play gets. The 1-3DTE cycle is 1-2 days,
+    so a missed entry window costs the whole trade (user request 2026-07-09)."""
+    global _APPROVE_FN
+    _APPROVE_FN = fn
+
+
 def _maybe_play_on_open(enriched: dict, result: dict) -> None:
-    """Push a play() ONLY when a disciplined position actually opened.
+    """Notify ONLY when a disciplined position actually opened. Prefers the
+    emergency entry-approve (RH-shaped legs + one-tap /copilot link) so the
+    user can mirror it in time; falls back to the plain priority-1 play push.
     Learning-book (sandbox) opens stay silent."""
-    if not (_PLAY_FN and result.get("recorded") and enriched.get("book") == "disciplined"):
+    if not (result.get("recorded") and enriched.get("book") == "disciplined"):
+        return
+    tid = result.get("trade_id")
+    if _APPROVE_FN and tid:
+        try:
+            from journal.trade_recorder import TradeRecorder
+            trade = next((t for t in TradeRecorder().get_open_trades()
+                          if t.get("trade_id") == tid), None)
+            if trade:
+                _APPROVE_FN(trade)
+                return
+        except Exception as e:
+            logger.warning(f"intraday approve notify failed: {e}")
+    if not _PLAY_FN:
         return
     try:
         _PLAY_FN(

@@ -74,6 +74,7 @@ options_flow_scanner = OptionsFlowScanner()
 swing_scanner.set_discord_fn(notifier.alert)
 intraday_scanner.set_discord_fn(notifier.alert)
 intraday_scanner.set_play_fn(notifier.play)
+intraday_scanner.set_approve_fn(notifier.approve)   # emergency approve on 1-3DTE opens (T-2026-07-09)
 premarket_scanner.set_discord_fn(notifier.message)
 options_flow_scanner.set_discord_fn(notifier.message)
 
