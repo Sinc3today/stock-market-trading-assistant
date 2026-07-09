@@ -21,6 +21,8 @@ import importlib
 import json
 import os
 import sys
+
+import pandas as pd
 from datetime import date
 from typing import Callable
 
@@ -33,13 +35,41 @@ from learning.knowledge_base   import KnowledgeBase, KBEntry
 from learning.hypothesis_engine import TUNABLE_PARAMS
 
 
-SHARPE_ACCEPT_DELTA   = 0.10
+# Audit T3#11 (2026-07-09): ~52 hypotheses/year graded on ONE fixed OOS tail is
+# a multiple-testing machine (~13 false accepts expected over 5yr at the old
+# bar). Mitigations: (a) acceptance bar raised 0.10 -> 0.15 Sharpe; (b) the OOS
+# window ROTATES with the hypothesis date (last / middle / first slice), so
+# successive proposals are not all graded against the same data.
+SHARPE_ACCEPT_DELTA   = 0.15
 SHARPE_REJECT_DELTA   = -0.10
 PNL_REJECT_DELTA      = -250
 MIN_OOS_TRADES        = 30    # below this floor in the OOS slice → auto-inconclusive
 PENDING_PROMOTION_ALERT_THRESHOLD = 5
+N_OOS_ROTATIONS       = 3
 
 BACKTEST_YEARS = 5
+
+
+def oos_rotation(run_date=None) -> int:
+    """Which OOS layout this run uses (0=last 40%, 1=middle 40%, 2=first 40%),
+    keyed by ISO week so consecutive Saturdays rotate deterministically."""
+    from datetime import date as _date
+    d = run_date or _date.today()
+    return d.isocalendar()[1] % N_OOS_ROTATIONS
+
+
+def split_is_oos(df, rotation: int):
+    """Chronological 60/40 split with a rotating OOS position."""
+    n = len(df)
+    w = int(n * 0.40)
+    if rotation == 0:            # OOS = last 40% (the legacy layout)
+        return df.iloc[:n - w], df.iloc[n - w:]
+    if rotation == 1:            # OOS = middle 40%
+        start = int(n * 0.30)
+        oos = df.iloc[start:start + w]
+        is_ = pd.concat([df.iloc[:start], df.iloc[start + w:]])
+        return is_, oos
+    return df.iloc[w:], df.iloc[:w]   # OOS = first 40%
 
 
 def _count_pending_promotions(hyp_dir: str) -> int:
@@ -253,14 +283,15 @@ class HypothesisRunner:
             df["date"] = pd.to_datetime(df["date"])
             df = df.sort_values("date").reset_index(drop=True)
 
-            # 60/40 chronological split — matches every other walk-forward we've used.
-            cut       = int(len(df) * 0.60)
-            is_slice  = df.iloc[:cut]
-            oos_slice = df.iloc[cut:]
+            # 60/40 chronological split with a ROTATING OOS window (T3#11) —
+            # consecutive weekly hypotheses no longer all grade on the same tail.
+            rot = oos_rotation()
+            is_slice, oos_slice = split_is_oos(df, rot)
 
             full = HypothesisRunner._metrics_block(df)
             full["is"]  = HypothesisRunner._metrics_block(is_slice)
             full["oos"] = HypothesisRunner._metrics_block(oos_slice)
+            full["oos_rotation"] = rot
             return full
         finally:
             if override is not None and target_module is not None:
