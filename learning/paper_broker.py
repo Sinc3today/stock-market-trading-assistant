@@ -240,6 +240,24 @@ class PaperBroker:
             return {"prediction_date": today_str, "trade_id": None,
                     "recorded": False, "skipped": "entry_window"}
 
+        # Concentration guard — never stack a new short strike on top of an
+        # existing one (disciplined + live books). Three overlapping condors
+        # ($700/$705/$713 short puts) taught us a -3% day breaches them all
+        # together; the count cap alone doesn't see strike proximity.
+        if getattr(config, "ENFORCE_CONCENTRATION_GUARD", True):
+            from signals.concentration import proximity_conflicts
+            conflicts = proximity_conflicts(
+                options.get("legs") or [], self.trades.get_open_trades(),
+                pct=getattr(config, "CONCENTRATION_GUARD_PCT", 1.5))
+            if conflicts:
+                c = conflicts[0]
+                logger.info(
+                    f"PaperBroker: {today_str} concentration guard — new short "
+                    f"{c['type']} {c['new_strike']:g} within {c['distance_pct']}% of "
+                    f"open {c['trade_id']} short {c['existing_strike']:g}; no open")
+                return {"prediction_date": today_str, "trade_id": None,
+                        "recorded": False, "skipped": "concentration_guard"}
+
         open_disc = self._open_count_by_book("disciplined")
         if open_disc >= MAX_CONCURRENT_DISCIPLINED:
             logger.info(

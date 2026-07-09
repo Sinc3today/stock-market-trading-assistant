@@ -848,6 +848,19 @@ def _live_mtm_badge(t: dict) -> str:
             f' · spread to close ~${sc:,.0f}</div>')
 
 
+def _concentration_sub(live: list[dict]) -> str:
+    """Risk-card subtitle: warn when open short strikes cluster (audit T1.2)."""
+    try:
+        from signals.concentration import book_concentration
+        clusters = book_concentration(live, pct=getattr(config, "CONCENTRATION_GUARD_PCT", 1.5))
+        if clusters:
+            return (f'<span class="pnl-neg">⚠ {len(clusters)} overlapping short '
+                    f'strike cluster(s)</span>')
+    except Exception:
+        pass
+    return "max loss tied up on RH"
+
+
 def _live_totals(live: list[dict]) -> dict:
     """Portfolio roll-up across live positions: summed MTM (None if no quotes),
     collateral at risk (from records, no network), and count."""
@@ -987,7 +1000,7 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None) -> str:
                      sub="live underlying", right_html=spark + day_delta)
         + _stat_card('Positions <span class="sep">·</span> Open MTM', mtm_val, sub=mtm_sub)
         + _stat_card('Risk <span class="sep">·</span> Collateral', f'${tot["capital"]:,.0f}',
-                     sub="max loss tied up on RH")
+                     sub=_concentration_sub(live))
         + '</div>'
     )
 

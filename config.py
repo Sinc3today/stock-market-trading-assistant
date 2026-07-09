@@ -175,6 +175,13 @@ INTRADAY_SCAN_INTERVAL_MIN = 5
 STOP_WATCHDOG_ENABLED    = True
 STOP_WATCHDOG_BUFFER_PCT = 0.005   # warn within 0.5% of a short strike
 
+# Concentration guard: skip a new auto-entry when any of its SHORT strikes
+# lands within this % of an existing open short strike of the same type
+# (disciplined + live books). Stacked condor shorts ($700/705/713 puts) all
+# breach together on one big down day — the count cap alone can't see that.
+ENFORCE_CONCENTRATION_GUARD = True
+CONCENTRATION_GUARD_PCT     = 1.5
+
 # News scanner / Polygon API rate limits.
 # Polygon free tier = 5 req/sec; 1.5s between ticker fetches keeps us safe.
 POLYGON_RATE_LIMIT_SEC = 1.5
