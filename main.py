@@ -174,6 +174,15 @@ _stop_alerted_date: list = [None]
 _exit_alerted: set = set()
 _exit_alerted_date: list = [None]
 _spot_failures = _stop_wd.DataFailureTracker(threshold=3)
+_watchdog_polygon_client = [None]
+
+
+def _watchdog_polygon():
+    """Reuse one PolygonClient across watchdog ticks (T4#17 — 78 fresh clients/
+    day wasted connection setup against a rate-limited API)."""
+    if _watchdog_polygon_client[0] is None:
+        _watchdog_polygon_client[0] = PolygonClient()
+    return _watchdog_polygon_client[0]
 
 
 def run_live_exit_alerts():
@@ -219,8 +228,8 @@ def run_stop_watchdog():
         from journal.trade_recorder import TradeRecorder
 
         def _polygon_spot():
-            df = PolygonClient().get_bars("SPY", config.SWING_PRIMARY_TIMEFRAME,
-                                          limit=1, days_back=3)
+            df = _watchdog_polygon().get_bars("SPY", config.SWING_PRIMARY_TIMEFRAME,
+                                              limit=1, days_back=3)
             return float(df["close"].iloc[-1]) if df is not None and len(df) else None
 
         # Polygon first, yfinance fallback; escalate loudly if BOTH are down —
@@ -278,7 +287,12 @@ def start_scheduler():
     from apscheduler.triggers.interval import IntervalTrigger
 
     eastern = pytz.timezone("US/Eastern")
-    scheduler = BackgroundScheduler(timezone=eastern)
+    scheduler = BackgroundScheduler(
+        timezone=eastern,
+        # T4#16: a hung/slow job must not cascade — late fires collapse into one
+        # (coalesce) and anything >10 min late is dropped rather than queued.
+        job_defaults={"coalesce": True, "misfire_grace_time": 600, "max_instances": 1},
+    )
 
     # Morning briefing — 7:45 AM EST weekdays
     scheduler.add_job(

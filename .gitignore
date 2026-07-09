@@ -70,3 +70,6 @@ docs/miner.log
 
 # uploaded RH screenshots (account info — never commit)
 logs/copilot_uploads/
+
+# runtime-refreshed market data (daily job appends; bootstrap via backtests/refresh_history.py)
+backtests/spy_history.csv

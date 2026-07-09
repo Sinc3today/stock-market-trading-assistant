@@ -342,13 +342,14 @@ def register_learning_jobs(
         replace_existing=True,
     )
 
-    # Weekly CSV refresh — Saturday, before the Sat hypothesis + Sun off-hours
-    # jobs replay it. Keeps backtests/spy_history.csv from going stale.
+    # Daily CSV refresh — every morning after a trading day, before the 08:15
+    # brief (T4#14: the weekly Saturday cadence left the forecast/off-hours
+    # replay on stale data all week and false-alarmed after holidays).
     scheduler.add_job(
         job_refresh_csv,
-        CronTrigger(day_of_week="sat", hour=8, minute=0, timezone=eastern),
+        CronTrigger(day_of_week="tue-sat", hour=7, minute=30, timezone=eastern),
         id="learning_refresh_csv",
-        name="Learning: weekly CSV refresh",
+        name="Learning: daily CSV refresh",
         replace_existing=True,
     )
 

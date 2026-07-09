@@ -55,6 +55,25 @@ def assess_health(today: date, *, last_offhours_date, last_prediction_date,
     return issues
 
 
+MEMORY_ALERT_MB = 1500   # bot RSS above this = trending toward the 06-15 freeze
+
+
+def _memory_issues() -> list[str]:
+    """Proactive memory check (T4#17): the 2026-06-15 freeze came from memory
+    pressure with zero warning. Flag the bot's own RSS before systemd has to act."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    rss_mb = int(line.split()[1]) // 1024
+                    if rss_mb > MEMORY_ALERT_MB:
+                        return [f"bot memory high ({rss_mb} MB RSS > {MEMORY_ALERT_MB} MB)"]
+                    break
+    except OSError:
+        pass
+    return []
+
+
 # ── disk readers ────────────────────────────────────────────────────────────
 
 def _latest_offhours_date() -> date | None:
@@ -102,7 +121,8 @@ def gather_and_assess(today: date | None = None,
     today = today or date.today()
     learn = os.path.join(config.LOG_DIR, "learning")
     from learning.rh_sync import last_success_date
-    return assess_health(
+    issues = _memory_issues()
+    return issues + assess_health(
         today,
         last_offhours_date=_latest_offhours_date(),
         last_prediction_date=_last_jsonl_date(os.path.join(learn, "predictions.jsonl")),

@@ -2574,8 +2574,10 @@ def _build_levels_figure(
     _, _, _, _, _rule, xfmt = _range_spec(range_key)
     def _fmt_idx(d):
         if hasattr(d, "strftime"):
-            try:    return d.strftime(xfmt)
-            except: pass
+            try:
+                return d.strftime(xfmt)
+            except (ValueError, TypeError) as e:   # T4#17: don't hide pipeline bugs
+                logger.warning(f"levels chart: unformattable index {d!r}: {e}")
         return str(d)[:10]
     x = [_fmt_idx(d) for d in df.index]
     ma_full = {w: df[cols["close"]].rolling(w).mean() for w in (20, 50, 200)}

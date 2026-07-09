@@ -439,25 +439,43 @@ class ExitManager:
     # ── DATA ──────────────────────────────────────────
 
     def _fetch_spy_close(self) -> float | None:
-        if self.polygon is None:
-            logger.warning("ExitManager: polygon_client not injected")
-            return None
+        # Audit T4#15: a single dead source used to mean ZERO exits processed
+        # that day — positions could blow through profit targets unmanaged.
+        # Polygon first, yfinance fallback.
+        if self.polygon is not None:
+            try:
+                df = self.polygon.get_bars(
+                    "SPY", timeframe=config.SWING_PRIMARY_TIMEFRAME, limit=3, days_back=3,
+                )
+                if df is not None and len(df):
+                    return float(df["close"].iloc[-1])
+            except Exception as e:
+                logger.warning(f"ExitManager SPY fetch failed: {e}")
         try:
-            df = self.polygon.get_bars(
-                "SPY", timeframe=config.SWING_PRIMARY_TIMEFRAME, limit=3, days_back=3,
-            )
-            if df is None or len(df) == 0:
-                return None
-            return float(df["close"].iloc[-1])
+            from alerts.stop_watchdog import yf_spot
+            v = yf_spot("SPY")
+            if v:
+                logger.info("ExitManager: using yfinance SPY fallback")
+                return v
         except Exception as e:
-            logger.warning(f"ExitManager SPY fetch failed: {e}")
-            return None
+            logger.warning(f"ExitManager SPY yfinance fallback failed: {e}")
+        return None
 
     def _fetch_vix(self) -> float | None:
-        if self.vix is None:
-            return None
+        if self.vix is not None:
+            try:
+                return float(self.vix.get_current())
+            except Exception as e:
+                logger.warning(f"ExitManager VIX fetch failed: {e}")
+        # Fallback IV: a slightly stale/approx sigma beats skipping every exit
+        # for the day (T4#15). 18 ≈ the long-run VIX median.
         try:
-            return float(self.vix.get_current())
-        except Exception as e:
-            logger.warning(f"ExitManager VIX fetch failed: {e}")
-            return None
+            from alerts.stop_watchdog import yf_spot
+            v = yf_spot("^VIX")
+            if v:
+                logger.info("ExitManager: using yfinance VIX fallback")
+                return v
+        except Exception:
+            pass
+        logger.warning("ExitManager: all VIX sources down — using 18.0 default sigma")
+        return 18.0
