@@ -41,11 +41,14 @@ def test_normalize_leg_maps_short_call():
 
 
 def _condor_legs():
+    # RH average_price is SIGNED and PER-CONTRACT: shorts negative (credit
+    # received), longs positive (debit paid). These are the user's REAL July
+    # condor fills — the net must come out to their known $1.55/share credit.
     return [
-        normalize_leg_q("short", "2", "0.80", _inst("771", "call", "2026-07-24")),
-        normalize_leg_q("long",  "2", "0.45", _inst("776", "call", "2026-07-24")),
-        normalize_leg_q("short", "2", "3.90", _inst("700", "put",  "2026-07-24")),
-        normalize_leg_q("long",  "2", "3.32", _inst("695", "put",  "2026-07-24")),
+        normalize_leg_q("short", "2", "-401.0", _inst("771", "call", "2026-07-24")),
+        normalize_leg_q("long",  "2", "276.0",  _inst("776", "call", "2026-07-24")),
+        normalize_leg_q("short", "2", "-238.0", _inst("700", "put",  "2026-07-24")),
+        normalize_leg_q("long",  "2", "208.0",  _inst("695", "put",  "2026-07-24")),
     ]
 
 
@@ -65,8 +68,9 @@ def test_group_into_positions_builds_condor():
     assert p["size"] == 2
     strikes = sorted(l["strike"] for l in p["legs"])
     assert strikes == [695.0, 700.0, 771.0, 776.0]
-    # net entry from leg avg_prices: shorts(0.80+3.90) - longs(0.45+3.32) = 0.93
-    assert round(p["entry_price"], 2) == 0.93
+    # net = Σ signed per-contract avg fills = 276-401+208-238 = -155/contract
+    # -> $1.55/share credit (matches the user's real verified fill)
+    assert round(p["entry_price"], 2) == 1.55
 
 
 def test_reconcile_matches_existing_live_trade_not_duplicate():

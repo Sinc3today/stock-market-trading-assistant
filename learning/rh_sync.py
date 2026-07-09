@@ -68,11 +68,11 @@ def group_into_positions(legs: list[dict]) -> list[dict]:
         size = max(set(qtys), key=qtys.count) if qtys else 1
         clean = [{"action": l["action"], "option_type": l["option_type"],
                   "strike": l["strike"], "expiry": l["expiry"]} for l in grp]
-        # net entry from leg avg fills: credit = Σ short fills − Σ long fills
-        # (per share). Best-effort baseline for a freshly-synced position; the
-        # user can correct it on the copilot screen if needed.
-        net = sum((l["avg_price"] if l["action"] == "SELL" else -l["avg_price"])
-                  for l in grp)
+        # net entry from leg avg fills. RH's average_price is SIGNED and
+        # PER-CONTRACT (shorts negative = credit received, longs positive =
+        # debit paid), so the net credit/debit per share is |Σ| / 100.
+        # Validated against the user's real July condor: Σ = -155 -> $1.55.
+        net = abs(sum(l["avg_price"] for l in grp)) / 100.0
         positions.append({
             "ticker": symbol,
             "expiry": expiry,
