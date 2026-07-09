@@ -20,6 +20,8 @@ robin_stocks token (~/.tokens/robinhood.pickle); re-run `login` when it expires.
 """
 from __future__ import annotations
 
+import os
+
 from loguru import logger
 
 
@@ -101,10 +103,13 @@ def _trade_expiry(trade: dict) -> str:
 def reconcile(positions: list[dict], existing_live: list[dict]) -> list[dict]:
     """Match each RH position to an open live trade by (ticker, expiry, strike
     set). Matched -> 'match' (update in place, keep the user's confirmed fill);
-    unmatched -> 'create' (new source='rh-sync')."""
+    unmatched RH position -> 'create'; open live trade with NO matching RH
+    position -> 'close' (the user closed it on Robinhood — audit T1.3: without
+    this the watchdog guards a phantom forever)."""
     open_live = [t for t in existing_live
                  if t.get("book") == "live" and t.get("outcome", "open") == "open"]
     plan = []
+    matched_ids = set()
     for pos in positions:
         key = _strike_key(pos["legs"])
         match = next((t for t in open_live
@@ -112,10 +117,15 @@ def reconcile(positions: list[dict], existing_live: list[dict]) -> list[dict]:
                       and _trade_expiry(t) == pos["expiry"]
                       and _strike_key(t.get("legs") or []) == key), None)
         if match:
+            matched_ids.add(match.get("trade_id"))
             plan.append({"action": "match", "trade_id": match.get("trade_id"),
                          "position": pos})
         else:
             plan.append({"action": "create", "position": pos})
+    for t in open_live:
+        if t.get("trade_id") not in matched_ids:
+            plan.append({"action": "close", "trade_id": t.get("trade_id"),
+                         "trade": t})
     return plan
 
 
@@ -165,14 +175,66 @@ def login_interactive() -> bool:
     return True
 
 
+def _stamp_path() -> str:
+    import config
+    return os.path.join(config.LOG_DIR, "rh_sync_last_success")
+
+
+def stamp_success() -> None:
+    """Record a successful sync so loop_health can verify the TOKEN WORKS, not
+    just that the pickle file exists (audit T1.3: file-exists false-passed a
+    week of expired-token failures)."""
+    from datetime import date
+    from atomic_io import atomic_write_text
+    atomic_write_text(_stamp_path(), date.today().isoformat() + "\n")
+
+
+def last_success_date():
+    from datetime import date
+    try:
+        return date.fromisoformat(open(_stamp_path()).read().strip()[:10])
+    except Exception:
+        return None
+
+
+def _close_estimate(trade: dict):
+    """Best-effort cost-to-close (per share) for a position the user closed on
+    RH — we don't know their real fill, so mark at the current NBBO mid."""
+    try:
+        from data.market_quotes import fetch_leg_quotes, position_mtm
+        legs = fetch_leg_quotes(trade.get("ticker", "SPY"), trade.get("legs") or [])
+        if any(l.get("mid") is None for l in legs):
+            return None
+        # cost to close a credit structure = value of the shorts minus longs now
+        cost = sum((-l["mid"] if (l.get("action") or "").upper().startswith("B") else l["mid"])
+                   for l in legs)
+        return round(max(0.0, cost), 2)
+    except Exception:
+        return None
+
+
 def sync(dry_run: bool = True):
     """Fetch RH positions -> reconcile against the live book. dry_run prints the
-    plan and writes nothing; otherwise applies matches/creates."""
+    plan and writes nothing; otherwise applies creates AND closes (a live trade
+    missing from RH = the user closed it there)."""
     from journal.trade_recorder import TradeRecorder
     rec = TradeRecorder()
     positions = group_into_positions(fetch_open_legs())
     plan = reconcile(positions, rec.get_open_trades())
     for step in plan:
+        if step["action"] == "close":
+            t = step["trade"]
+            logger.info(f"[sync] CLOSED-ON-RH {step['trade_id']} "
+                        f"{t.get('strategy')} — no longer open on Robinhood")
+            if not dry_run:
+                est = _close_estimate(t)
+                exit_px = est if est is not None else float(t.get("entry_price") or 0)
+                note = ("[RH-SYNC] detected closed on Robinhood; exit marked at "
+                        + ("current mid" if est is not None else
+                           "entry (scratch — no quotes; correct on /copilot if needed)"))
+                rec.log_exit(step["trade_id"], exit_price=exit_px, notes=note,
+                             exit_reason="closed_on_rh")
+            continue
         pos = step["position"]
         strikes = sorted(l["strike"] for l in pos["legs"])
         if step["action"] == "match":
@@ -194,6 +256,8 @@ def sync(dry_run: bool = True):
                 kwargs["source"] = "rh-sync"
                 kwargs["notes"] = "[LIVE] synced read-only from Robinhood"
                 rec.log_entry(**kwargs)
+    if not dry_run:
+        stamp_success()
     return plan
 
 

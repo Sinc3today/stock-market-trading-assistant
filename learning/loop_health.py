@@ -27,11 +27,12 @@ OFFHOURS_MAX_AGE = 8
 PREDICTION_MAX_AGE = 5
 KB_MAX_AGE = 8
 CSV_MAX_AGE = 5
+RH_SYNC_MAX_AGE = 4          # days since last SUCCESSFUL sync (survives weekends)
 RH_TOKEN_PATH = os.path.expanduser("~/.tokens/robinhood.pickle")
 
 
 def assess_health(today: date, *, last_offhours_date, last_prediction_date,
-                  last_kb_date, csv_last_date, rh_session_exists) -> list[str]:
+                  last_kb_date, csv_last_date, rh_last_sync_date) -> list[str]:
     """Pure: given each artifact's freshness, return human-readable issues
     (empty = healthy)."""
     issues: list[str] = []
@@ -47,8 +48,10 @@ def assess_health(today: date, *, last_offhours_date, last_prediction_date,
         issues.append(f"knowledge base not growing (last entry {last_kb_date or 'never'})")
     if stale(csv_last_date, CSV_MAX_AGE):
         issues.append(f"spy_history.csv stale (last bar {csv_last_date or 'missing'})")
-    if not rh_session_exists:
-        issues.append("RH read-only session missing/expired — re-run rh_sync login")
+    # T1.3: judge the RH session by the last SUCCESSFUL sync, not the pickle
+    # file existing — an expired token false-passed the old check for a week.
+    if stale(rh_last_sync_date, RH_SYNC_MAX_AGE):
+        issues.append("RH sync not succeeding (session expired?) — re-run rh_sync login")
     return issues
 
 
@@ -98,13 +101,14 @@ def gather_and_assess(today: date | None = None,
                       csv_path: str = os.path.join("backtests", "spy_history.csv")) -> list[str]:
     today = today or date.today()
     learn = os.path.join(config.LOG_DIR, "learning")
+    from learning.rh_sync import last_success_date
     return assess_health(
         today,
         last_offhours_date=_latest_offhours_date(),
         last_prediction_date=_last_jsonl_date(os.path.join(learn, "predictions.jsonl")),
         last_kb_date=_last_jsonl_date(os.path.join(learn, "knowledge.jsonl")),
         csv_last_date=_csv_last_date(csv_path),
-        rh_session_exists=os.path.exists(RH_TOKEN_PATH),
+        rh_last_sync_date=last_success_date(),
     )
 
 

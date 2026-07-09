@@ -77,22 +77,38 @@ def job_paper_broker(play_fn=None, approve_fn=None):
         logger.exception(f"learning.paper_broker failed: {e}")
 
 
-def job_rh_sync():
+_rh_expiry_pushed: list = [None]   # date of the last expired-session push
+
+
+def job_rh_sync(alert_fn=None):
     """Poll Robinhood READ-ONLY and reconcile open positions into the live book
     so the copilot/watchdog track real trades hands-off. Self-gated to trading
-    days; degrades gracefully if the RH session has expired (logs a nudge to
-    re-run login, never crashes the bot)."""
+    days; on an expired session it pushes ONE nudge per day (T1.3 — the old
+    silent warning left sync dead for days) and never crashes the bot."""
+    today = datetime.now(pytz.timezone("US/Eastern")).date()
     if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
         return
     try:
         from learning.rh_sync import sync
         plan = sync(dry_run=False)
         created = sum(1 for s in plan if s.get("action") == "create")
-        if created:
-            logger.info(f"rh_sync: synced {created} new live position(s) from Robinhood")
+        closed = sum(1 for s in plan if s.get("action") == "close")
+        if created or closed:
+            logger.info(f"rh_sync: {created} new / {closed} closed-on-RH position(s)")
+            if closed and alert_fn:
+                alert_fn(title="✅ RH position closed",
+                         body=f"{closed} position(s) no longer open on Robinhood — "
+                              f"marked closed in the journal (exit at current mid; "
+                              f"correct on /copilot if the fill differed).")
     except RuntimeError as e:
-        # expired/missing session — expected periodically; not a crash
         logger.warning(f"rh_sync skipped: {e}")
+        if alert_fn and _rh_expiry_pushed[0] != today:
+            _rh_expiry_pushed[0] = today
+            alert_fn(title="⚠️ RH sync is down",
+                     body="Robinhood session expired — position sync and close-"
+                          "detection are blind until you re-run:\n"
+                          "cd ~/Projects/stock-market-trading-assistant && "
+                          ".venv/bin/python -m learning.rh_sync login")
     except Exception as e:
         logger.exception(f"rh_sync failed: {e}")
 
@@ -310,6 +326,7 @@ def register_learning_jobs(
     scheduler.add_job(
         job_rh_sync,
         CronTrigger(day_of_week="mon-fri", hour="9-15", minute="*/15", timezone=eastern),
+        kwargs={"alert_fn": play_fn},
         id="learning_rh_sync",
         name="Learning: RH read-only sync",
         replace_existing=True,

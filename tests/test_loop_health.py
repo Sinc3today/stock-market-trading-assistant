@@ -23,7 +23,7 @@ def test_assess_health_all_fresh_no_issues():
         last_prediction_date=date(2026, 6, 26),
         last_kb_date=date(2026, 6, 27),
         csv_last_date=date(2026, 6, 26),
-        rh_session_exists=True,
+        rh_last_sync_date=date(2026, 6, 28),
     )
     assert issues == []
 
@@ -37,7 +37,7 @@ def test_assess_health_flags_stale_offhours_and_csv():
         last_prediction_date=date(2026, 6, 26),
         last_kb_date=date(2026, 6, 27),
         csv_last_date=date(2026, 5, 22),         # stale
-        rh_session_exists=True,
+        rh_last_sync_date=date(2026, 6, 28),
     )
     joined = " ".join(issues).lower()
     assert "off-hours" in joined
@@ -53,7 +53,7 @@ def test_assess_health_flags_missing_artifacts():
         last_prediction_date=None,
         last_kb_date=None,
         csv_last_date=None,
-        rh_session_exists=False,
+        rh_last_sync_date=None,
     )
     assert len(issues) == 5   # every component flagged
 

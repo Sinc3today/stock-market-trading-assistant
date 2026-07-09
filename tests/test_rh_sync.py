@@ -99,3 +99,36 @@ def test_reconcile_creates_new_when_unmatched():
     plan = reconcile(positions, existing_live=[])
     assert len(plan) == 1
     assert plan[0]["action"] == "create"
+
+
+def _existing_live(tid="E7350D4A", strikes=((("C", 771.0)), ("C", 776.0), ("P", 700.0), ("P", 695.0))):
+    legs = [{"option_type": ("CALL" if t == "C" else "PUT"), "strike": s,
+             "expiry": "2026-07-24"} for t, s in strikes]
+    return {"trade_id": tid, "book": "live", "ticker": "SPY",
+            "outcome": "open", "legs": legs}
+
+
+def test_reconcile_detects_position_closed_on_rh():
+    # Audit T1.3: the user closes on RH -> our copy must be flagged, not watched
+    # as a phantom forever. RH returns NO positions; we hold one open live trade.
+    from learning.rh_sync import reconcile
+    plan = reconcile([], existing_live=[_existing_live()])
+    assert len(plan) == 1
+    assert plan[0]["action"] == "close"
+    assert plan[0]["trade_id"] == "E7350D4A"
+
+
+def test_reconcile_no_close_when_still_open_on_rh():
+    from learning.rh_sync import group_into_positions, reconcile
+    positions = group_into_positions(_condor_legs())   # the same July condor
+    plan = reconcile(positions, existing_live=[_existing_live()])
+    assert [s["action"] for s in plan] == ["match"]    # matched, no close action
+
+
+def test_reconcile_close_only_targets_synced_sources():
+    # a live trade with an unknown/manual-legacy source is still closed-detected;
+    # but NON-live books are never touched by sync close-detection
+    from learning.rh_sync import reconcile
+    disc = _existing_live(tid="D1"); disc["book"] = "disciplined"
+    plan = reconcile([], existing_live=[disc])
+    assert plan == []
