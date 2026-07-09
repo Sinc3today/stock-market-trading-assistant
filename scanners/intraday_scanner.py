@@ -168,6 +168,13 @@ class IntradayScanner:
         global _PLAY_FN
         _PLAY_FN = fn
 
+    def set_approve_fn(self, fn):
+        """Register the EMERGENCY entry-approve hook (notifier.approve) — the
+        instance-method mirror of the module-level set_approve_fn, same pattern
+        as set_play_fn (main.py wires the scanner INSTANCE)."""
+        global _APPROVE_FN
+        _APPROVE_FN = fn
+
     # ─────────────────────────────────────────
     # MARKET HOURS CHECK
     # ─────────────────────────────────────────
