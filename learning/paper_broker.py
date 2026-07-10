@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import date
+from datetime import date, datetime
+
+import pytz
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -331,13 +333,72 @@ class PaperBroker:
                         "(09:45-15:00 ET) — no open")
             return {"recorded": False, "skipped": "entry_window"}
         book = setup.get("book", "disciplined")
-        cap  = MAX_CONCURRENT_LEARNING if book == "learning" else MAX_CONCURRENT_DISCIPLINED
-        open_n = self._open_count_by_book(book)
-        if open_n >= cap:
-            logger.info(
-                f"PaperBroker.execute_signal: {book} cap reached ({open_n}/{cap}) — skipped"
-            )
-            return {"trade_id": None, "recorded": False, "skipped_reason": f"{book}_book_cap"}
+
+        if book == "disciplined":
+            # Strike-concentration guard (was only on the daily-play path —
+            # entries minutes OR days apart on overlapping shorts share one loss).
+            if getattr(config, "ENFORCE_CONCENTRATION_GUARD", True):
+                from signals.concentration import proximity_conflicts
+                conflicts = proximity_conflicts(
+                    setup.get("legs") or [], self.trades.get_open_trades(),
+                    pct=getattr(config, "CONCENTRATION_GUARD_PCT", 1.5))
+                if conflicts:
+                    c = conflicts[0]
+                    logger.info(f"PaperBroker.execute_signal: concentration guard — "
+                                f"short {c['type']} {c['new_strike']:g} within "
+                                f"{c['distance_pct']}% of {c['trade_id']}; skipped")
+                    return {"trade_id": None, "recorded": False,
+                            "skipped": "concentration_guard"}
+
+            # Smart caps (2026-07-10): short-DTE gets its OWN slot budget so the
+            # slow 45DTE book can't crowd out the fast cycle.
+            bucket = setup.get("dte_bucket")
+            if bucket in ("0DTE", "1-3DTE"):
+                cap = getattr(config, "MAX_CONCURRENT_SHORT_DTE", 1)
+                open_n = sum(1 for t in self.trades.get_open_trades()
+                             if t.get("book") == "disciplined"
+                             and t.get("dte_bucket") in ("0DTE", "1-3DTE"))
+                if open_n >= cap:
+                    logger.info(f"PaperBroker.execute_signal: short-DTE slot full "
+                                f"({open_n}/{cap}) — skipped")
+                    return {"trade_id": None, "recorded": False,
+                            "skipped_reason": "short_dte_slot_cap"}
+            else:
+                cap = MAX_CONCURRENT_DISCIPLINED
+                open_n = sum(1 for t in self.trades.get_open_trades()
+                             if t.get("book") == "disciplined"
+                             and t.get("dte_bucket") not in ("0DTE", "1-3DTE"))
+                if open_n >= cap:
+                    logger.info(f"PaperBroker.execute_signal: disciplined cap "
+                                f"reached ({open_n}/{cap}) — skipped")
+                    return {"trade_id": None, "recorded": False,
+                            "skipped_reason": "disciplined_book_cap"}
+
+            # Entry pacing (user: "1-2 trades a day, not close together —
+            # back-to-back entries ride the same SPY move").
+            if not setup.get("_test_bypass_pacing"):
+                opened = self._disciplined_opens_today()
+                if len(opened) >= getattr(config, "MAX_DAILY_DISCIPLINED_OPENS", 2):
+                    logger.info("PaperBroker.execute_signal: daily open limit "
+                                f"reached ({len(opened)}) — skipped")
+                    return {"trade_id": None, "recorded": False,
+                            "skipped_reason": "daily_open_limit"}
+                gap = self._minutes_since_last_disciplined_open(opened)
+                spacing = getattr(config, "MIN_ENTRY_SPACING_MIN", 90)
+                if gap is not None and gap < spacing:
+                    logger.info(f"PaperBroker.execute_signal: last open {gap:.0f}m "
+                                f"ago (< {spacing}m spacing) — skipped")
+                    return {"trade_id": None, "recorded": False,
+                            "skipped_reason": "entry_spacing"}
+        else:
+            cap = MAX_CONCURRENT_LEARNING
+            open_n = self._open_count_by_book(book)
+            if open_n >= cap:
+                logger.info(
+                    f"PaperBroker.execute_signal: {book} cap reached ({open_n}/{cap}) — skipped"
+                )
+                return {"trade_id": None, "recorded": False,
+                        "skipped_reason": f"{book}_book_cap"}
 
         tid = self.trades.log_entry(
             ticker      = "SPY",
@@ -362,6 +423,32 @@ class PaperBroker:
         return {"trade_id": tid, "recorded": True}
 
     # ── HELPERS ───────────────────────────────────────
+
+    def _disciplined_opens_today(self) -> list[dict]:
+        """Disciplined trades whose entry stamp is today (ET) — the daily-pacing
+        sample (open or already closed; an intraday scratch still counts)."""
+        today = datetime.now(pytz.timezone("US/Eastern")).date().isoformat()
+        return [t for t in self.trades.get_all_trades()
+                if t.get("book") == "disciplined"
+                and str(t.get("entry_date", "")).startswith(today)]
+
+    @staticmethod
+    def _minutes_since_last_disciplined_open(opened_today: list[dict]):
+        """Minutes since the most recent disciplined entry today, or None."""
+        eastern = pytz.timezone("US/Eastern")
+        latest = None
+        for t in opened_today:
+            try:
+                dt = eastern.localize(datetime.strptime(
+                    str(t.get("entry_date", "")).replace(" EST", "").strip(),
+                    "%Y-%m-%d %I:%M %p"))
+            except ValueError:
+                continue
+            if latest is None or dt > latest:
+                latest = dt
+        if latest is None:
+            return None
+        return (datetime.now(eastern) - latest).total_seconds() / 60.0
 
     @staticmethod
     def _infer_direction(regime: str, options: dict) -> str:

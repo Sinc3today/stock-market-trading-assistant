@@ -175,12 +175,24 @@ INTRADAY_SCAN_INTERVAL_MIN = 5
 STOP_WATCHDOG_ENABLED    = True
 STOP_WATCHDOG_BUFFER_PCT = 0.005   # warn within 0.5% of a short strike
 
+# PWA (HTTPS via tailscale serve) — where push notifications open into.
+PWA_BASE_URL = os.getenv("PWA_BASE_URL",
+                         "https://nexus-nucbox-k8-plus.tail09021c.ts.net:8443")
+
 # Concentration guard: skip a new auto-entry when any of its SHORT strikes
 # lands within this % of an existing open short strike of the same type
 # (disciplined + live books). Stacked condor shorts ($700/705/713 puts) all
 # breach together on one big down day — the count cap alone can't see that.
 ENFORCE_CONCENTRATION_GUARD = True
 CONCENTRATION_GUARD_PCT     = 1.5
+
+# Smart book caps (user, 2026-07-10): the fast 1-3DTE cycle gets its OWN slot so
+# slow 45DTE positions can't crowd it out — but entries stay deliberately spread:
+# at most N disciplined opens per day, and never two opens within the spacing
+# window (entries minutes apart ride the same SPY move = correlated losses).
+MAX_CONCURRENT_SHORT_DTE    = 1     # 0DTE/1-3DTE disciplined slots (own budget)
+MAX_DAILY_DISCIPLINED_OPENS = 2     # "1-2 trades a day"
+MIN_ENTRY_SPACING_MIN       = 90    # minutes between disciplined opens
 
 # News scanner / Polygon API rate limits.
 # Polygon free tier = 5 req/sec; 1.5s between ticker fetches keeps us safe.
