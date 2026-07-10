@@ -58,6 +58,34 @@ def test_assess_health_flags_missing_artifacts():
     assert len(issues) == 5   # every component flagged
 
 
+def test_error_scan_flags_repeated_signatures():
+    # The webpush failure mode: ~30 identical warnings in a day, zero surfacing.
+    from learning.loop_health import summarize_error_lines
+    lines = (
+        ["2026-07-10 08:15:11.100 | WARNING  | alerts.webpush:send_push:130 - "
+         "webpush send failed: Could not deserialize key data. len 42"] * 12
+        + ["2026-07-10 09:00:00.000 | ERROR    | scanners.news_scanner:_save:347 - "
+           "Failed to save briefing: Expecting value: line 1 column 1"] * 3
+        + ["2026-07-10 09:05:00.000 | INFO     | x:y:1 - all fine"] * 50
+        + ["2026-07-10 09:06:00.000 | WARNING  | one:off:9 - transient blip"]
+    )
+    issues = summarize_error_lines(lines)
+    joined = " ".join(issues)
+    assert "12×" in joined and "webpush" in joined          # repeated warning flagged
+    assert "3×" in joined and "news_scanner" in joined      # repeated error flagged
+    assert "transient blip" not in joined                   # one-offs stay quiet
+    assert "all fine" not in joined                         # INFO ignored
+
+
+def test_error_scan_groups_variants_of_same_signature():
+    # digits differ per occurrence (ids, counts) — must still count as ONE signature
+    from learning.loop_health import summarize_error_lines
+    lines = [f"2026-07-10 08:0{i}:00.000 | ERROR    | data.polygon_client:get_bars:97 - "
+             f"rate limited, retry {i} of 3 (waited {i*15}s)" for i in range(5)]
+    issues = summarize_error_lines(lines)
+    assert len(issues) == 1 and "5×" in issues[0]
+
+
 def test_refresh_spy_history_appends_and_is_idempotent(tmp_path):
     from learning.loop_health import refresh_spy_history
     csv = tmp_path / "spy.csv"
