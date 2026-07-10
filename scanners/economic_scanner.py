@@ -22,7 +22,7 @@ import config
 from data.fred_client import FREDClient
 
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
-CLAUDE_MODEL   = "claude-sonnet-4-20250514"
+CLAUDE_MODEL   = "claude-sonnet-4-6"
 
 
 class EconomicScanner:
