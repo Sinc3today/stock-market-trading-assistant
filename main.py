@@ -58,7 +58,13 @@ scanner_status: dict = {
 }
 
 # ── Notification router (Pushover-only) ───────────────────────────────────────
-pushover = PushoverClient()
+# Hybrid notification channel (2026-07-09): every alert flows through the
+# MuxSender — PWA Web Push is the primary channel (tap opens the app);
+# priority>=2 emergencies ALSO keep Pushover's nag-until-ack. Call sites are
+# unchanged: mux exposes the same .send(...) surface as PushoverClient.
+from alerts.webpush import MuxSender
+_pushover_raw = PushoverClient()
+pushover = MuxSender(_pushover_raw)
 notifier = Notifier(pushover)
 
 swing_scanner        = SwingScanner()
@@ -252,6 +258,18 @@ def run_stop_watchdog():
         logger.exception(f"stop_watchdog failed: {e}")
 
 
+def run_sunday_gap_sentinel():
+    """22:04 ET Sunday: ES futures already show most of Monday's gap — warn
+    ~11h early if one is forming against open short-strike positions."""
+    try:
+        from journal.trade_recorder import TradeRecorder
+        from alerts.gap_sentinel import check_sunday_gap
+        check_sunday_gap(TradeRecorder(),
+                         lambda **kw: pushover.send(kw.pop("title"), kw.pop("message"), **kw))
+    except Exception as e:
+        logger.exception(f"sunday gap sentinel failed: {e}")
+
+
 def run_premarket_gap_check():
     """09:15 ET: if SPY gapped overnight to at/near any open short strike, alert
     BEFORE the bell instead of discovering it at the first 9:30 watchdog tick
@@ -361,6 +379,16 @@ def start_scheduler():
         CronTrigger(day_of_week="mon-fri", hour=9, minute=15, timezone=eastern),
         id="premarket_gap_check",
         name="Pre-market gap check",
+    )
+
+    # Sunday gap sentinel — 22:04 ET Sunday. ES futures show 82% of meaningful
+    # Monday gaps by ~10 PM Sunday (futures study); warn ~11h before the open
+    # when a gap is forming against open short-strike positions.
+    scheduler.add_job(
+        run_sunday_gap_sentinel,
+        CronTrigger(day_of_week="sun", hour=22, minute=4, timezone=eastern),
+        id="sunday_gap_sentinel",
+        name="Sunday gap sentinel",
     )
 
     # Options flow scan — 9:35 AM ET weekdays
