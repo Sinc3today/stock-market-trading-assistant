@@ -35,3 +35,24 @@ The Friday approve-alert tag is now CONDITIONAL: calm tape → "weekend theta �
 (best slot)"; VIX>20 or a >1% down Friday → "⚠ stressed tape — weekend gap risk
 3-7× normal; consider skipping or small size". Context fetched best-effort at
 alert time; tag omitted if data unavailable.
+
+## C. Weeknight sentinel extension (user, 2026-07-11) — verdict: Sunday-only stands
+Does a 10 PM ET evening ES read reveal the NEXT morning's gap on weeknights too?
+
+| evening read | corr w/ next open gap | direction right | big (>0.5%) gaps caught |
+|---|---|---|---|
+| Mon → Tue | 0.66 | 68% | 50% |
+| Tue → Wed | 0.73 | 71% | 45% |
+| Wed → Thu | 0.56 | 71% | 61% |
+| Thu → Fri | 0.45 | 70% | 40% |
+| **Sun → Mon** | **0.75** | **76%** | **82%** |
+
+**Why Sunday is special:** by 10 PM Sunday, futures have spent 4 hours pricing
+TWO DAYS of accumulated news — most of the gap is done forming. On a weeknight,
+10 PM is only ~4h into a 17.5h overnight; Asia/Europe/pre-market still move the
+number, so an evening read catches only 40–61% of big gaps — enough to breed
+false confidence ("sentinel was quiet, must be safe") on the ~half it misses.
+
+**Decision: no weeknight 10 PM sentinel.** Weeknight gap protection stays with
+the 09:15 pre-market check, which sees the COMPLETED overnight. Sunday keeps its
+10:04 PM sentinel (82% catch, ~11h warning).
