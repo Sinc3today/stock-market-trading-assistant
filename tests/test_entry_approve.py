@@ -102,3 +102,18 @@ def test_notify_entry_approve_sends_emergency_priority():
     assert len(push.calls) == 1
     assert push.calls[0]["priority"] == 2          # emergency — nags until acked
     assert push.calls[0]["url"] == "http://nucbox:8002/copilot"
+
+
+def test_friday_tag_flips_to_warning_on_stressed_tape():
+    # Gap study: VIX>20 or a >1% down Friday = 3-7x weekend breach risk
+    from alerts.entry_approve import build_approve_alert
+    from datetime import date
+    hot = build_approve_alert(_short_dte_condor(), base_url=None,
+                              today=date(2026, 7, 10), vix=24.0)
+    assert "stressed tape" in hot["body"] and "weekend theta" not in hot["body"]
+    down = build_approve_alert(_short_dte_condor(), base_url=None,
+                               today=date(2026, 7, 10), vix=16.0, day_ret_pct=-1.4)
+    assert "stressed tape" in down["body"]
+    calm = build_approve_alert(_short_dte_condor(), base_url=None,
+                               today=date(2026, 7, 10), vix=15.0, day_ret_pct=0.3)
+    assert "weekend theta ✓" in calm["body"]

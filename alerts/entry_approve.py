@@ -25,12 +25,13 @@ def _expiry(trade: dict) -> str:
     return trade.get("dte_bucket") or "—"
 
 
-def entry_day_note(trade: dict, today=None) -> str:
-    """Entry-day quality tag for SHORT-DTE condors (docs/DOW_STUDY.md, 5yr,
-    pessimistic sim): Fri entries harvest 3 days of weekend theta for 1 day of
-    market risk (81% win), Mon rides the strongest intraday day (81%), Wed is
-    the weakest slot (67%, $26 avg). Informational — never a gate; the user
-    sizes with it, the bot doesn't filter on it."""
+def entry_day_note(trade: dict, today=None, vix=None, day_ret_pct=None) -> str:
+    """Entry-day quality tag for SHORT-DTE condors. DOW study: Fri entries
+    harvest weekend theta (81% hist.), Mon strong (81%), Wed weakest (67%).
+    CONDITIONAL (gap study, docs/GAP_CONDITIONAL_STUDY.md): the Friday tag
+    flips to a WARNING when the tape is stressed — VIX>20 or a >1% down Friday
+    raises weekend-breach odds 3-7x (up to ~1-in-2 at extremes). Informational
+    — never a gate; the user sizes with it."""
     from datetime import date as _d
     if (trade.get("strategy") or "") != "iron_condor":
         return ""
@@ -38,6 +39,17 @@ def entry_day_note(trade: dict, today=None) -> str:
         return ""
     dow = (today or _d.today()).weekday()
     if dow == 4:
+        stressed = ((isinstance(vix, (int, float)) and vix > 20)
+                    or (isinstance(day_ret_pct, (int, float)) and day_ret_pct < -1.0))
+        if stressed:
+            bits = []
+            if isinstance(vix, (int, float)):
+                bits.append(f"VIX {vix:.0f}")
+            if isinstance(day_ret_pct, (int, float)):
+                bits.append(f"day {day_ret_pct:+.1f}%")
+            ctx = ", ".join(bits)
+            return (f"⚠ Fri entry into a stressed tape ({ctx}) — weekend gap "
+                    f"risk 3-7× normal; consider skipping or small size")
         return "🗓 Fri entry — weekend theta ✓ (best slot, 81% hist.)"
     if dow == 0:
         return "🗓 Mon — strong entry day (81% hist.)"
@@ -46,7 +58,8 @@ def entry_day_note(trade: dict, today=None) -> str:
     return ""
 
 
-def build_approve_alert(trade: dict, base_url: str | None, today=None) -> dict:
+def build_approve_alert(trade: dict, base_url: str | None, today=None,
+                        vix=None, day_ret_pct=None) -> dict:
     """Build the entry-approve Pushover payload (title/body/url/url_title) from a
     recorded trade dict. Pure — no I/O."""
     strat = (trade.get("strategy") or trade.get("trade_type") or "play").replace("_", " ")
@@ -62,7 +75,7 @@ def build_approve_alert(trade: dict, base_url: str | None, today=None) -> dict:
     if entry is not None:
         tail += f"  ·  net {float(entry):g}"
     lines.append(tail)
-    note = entry_day_note(trade, today)
+    note = entry_day_note(trade, today, vix=vix, day_ret_pct=day_ret_pct)
     if note:
         lines.append(note)
     lines.append("Open Copilot to place it on Robinhood.")
@@ -85,7 +98,17 @@ def notify_entry_approve(trade: dict, pushover, base_url: str | None = None) -> 
             base_url = getattr(config, "PUSHOVER_BASE_URL", None)
         except Exception:
             base_url = None
-    a = build_approve_alert(trade, base_url)
+    vix = day_ret = None
+    try:                                # best-effort tape context for the tag
+        from alerts.stop_watchdog import yf_spot
+        vix = yf_spot("^VIX")
+        import yfinance as yf
+        h = yf.Ticker(trade.get("ticker", "SPY")).history(period="2d")
+        if len(h) >= 2:
+            day_ret = (float(h["Close"].iloc[-1]) / float(h["Close"].iloc[-2]) - 1) * 100
+    except Exception:
+        pass
+    a = build_approve_alert(trade, base_url, vix=vix, day_ret_pct=day_ret)
     logger.info(f"entry_approve: {a['title']} -> {a['url']}")
     try:
         return bool(pushover.send(
