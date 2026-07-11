@@ -25,7 +25,28 @@ def _expiry(trade: dict) -> str:
     return trade.get("dte_bucket") or "—"
 
 
-def build_approve_alert(trade: dict, base_url: str | None) -> dict:
+def entry_day_note(trade: dict, today=None) -> str:
+    """Entry-day quality tag for SHORT-DTE condors (docs/DOW_STUDY.md, 5yr,
+    pessimistic sim): Fri entries harvest 3 days of weekend theta for 1 day of
+    market risk (81% win), Mon rides the strongest intraday day (81%), Wed is
+    the weakest slot (67%, $26 avg). Informational — never a gate; the user
+    sizes with it, the bot doesn't filter on it."""
+    from datetime import date as _d
+    if (trade.get("strategy") or "") != "iron_condor":
+        return ""
+    if trade.get("dte_bucket") not in ("0DTE", "1-3DTE"):
+        return ""
+    dow = (today or _d.today()).weekday()
+    if dow == 4:
+        return "🗓 Fri entry — weekend theta ✓ (best slot, 81% hist.)"
+    if dow == 0:
+        return "🗓 Mon — strong entry day (81% hist.)"
+    if dow == 2:
+        return "🗓 Wed — weakest entry day (67% hist.) — consider small size"
+    return ""
+
+
+def build_approve_alert(trade: dict, base_url: str | None, today=None) -> dict:
     """Build the entry-approve Pushover payload (title/body/url/url_title) from a
     recorded trade dict. Pure — no I/O."""
     strat = (trade.get("strategy") or trade.get("trade_type") or "play").replace("_", " ")
@@ -41,6 +62,9 @@ def build_approve_alert(trade: dict, base_url: str | None) -> dict:
     if entry is not None:
         tail += f"  ·  net {float(entry):g}"
     lines.append(tail)
+    note = entry_day_note(trade, today)
+    if note:
+        lines.append(note)
     lines.append("Open Copilot to place it on Robinhood.")
 
     url = f"{base_url.rstrip('/')}/copilot" if base_url else None

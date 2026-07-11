@@ -20,7 +20,15 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from datetime import date as _date
+from datetime import date as _date, datetime as _datetime
+
+import pytz
+
+
+def _today_et() -> _date:
+    """The journal stamps entry_date in US/Eastern — date comparisons must use
+    the SAME zone or the 11pm-midnight window double-opens (found 07-10)."""
+    return _datetime.now(pytz.timezone("US/Eastern")).date()
 
 from loguru import logger
 
@@ -40,7 +48,7 @@ def maybe_open_qqq_condor(recorder, *, qqq_spot, vxn, today=None):
         return None
     if not config.within_entry_window():
         return None
-    today = today or _date.today()
+    today = today or _today_et()
     for t in recorder.get_open_trades():
         if t.get("dte_bucket") == BUCKET and \
            str(t.get("entry_date", "")).startswith(today.isoformat()):
@@ -77,7 +85,7 @@ def maybe_open_qqq_condor(recorder, *, qqq_spot, vxn, today=None):
 def resolve_qqq_condors(recorder, *, qqq_spot, vxn, today=None):
     """Mark + close open QQQ condor candidates: 70%-of-max-profit or 21 DTE.
     Credit structure: cost to close = shorts − longs = −_mark_spread."""
-    today = today or _date.today()
+    today = today or _today_et()
     trades = recorder.get_all_trades()
     closed = []
     for t in trades:

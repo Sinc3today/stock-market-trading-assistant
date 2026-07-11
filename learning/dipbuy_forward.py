@@ -15,7 +15,14 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from datetime import date as _date
+from datetime import date as _date, datetime as _datetime
+
+import pytz
+
+
+def _today_et() -> _date:
+    """Journal stamps are US/Eastern — compare dates in the same zone."""
+    return _datetime.now(pytz.timezone("US/Eastern")).date()
 
 from loguru import logger
 
@@ -72,7 +79,7 @@ def maybe_open_dipbuy(spy_df, *, spot, ivr, options_layer, recorder, today=None,
     sig = dip_signal(spy_df)
     if sig is None:
         return None
-    today = today or _date.today()
+    today = today or _today_et()
     # idempotency: skip if a candidate for THIS ticker already opened today
     for t in recorder.get_open_trades():
         if t.get("book") == config.DIPBUY_FORWARD_BOOK and \
@@ -153,7 +160,7 @@ def resolve_candidates(recorder, *, spy_close, vix, today=None, closes=None):
     DIPBUY_FORWARD_MAX_HOLD_TD trading days held. The caller wraps this per
     Standing Rule #10. Returns the list of closed trade dicts. Non-SPY
     candidates are marked at their OWN ticker's spot."""
-    today = today or _date.today()
+    today = today or _today_et()
     trades = recorder.get_all_trades()
     closed, dirty = [], False
     for t in trades:

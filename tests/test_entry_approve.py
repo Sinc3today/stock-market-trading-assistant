@@ -41,6 +41,46 @@ def test_build_approve_alert_has_legs_expiry_and_copilot_link():
     assert a["url_title"]
 
 
+def _short_dte_condor():
+    t = _condor_trade()
+    t["dte_bucket"] = "1-3DTE"
+    return t
+
+
+def test_friday_short_dte_condor_gets_weekend_theta_tag():
+    # DOW study (docs/DOW_STUDY.md): Fri-entered 2-day condors harvest 3 days of
+    # weekend theta for 1 day of market risk — 81% hist. win. Tag the alert.
+    from alerts.entry_approve import build_approve_alert
+    from datetime import date
+    a = build_approve_alert(_short_dte_condor(), base_url=None,
+                            today=date(2026, 7, 10))          # a Friday
+    assert "weekend theta" in a["body"]
+
+
+def test_monday_and_wednesday_notes():
+    from alerts.entry_approve import build_approve_alert
+    from datetime import date
+    mon = build_approve_alert(_short_dte_condor(), base_url=None,
+                              today=date(2026, 7, 13))
+    assert "strong entry day" in mon["body"]
+    wed = build_approve_alert(_short_dte_condor(), base_url=None,
+                              today=date(2026, 7, 15))
+    assert "weakest entry day" in wed["body"]
+
+
+def test_no_dow_tag_for_45dte_or_neutral_days():
+    from alerts.entry_approve import build_approve_alert
+    from datetime import date
+    # 45DTE condor: the study only covered the short-DTE cycle — no tag
+    a45 = build_approve_alert(_condor_trade(), base_url=None,
+                              today=date(2026, 7, 10))
+    assert "theta" not in a45["body"] and "entry day" not in a45["body"]
+    # Tuesday short-DTE: unremarkable day -> no tag
+    tue = build_approve_alert(_short_dte_condor(), base_url=None,
+                              today=date(2026, 7, 14))
+    assert "entry day" not in tue["body"] and "weekend theta" not in tue["body"]
+
+
 def test_build_approve_alert_without_base_url_has_no_link():
     from alerts.entry_approve import build_approve_alert
     a = build_approve_alert(_condor_trade(), base_url=None)
