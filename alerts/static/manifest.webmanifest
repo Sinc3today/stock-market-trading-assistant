@@ -1,0 +1,14 @@
+{
+  "name": "SMTA Trading Assistant",
+  "short_name": "SMTA",
+  "description": "SPY options trading copilot — plays, positions, smart stops",
+  "start_url": "/copilot",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#100f0d",
+  "background_color": "#100f0d",
+  "icons": [
+    {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}
