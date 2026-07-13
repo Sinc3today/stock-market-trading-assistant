@@ -81,6 +81,29 @@ def test_no_dow_tag_for_45dte_or_neutral_days():
     assert "entry day" not in tue["body"] and "weekend theta" not in tue["body"]
 
 
+def test_vertical_spread_alert_renders_real_journal_leg_shape():
+    # The daily 45DTE play saves chain-sourced legs: lowercase action/type and
+    # an 'expiration' key (not 'expiry'). Regression: trade 8EE266D2's shape
+    # must render RH-ready lines + a real expiry, not fall back to the bucket.
+    from alerts.entry_approve import build_approve_alert
+    trade = {
+        "trade_id": "8EE266D2", "ticker": "SPY", "strategy": "credit_spread",
+        "entry_price": 1.77, "dte_bucket": "45DTE",
+        "legs": [
+            {"action": "buy",  "option_type": "put", "type": "put",
+             "strike": 724.0, "expiration": "2026-08-07"},
+            {"action": "sell", "option_type": "put", "type": "put",
+             "strike": 729.0, "expiration": "2026-08-07"},
+        ],
+    }
+    a = build_approve_alert(trade, base_url=None)
+    assert "BUY $724 PUT" in a["body"]
+    assert "SELL $729 PUT" in a["body"]
+    assert "08-07-26" in a["body"]          # real expiry, not "45DTE"
+    assert "45DTE" not in a["body"]
+    assert "1.77" in a["body"]
+
+
 def test_build_approve_alert_without_base_url_has_no_link():
     from alerts.entry_approve import build_approve_alert
     a = build_approve_alert(_condor_trade(), base_url=None)
