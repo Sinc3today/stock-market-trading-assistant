@@ -1532,3 +1532,40 @@ def test_butterfly_has_log_button_and_prefilled_form(client, app_modules, monkey
                    "&expiry=2026-08-28&entry_price=2.05")
     assert r.status_code == 200
     assert 'name="fly_mid" value="750"' in r.text.replace("750.0", "750")
+
+
+def _canned_regime_state():
+    return {
+        "regime": "trending_up_calm", "tradeable": True,
+        "play": "BULL CALL DEBIT SPREAD — buy the directional move",
+        "confidence": 0.85,
+        "reasons": ["ADX 33.0 ≥ 32.0 (trending)", "SPY +8.7% above 200MA"],
+        "metrics": {"spy_close": 750.0, "ma200": 690.0, "ma200_dist_%": 8.7,
+                    "adx": 33.0, "vix": 15.0, "ivr": 30.0},
+    }
+
+
+def test_regime_page_renders_gauges_map_and_payoffs(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    monkeypatch.setattr(web_app, "_fetch_regime_state", _canned_regime_state)
+    html = client.get("/regime").text
+    # current regime headline
+    assert "Trending up" in html and "85%" in html
+    # threshold gauges — the "why" visual
+    assert 'aria-label="ADX' in html and 'aria-label="VIX' in html
+    assert 'aria-label="Extension' in html and 'aria-label="IV rank' in html
+    # 6-cell regime map with today highlighted
+    assert html.count("regime-cell") >= 6
+    assert 'regime-cell current' in html
+    # four structures, each with a payoff diagram + both probability flavors
+    assert html.count('class="payoff"') == 4
+    assert "model POP" in html and "backtested" in html
+    # trending regime: condor marked off-regime, credit spread validated
+    assert "off-regime" in html and "validated" in html
+
+
+def test_copilot_why_panel_links_to_regime_page(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app, plan=_sample_plan())
+    html = client.get("/copilot").text
+    assert 'href="/regime"' in html

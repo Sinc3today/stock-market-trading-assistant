@@ -920,9 +920,16 @@ def _calc_warn_html(vix) -> str:
 
 
 def _calc_refresh_btn(kind: str) -> str:
-    return (f'<button class="btn-ghost calc-refresh" style="margin-top:.6rem;margin-left:.5rem" '
+    return (f'<button class="btn-ghost calc-refresh" '
             f'data-src="/copilot/calc/{kind}" data-target="calc-{kind}" '
             f'type="button">&#8635; Refresh price</button>')
+
+
+def _calc_actions(log_html: str, kind: str) -> str:
+    """Log + Refresh side by side (flex row, wraps only if truly cramped)."""
+    return ('<div class="calc-actions" style="display:flex;gap:.5rem;'
+            'flex-wrap:wrap;align-items:center;margin-top:.6rem">'
+            f'{log_html}{_calc_refresh_btn(kind)}</div>')
 
 
 def _render_condor_calc(spot, vix) -> str:
@@ -957,9 +964,8 @@ def _render_condor_calc(spot, vix) -> str:
         f'until you close or expire. A breach costs up to that; the watchdog pages you '
         f'first. Hist. 74% win closing at the 70% target (5-yr backtest).</div>'
         f'{_calc_warn_html(vix)}'
-        f'<a class="btn-ghost" style="margin-top:.6rem" href="{log_url}">Log this condor</a>'
-        f'{_calc_refresh_btn("condor")}'
-        '</div>'
+        + _calc_actions(f'<a class="btn-ghost" href="{log_url}">Log this condor</a>', "condor")
+        + '</div>'
     )
 
 
@@ -995,10 +1001,9 @@ def _render_butterfly_calc(spot, vix) -> str:
         f'pins near {b["center"]:g} into expiry (lower win-rate than the condor; '
         'see STRUCTURE_COMPARISON).</div>'
         f'{_calc_warn_html(vix)}'
-        f'<a class="btn-ghost" style="margin-top:.6rem" href="{fly_log_url}">'
-        'Log this butterfly</a>'
-        f'{_calc_refresh_btn("butterfly")}'
-        '</div>'
+        + _calc_actions(f'<a class="btn-ghost" href="{fly_log_url}">Log this butterfly</a>',
+                        "butterfly")
+        + '</div>'
     )
 
 
@@ -1183,8 +1188,10 @@ def _render_todays_play_card(plan: dict | None, walls: dict | None = None) -> st
     why_html = ('<details class="fold why-fold"><summary>Why this play '
                 '<span class="sep">&middot;</span> regime, signals &amp; levels</summary>'
                 '<div class="fold-body">' + "".join(why) +
-                '<a class="btn-ghost" style="margin-top:.6rem" href="/today">'
-                'Full morning brief</a></div></details>') if why else ""
+                '<div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.6rem">'
+                '<a class="btn-ghost" href="/today">Full morning brief</a>'
+                '<a class="btn-ghost" href="/regime">Regime detector &rarr;</a>'
+                '</div></div></details>') if why else ""
 
     return ('<div class="card span-12">' + kicker + f'{regime_plain}</div>'
             f'<div class="play-head">{play}</div>'
@@ -3316,6 +3323,158 @@ def copilot_page():
     walls = _copilot_walls(spot) if (plan and spot) else {}
     return HTMLResponse(_render_copilot(live, plays, spot, _spy_vix(),
                                         plan=plan, walls=walls))
+
+
+_REGIME_CSS = """
+.regime-map{display:grid;grid-template-columns:repeat(3,1fr);gap:.45rem;margin:.5rem 0}
+.regime-cell{border:1px solid var(--border,#e4e4e7);border-radius:8px;padding:.5rem .55rem;
+  background:var(--bg,#fafafa)}
+.regime-cell .rc-name{font-size:.78rem;font-weight:600}
+.regime-cell .rc-play{font-size:.72rem;color:var(--fg-muted,#52525b);margin-top:.15rem}
+.regime-cell.current{border-color:var(--accent,#4f46e5);background:var(--accent-weak,#eef2ff);
+  box-shadow:0 0 0 1px var(--accent,#4f46e5)}
+.regime-cell.skip .rc-play{color:var(--err,#dc2626)}
+.gauge,.payoff{display:block;margin:.35rem 0}
+.struct-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:1rem}
+.struct{border:1px solid var(--border,#e4e4e7);border-radius:8px;padding:.75rem;
+  background:var(--surface,#fff)}
+.pop-row{display:flex;gap:1rem;margin:.4rem 0 .1rem;font-family:var(--font-mono,monospace)}
+.pop-row b{font-size:1.15rem}
+.pop-row .pop-lbl{font-size:.68rem;color:var(--fg-subtle,#a1a1aa);text-transform:uppercase;
+  letter-spacing:.04em;display:block}
+@media (max-width:860px){.regime-map{grid-template-columns:repeat(2,1fr)}}
+"""
+
+
+def _fetch_regime_state() -> dict | None:
+    """Classify the CURRENT regime from fresh data. None on any failure."""
+    try:
+        from data.polygon_client import PolygonClient
+        from data.vix_client import VIXClient
+        from data.ivr_client import IVRClient
+        from signals.regime_detector import RegimeDetector
+        df = PolygonClient().get_bars("SPY", config.SWING_PRIMARY_TIMEFRAME,
+                                      limit=500, days_back=365)
+        vix = VIXClient().get_current()
+        ivr = IVRClient().get_iv_rank("SPY")
+        rr = RegimeDetector().classify(df, vix, ivr)
+        return {"regime": rr.regime.value, "tradeable": rr.tradeable,
+                "play": rr.play, "confidence": rr.confidence,
+                "reasons": rr.reasons, "metrics": rr.metrics}
+    except Exception as e:
+        logger.warning(f"/regime classify failed: {e}")
+        return None
+
+
+def _render_regime_page(state: dict | None) -> str:
+    from alerts.regime_view import REGIME_CELLS, build_structures, gauge_svg, payoff_svg
+    if not state:
+        body = ('<div class="empty">Regime data unavailable right now — '
+                'try again in a minute.</div>')
+        return _render_page(title="Trading Assistant - Regime", heading="Regime Detector",
+                            body=body, css=_INDEX_CSS + _REGIME_CSS, active_nav="today")
+
+    m = state.get("metrics") or {}
+    regime = state.get("regime") or "?"
+    plain = _regime_label(regime)
+    conf = state.get("confidence")
+    conf_s = f"{conf:.0%}" if isinstance(conf, (int, float)) else "—"
+    tradeable = state.get("tradeable")
+    badge = ('<span class="badge status-win">tradeable</span>' if tradeable
+             else '<span class="badge status-loss">stand aside</span>')
+    reasons = "".join(f"<li>{_esc(r)}</li>" for r in (state.get("reasons") or []))
+
+    head_card = (
+        '<div class="card span-12">'
+        '<div class="kicker"><span class="dot"></span>Current regime</div>'
+        f'<div class="play-head">{_esc(plain)} {badge}</div>'
+        f'<div class="muted">{_esc(state.get("play") or "")} &middot; conviction {conf_s}</div>'
+        f'<ul class="cp-note" style="margin:.4rem 0 0;padding-left:1.1rem">{reasons}</ul>'
+        '</div>'
+    )
+
+    # ── the WHY: today's values vs the decision thresholds ──────────────
+    adx = float(m.get("adx") or 0)
+    vix = float(m.get("vix") or 0)
+    ext = float(m.get("ma200_dist_%") or 0)
+    ivr = float(m.get("ivr") or 0)
+    gauges = (
+        gauge_svg("ADX &#8212; trend strength", adx, 0, 50, [(32, "trending &#8805;32")])
+        + gauge_svg("VIX &#8212; fear level", vix, 10, 35,
+                    [(18, "calm &lt;18"), (22, "elevated &#8805;22")])
+        + gauge_svg("Extension vs 200-day MA", ext, -5, 12,
+                    [(9, "gate &gt;9%")], value_fmt="{:+.1f}%")
+        + gauge_svg("IV rank &#8212; premium richness", ivr, 0, 100,
+                    [(50, "sell &#8805;50")], value_fmt="{:.0f}")
+    )
+    why_card = (
+        '<div class="card span-6">'
+        '<div class="kicker"><span class="dot"></span>Why &middot; today vs the thresholds</div>'
+        f'{gauges}'
+        '<div class="cp-note">The dot is today. ADX asks &ldquo;is the market going '
+        'somewhere?&rdquo;; VIX asks &ldquo;calm or scared?&rdquo;. Those two answers pick '
+        'the row and column in the map.</div></div>'
+    )
+
+    cells = []
+    for value, trend, vol, play_short, ok in REGIME_CELLS:
+        cls = "regime-cell current" if value == regime else \
+              ("regime-cell skip" if not ok else "regime-cell")
+        cells.append(f'<div class="{cls}"><div class="rc-name">{_esc(trend)} &middot; '
+                     f'{_esc(vol)}</div><div class="rc-play">{_esc(play_short)}</div></div>')
+    map_card = (
+        '<div class="card span-6">'
+        '<div class="kicker"><span class="dot"></span>The 6-regime map</div>'
+        f'<div class="regime-map">{"".join(cells)}</div>'
+        '<div class="cp-note">Highlighted = where we are now. The bot only ever '
+        'trades the four non-red cells, each with its own validated structure.</div></div>'
+    )
+
+    # ── stress-tested structures at today's price ────────────────────────
+    spot = float(m.get("spy_close") or 0) or None
+    structs_html = ""
+    if spot:
+        chip = {"validated": '<span class="badge status-win">validated here</span>',
+                "off-regime": '<span class="badge status-be">off-regime</span>',
+                "stand-down": '<span class="badge status-loss">stand-down</span>'}
+        blocks = []
+        for d in build_structures(spot, vix, regime):
+            blocks.append(
+                '<div class="struct">'
+                f'<div><b>{_esc(d["name"])}</b> {chip.get(d["status"], "")}</div>'
+                f'<div class="muted" style="font-size:.8rem">{_esc(d["desc"])} &middot; '
+                f'~{45} DTE &middot; max profit ${d["max_profit"]:,.0f} &middot; '
+                f'max loss ${d["max_loss"]:,.0f}</div>'
+                f'{payoff_svg(d["legs"], d["net_debit"], spot)}'
+                '<div class="pop-row">'
+                f'<div><span class="pop-lbl">model POP (expiry)</span><b>{d["pop"]:.0%}</b></div>'
+                f'<div><span class="pop-lbl">backtested win rate</span><b>{d["hist"][0]}</b></div>'
+                '</div>'
+                f'<div class="cp-note" style="font-size:.72rem">{_esc(d["hist"][1])}</div>'
+                '</div>')
+        structs_html = (
+            '<div class="card span-12">'
+            '<div class="kicker"><span class="dot"></span>Stress-tested plays &middot; '
+            'at today\'s price</div>'
+            f'<div class="struct-grid">{"".join(blocks)}</div>'
+            '<div class="cp-note" style="margin-top:.6rem"><b>Reading the two numbers:</b> '
+            'model POP is the maths of &ldquo;held to expiry&rdquo; at today\'s VIX. The '
+            'backtested win rate is how we actually trade &mdash; closing at 70% of max '
+            'profit or 21 DTE &mdash; which usually wins more often but wins smaller. '
+            'When they disagree a lot, trust the backtest; it includes management.</div>'
+            '</div>')
+
+    body = f'<div class="dash">{head_card}{why_card}{map_card}{structs_html}</div>'
+    return _render_page(title="Trading Assistant - Regime", heading="Regime Detector",
+                        body=body, css=_INDEX_CSS + _COPILOT_CSS + _REGIME_CSS,
+                        active_nav="today")
+
+
+@app.get("/regime", response_class=HTMLResponse)
+def regime_page():
+    """Regime detector: why today classifies the way it does + what each
+    stress-tested structure looks like at the current price."""
+    return HTMLResponse(_render_regime_page(_fetch_regime_state()))
 
 
 @app.get("/copilot/calc/{kind}", response_class=HTMLResponse)
