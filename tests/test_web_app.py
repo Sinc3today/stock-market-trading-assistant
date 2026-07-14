@@ -1394,3 +1394,24 @@ def test_copilot_no_plan_shows_quiet_empty_state(client, app_modules, monkeypatc
     _quiet_copilot_net(monkeypatch, web_app, plan=None)
     html = client.get("/copilot").text
     assert "No play yet" in html
+
+
+def test_copilot_positions_and_risk_bundled_at_bottom(client, app_modules, monkeypatch):
+    # 2026-07-14 feedback: MTM + collateral merge into ONE card at the very
+    # bottom; the top of the page is price -> today's play -> positions -> calcs.
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app, plan=_sample_plan())
+    _seed_live_condor_trade(None)
+    html = client.get("/copilot").text
+    assert "Positions &amp; risk" in html
+    # single bundled card: the old separate stat kickers are gone
+    assert "Positions <span" not in html
+    assert "Risk <span" not in html
+    # order: price first, bundle after the mirror-plays section
+    i_price  = html.index("Market <span")
+    i_play   = html.index("Today's play")
+    i_pos    = html.index("Live positions")
+    i_calc   = html.index("Quick calcs")
+    i_mirror = html.index("mirror on RH")
+    i_risk   = html.index("Positions &amp; risk")
+    assert i_price < i_play < i_pos < i_calc < i_mirror < i_risk

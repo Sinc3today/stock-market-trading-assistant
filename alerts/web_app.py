@@ -1213,21 +1213,31 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
     tot = _live_totals(live)
     spy_val = f'${spot:,.2f}' if isinstance(spot, (int, float)) else '—'
     if tot["mtm"] is None:
-        mtm_val, mtm_sub = '—', f'{tot["n"]} open position(s)'
+        mtm_val = '—'
     else:
         col = "var(--ok)" if tot["mtm"] >= 0 else "var(--err)"
         sign = "+" if tot["mtm"] >= 0 else "−"
         mtm_val = f'<span style="color:{col}">{sign}${abs(tot["mtm"]):,.0f}</span>'
-        mtm_sub = f'{tot["n"]} open position(s)'
 
+    # Top row is JUST the price (user feedback 2026-07-14): MTM + collateral
+    # bundle into one "Positions & risk" card at the very bottom.
     stat_row = (
         '<div class="dash">'
         + _stat_card('Market <span class="sep">·</span> SPY', spy_val,
-                     sub="live underlying", right_html=spark + day_delta)
-        + _stat_card('Positions <span class="sep">·</span> Open MTM', mtm_val, sub=mtm_sub)
-        + _stat_card('Risk <span class="sep">·</span> Collateral', f'${tot["capital"]:,.0f}',
-                     sub=_concentration_sub(live))
+                     sub="live underlying", right_html=spark + day_delta,
+                     span="span-12")
         + '</div>'
+    )
+    risk_card = (
+        '<div class="card span-12">'
+        '<div class="kicker"><span class="dot"></span>Positions &amp; risk</div>'
+        '<div class="stat"><div>'
+        f'<div class="stat-value">{mtm_val}</div>'
+        f'<div class="stat-sub">open MTM &middot; {tot["n"]} open position(s)</div>'
+        '</div><div style="text-align:right">'
+        f'<div class="stat-value">${tot["capital"]:,.0f}</div>'
+        f'<div class="stat-sub">{_concentration_sub(live)}</div>'
+        '</div></div></div>'
     )
 
     # ── Main grid: positions | condor calc, then plays + log ────────────
@@ -1255,7 +1265,8 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
         '</div>'
     )
     todays_card = _render_todays_play_card(plan, walls)
-    body = stat_row + f'<div class="dash">{todays_card}{positions_card}{condor_card}{plays_card}</div>'
+    body = stat_row + (f'<div class="dash">{todays_card}{positions_card}'
+                       f'{condor_card}{plays_card}{risk_card}</div>')
     return _render_page(
         title      = "Trading Assistant - Copilot",
         heading    = "Trade Copilot",
