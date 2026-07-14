@@ -158,7 +158,7 @@ def test_nav_appears_on_index(client):
     # "/" now lands on the copilot with the lean 4-item nav
     r = client.get("/")
     assert r.status_code == 200
-    for href in ('href="/copilot"', 'href="/today"',
+    for href in ('href="/copilot"', 'href="/regime"',
                  'href="/trades"', 'href="/learning"'):
         assert href in r.text
 
@@ -542,8 +542,8 @@ def test_nav_renders_lean_flat_list(client, app_modules):
 
 
 def test_nav_groups_contain_expected_links(client, app_modules):
-    r = client.get("/today")
-    for href in ("/copilot", "/today", "/trades", "/learning"):
+    r = client.get("/trades")
+    for href in ("/copilot", "/regime", "/trades", "/learning"):
         assert f'href="{href}"' in r.text
     # retired pages are OUT of the nav
     for href in ("/journal", "/chats", "/backtest", "/macro"):
@@ -1413,9 +1413,9 @@ def test_copilot_positions_and_risk_bundled_at_bottom(client, app_modules, monke
     i_play   = html.index("Today's play")
     i_pos    = html.index("Live positions")
     i_calc   = html.index("Quick calcs")
-    i_mirror = html.index("mirror on RH")
     i_risk   = html.index("Positions &amp; risk")
-    assert i_price < i_play < i_pos < i_calc < i_mirror < i_risk
+    assert i_price < i_play < i_pos < i_calc < i_risk
+    assert "mirror on RH" not in html          # duplicate section removed 07-14
 
 
 def _age_trade(app_modules, trade_id, iso_date):
@@ -1432,9 +1432,10 @@ def _age_trade(app_modules, trade_id, iso_date):
         _json.dump(trades, f)
 
 
-def test_copilot_mirror_section_hides_stale_plays(client, app_modules, monkeypatch):
+def test_copilot_stale_plays_get_no_placed_button(client, app_modules, monkeypatch):
     # 2026-07-14 feedback: a credit spread opened 06-29 was still presented as
-    # a "today's play" to mirror. Mirroring is same-day actionable only.
+    # actionable. Mirroring is same-day only; the separate section is gone and
+    # a stale disciplined open must NOT surface an "I placed it" button.
     _, web_app = app_modules
     _quiet_copilot_net(monkeypatch, web_app)
     from journal.trade_recorder import TradeRecorder
@@ -1447,8 +1448,26 @@ def test_copilot_mirror_section_hides_stale_plays(client, app_modules, monkeypat
     )
     _age_trade(app_modules, tid, "2026-06-29")
     html = client.get("/copilot").text
-    assert "SELL $729" not in html and "$724" not in html
-    assert "No new plays today" in html
+    assert "I placed it on RH" not in html
+    assert "$724" not in html
+
+
+def test_copilot_todays_open_shows_placed_button_in_play_card(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app, plan=_sample_plan())
+    from journal.trade_recorder import TradeRecorder
+    TradeRecorder().log_entry(
+        ticker="SPY", entry_price=1.10, size=1, trade_type="iron_condor",
+        strategy="iron_condor", direction="neutral", mode="swing",
+        legs=[{"action": "SELL", "option_type": "PUT", "strike": 700,
+               "expiry": "2026-07-16"}],
+        max_profit=110.0, max_loss=390.0, book="disciplined",
+    )
+    html = client.get("/copilot").text
+    assert "Opened by the bot today" in html
+    assert "I placed it on RH" in html
+    # the button lives INSIDE the today's-play card, before live positions
+    assert html.index("I placed it on RH") < html.index("Live positions")
 
 
 def test_mobile_css_collapses_every_span_including_12():

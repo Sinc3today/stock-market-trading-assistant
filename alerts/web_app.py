@@ -436,13 +436,15 @@ from alerts.fmt import fmt_date as _fdate, fmt_dt as _fdt
 _NAV_ICONS = {
     # small inline SVGs, stroke = currentColor (design rule: no emoji as UI icons)
     "copilot":  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5 13.5 13.5 8.5 15.5 10.5 10.5z"/></svg>',
-    "today":    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+    "regime":   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 13l3.5-3.5"/><path d="M12 5V3M9 3h6"/></svg>',
     "trades":   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 4 3 6-8"/><path d="M18 6h3v3"/></svg>',
     "learning": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
 }
+# "Today" retired from the nav (2026-07-14) — its content lives on the copilot
+# home (Today's play card + why panel); the route stays alive for old links.
 _NAV_ITEMS = [
     ("copilot",  "/copilot",  "Copilot"),
-    ("today",    "/today",    "Today"),
+    ("regime",   "/regime",   "Regime"),
     ("trades",   "/trades",   "Trades"),
     ("learning", "/learning", "Learning"),
 ]
@@ -1092,17 +1094,40 @@ def _stat_card(kicker_html: str, value_html: str, sub: str = "",
             f'<div style="text-align:right">{right_html}</div></div></div>')
 
 
-def _render_todays_play_card(plan: dict | None, walls: dict | None = None) -> str:
+def _render_todays_play_card(plan: dict | None, walls: dict | None = None,
+                             todays_trades: list[dict] | None = None) -> str:
     """Today's play, right under the price row: the actionable headline + legs
     visible at a glance, with a tap-to-expand "why" panel (regime, signals,
-    support/resistance) so quick decisions still teach the reasoning."""
+    support/resistance) so quick decisions still teach the reasoning. Trades
+    the bot actually OPENED today get their "I placed it on RH" button here
+    (the separate mirror section read as a duplicate — removed 2026-07-14)."""
     from alerts.stop_watchdog import rh_leg_lines
+
+    placed = ""
+    for t in (todays_trades or []):
+        strat = _esc((t.get("strategy") or "play").replace("_", " "))
+        entry = t.get("entry_price")
+        entry_s = f" &middot; entry {float(entry):g}" if entry is not None else ""
+        legs_t = rh_leg_lines(t.get("legs") or [])
+        legs_h = ("<div class='legs'>" +
+                  "".join(f"<div class='leg'>{_esc(l)}</div>" for l in legs_t) +
+                  "</div>") if legs_t else ""
+        placed += (
+            '<div style="margin-top:.7rem;padding-top:.7rem;border-top:1px solid var(--border)">'
+            f'<div class="muted" style="font-size:.85rem"><b>Opened by the bot today</b> '
+            f'&middot; {strat}{entry_s} &middot; mirror it, then confirm:</div>'
+            f'{legs_h}'
+            '<form method="post" action="/copilot/placed" style="margin-top:.45rem">'
+            f'<input type="hidden" name="trade_id" value="{_esc(t.get("trade_id", ""))}">'
+            '<button class="btn-primary" type="submit">I placed it on RH</button>'
+            '</form></div>')
+
     kicker = ('<div class="kicker"><span class="dot"></span>Today\'s play '
               '<span class="sep">&middot;</span> ')
     if not plan:
         return ('<div class="card span-12">' + kicker + 'waiting</div>'
                 '<div class="empty">No play yet — the 09:15 ET brief posts it here '
-                'on trading days.</div></div>')
+                'on trading days.</div>' + placed + '</div>')
 
     regime_plain = _esc(_regime_label(plan.get("regime") or "?"))
     is_skip = (plan.get("action") == "SKIP") or not plan.get("strategy")
@@ -1112,6 +1137,7 @@ def _render_todays_play_card(plan: dict | None, walls: dict | None = None) -> st
                 f'<div class="play-head">SKIP — {reason}</div>'
                 '<div class="cp-note">No entry today. The regime says stand aside; '
                 'that call is part of the edge.</div>'
+                f'{placed}'
                 '<a class="btn-ghost" href="/today">Full morning brief</a></div>')
 
     play = _esc(plan.get("play") or plan.get("strategy") or "—")
@@ -1199,7 +1225,7 @@ def _render_todays_play_card(plan: dict | None, walls: dict | None = None) -> st
             f'{conf_str}</div>'
             f'{legs_html}'
             + (f'<div class="muted" style="margin-top:.25rem">{nums}</div>' if nums else "")
-            + why_html + '</div>')
+            + why_html + placed + '</div>')
 
 
 def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
@@ -1273,23 +1299,6 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
         live_html = ('<div class="empty">No live positions logged. Mirror a play on '
                      'Robinhood, then tap "I placed it" below — the watchdog will track it.</div>')
 
-    if plays:
-        cards = []
-        for t in plays:
-            cards.append(f'''<div class="alert-card">
-  <div><b>{_esc(t.get('ticker','SPY'))}</b> &middot; {_strat(t)}</div>
-  {_legs(t)}
-  <div class="muted" style="margin-top:.25rem">Exp {_esc(_exp(t))}{(' &middot; ' + _when(t)) if _when(t) else ''}</div>
-  <form method="post" action="/copilot/placed" style="margin-top:.5rem">
-    <input type="hidden" name="trade_id" value="{_esc(t.get('trade_id',''))}">
-    <button class="btn-primary" type="submit">I placed it on RH</button>
-  </form>
-</div>''')
-        plays_html = "\n".join(cards)
-    else:
-        plays_html = ('<div class="empty">No new plays today — entries land here '
-                      'the moment the bot opens one (09:45–15:00 ET).</div>')
-
     # ── Stat row (Image-1 dashboard style) ──────────────────────────────
     from alerts.sparkline import sparkline_svg, delta_chip
     closes = _spy_recent_closes(19)
@@ -1344,6 +1353,8 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
         f'<div class="fold-body" id="calc-condor">{_render_condor_calc(spot, vix)}</div></details>'
         '<details class="fold calc-fold"><summary>Low-capital butterfly</summary>'
         f'<div class="fold-body" id="calc-butterfly">{_render_butterfly_calc(spot, vix)}</div></details>'
+        '<div style="margin-top:.75rem">'
+        '<a class="btn-ghost" href="/copilot/log">+ Log a trade I built myself</a></div>'
         '</div>'
     )
     # tiny swap script: refresh a calculator in place (fold stays open)
@@ -1355,17 +1366,9 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
         'try{var r=await fetch(b.dataset.src);t.innerHTML=await r.text();}'
         'catch(err){b.textContent="Retry";b.disabled=false;}});</script>'
     )
-    plays_card = (
-        '<div class="card span-12">'
-        '<div class="kicker"><span class="dot"></span>Today\'s plays <span class="sep">·</span> mirror on RH</div>'
-        f'{plays_html}'
-        '<div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border)">'
-        '<a class="btn-ghost" href="/copilot/log">+ Log a trade I built myself</a></div>'
-        '</div>'
-    )
-    todays_card = _render_todays_play_card(plan, walls)
+    todays_card = _render_todays_play_card(plan, walls, todays_trades=plays)
     body = stat_row + (f'<div class="dash">{todays_card}{positions_card}'
-                       f'{condor_card}{plays_card}{risk_card}</div>') + calc_js
+                       f'{condor_card}{risk_card}</div>') + calc_js
     return _render_page(
         title      = "Trading Assistant - Copilot",
         heading    = "Trade Copilot",
@@ -3372,7 +3375,7 @@ def _render_regime_page(state: dict | None) -> str:
         body = ('<div class="empty">Regime data unavailable right now — '
                 'try again in a minute.</div>')
         return _render_page(title="Trading Assistant - Regime", heading="Regime Detector",
-                            body=body, css=_INDEX_CSS + _REGIME_CSS, active_nav="today")
+                            body=body, css=_INDEX_CSS + _REGIME_CSS, active_nav="regime")
 
     m = state.get("metrics") or {}
     regime = state.get("regime") or "?"
@@ -3467,7 +3470,7 @@ def _render_regime_page(state: dict | None) -> str:
     body = f'<div class="dash">{head_card}{why_card}{map_card}{structs_html}</div>'
     return _render_page(title="Trading Assistant - Regime", heading="Regime Detector",
                         body=body, css=_INDEX_CSS + _COPILOT_CSS + _REGIME_CSS,
-                        active_nav="today")
+                        active_nav="regime")
 
 
 @app.get("/regime", response_class=HTMLResponse)
