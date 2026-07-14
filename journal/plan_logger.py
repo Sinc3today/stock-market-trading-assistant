@@ -160,6 +160,10 @@ class PlanLogger:
         plans = sorted(plans, key=lambda p: p.get("date", ""))[-365:]
         try:
             from atomic_io import atomic_write_text
-            atomic_write_text(self._plans_path, json.dumps(plans, indent=2))
+            # default=str: one non-JSON value (a datetime.date in a macro
+            # event cost us the whole 2026-07-13 plan) must never lose the
+            # day's plan — stringify and move on.
+            atomic_write_text(self._plans_path,
+                              json.dumps(plans, indent=2, default=str))
         except OSError as e:
             logger.error(f"PlanLogger save error: {e}")

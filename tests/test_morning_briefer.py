@@ -410,3 +410,25 @@ def test_discord_message_appended_with_thesis_and_macro(iso_logs, tmp_path):
     assert "TODAY'S PLAY"     in msg       # base content preserved
     assert "Thesis:"          in msg
     assert "VIX TS"           in msg
+
+
+def test_plan_survives_event_with_real_date_object(iso_logs):
+    """2026-07-13 incident: EventCalendar.get_next_events returns dicts with a
+    real datetime.date in 'date'. With CPI 1 day away the plan JSON save died
+    ('Object of type date is not JSON serializable') -> no plan -> the 09:45
+    broker had nothing to execute and no approve alert fired. The brief must
+    serialize event dates before they reach the plan payload."""
+    from datetime import date as _d
+    card = _base_card()
+    briefer = mb_mod.MorningBriefer(
+        spy_strategy=_StubStrategy(card),
+        event_calendar=_StubEventCalendar(
+            [{"date": _d(2026, 7, 14), "type": "CPI",
+              "label": "CPI release — Jul 14, 2026", "days_away": 1}]),
+    )
+    briefer.build_today()
+    from journal.plan_logger import PlanLogger
+    saved = PlanLogger().get_plan("2026-05-18")
+    assert saved is not None, "plan save must survive date-typed events"
+    evs = (saved.get("macro_context") or {}).get("events") or []
+    assert evs and evs[0]["date"] == "2026-07-14"     # ISO string, not date()

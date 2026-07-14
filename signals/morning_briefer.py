@@ -203,8 +203,19 @@ class MorningBriefer:
         except Exception as e:
             logger.warning(f"MorningBriefer: event_calendar fetch failed: {e}")
             return []
-        # Keep only events 0-1 days away (today + tomorrow)
-        return [e for e in upcoming if e.get("days_away", 99) <= 1]
+        # Keep only events 0-1 days away (today + tomorrow). Serialize the
+        # 'date' field here — EventCalendar hands back datetime.date objects,
+        # and one reaching the plan JSON killed the whole 07-13 plan save
+        # (CPI 1 day away -> no plan -> no 09:45 open, no approve alert).
+        out = []
+        for e in upcoming:
+            if e.get("days_away", 99) <= 1:
+                e = dict(e)
+                d = e.get("date")
+                if hasattr(d, "isoformat"):
+                    e["date"] = d.isoformat()
+                out.append(e)
+        return out
 
     # ── CLAUDE ────────────────────────────────────────
 

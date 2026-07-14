@@ -79,3 +79,15 @@ def test_get_stats(tmp_path, monkeypatch):
 def test_missing_date_key_returns_false(logger_inst):
     assert logger_inst.save_plan({"regime":"trending_up_calm"}) is False
     print("\n✅ Missing date key handled gracefully")
+
+
+def test_save_plan_survives_non_json_values(logger_inst):
+    # Hardening after the 2026-07-13 CPI-event incident: one date-typed field
+    # anywhere in the payload must never cost us the whole day's plan.
+    from datetime import date
+    plan = {"date": "2026-07-13", "ticker": "SPY",
+            "macro_context": {"events": [{"date": date(2026, 7, 14), "type": "CPI"}]}}
+    assert logger_inst.save_plan(plan) is True
+    saved = logger_inst.get_plan("2026-07-13")
+    assert saved is not None
+    assert saved["macro_context"]["events"][0]["date"] == "2026-07-14"
