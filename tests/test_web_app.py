@@ -1460,3 +1460,27 @@ def test_mobile_css_collapses_every_span_including_12():
     assert m, "mobile span override missing"
     assert ".span-12" in m.group(0), "span-12 must be included in the mobile override"
     assert m.group(1).strip() == "auto", "single-column grid wants grid-column:auto"
+
+
+def test_calc_fragment_endpoints_return_fresh_calc_with_timestamp(client, app_modules, monkeypatch):
+    # refresh button support: each calculator re-renders via a fragment
+    # endpoint with a priced-at timestamp so "current price" is verifiable
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app)
+    condor = client.get("/copilot/calc/condor").text
+    assert "SELL $" in condor and "BUY $" in condor
+    assert "priced" in condor and "ET" in condor
+    assert 'class="btn-ghost calc-refresh"' in condor   # button survives refresh
+    fly = client.get("/copilot/calc/butterfly").text
+    assert "butterfly" in fly.lower() or "BUY $" in fly
+    assert "priced" in fly and "ET" in fly
+
+
+def test_copilot_page_wires_calc_refresh_buttons(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app)
+    html = client.get("/copilot").text
+    assert 'data-src="/copilot/calc/condor"' in html
+    assert 'data-src="/copilot/calc/butterfly"' in html
+    assert 'id="calc-condor"' in html and 'id="calc-butterfly"' in html
+    assert "calc-refresh" in html and "fetch(" in html   # the swap script

@@ -860,6 +860,21 @@ def _spy_vix():
         return None
 
 
+def _priced_stamp() -> str:
+    """'priced 9:41:07 AM ET' — when the calc's spot/VIX were fetched, so the
+    user can judge how stale 'current price' is before mirroring."""
+    import pytz
+    from datetime import datetime
+    now = datetime.now(pytz.timezone("US/Eastern"))
+    return "priced " + now.strftime("%I:%M:%S %p").lstrip("0") + " ET"
+
+
+def _calc_refresh_btn(kind: str) -> str:
+    return (f'<button class="btn-ghost calc-refresh" style="margin-top:.6rem;margin-left:.5rem" '
+            f'data-src="/copilot/calc/{kind}" data-target="calc-{kind}" '
+            f'type="button">&#8635; Refresh price</button>')
+
+
 def _render_condor_calc(spot, vix) -> str:
     """On-demand condor at the CURRENT price (0.20-delta shorts, $5 wings) — for
     when the morning notification was missed. Estimate; the 'Log this' link
@@ -881,13 +896,14 @@ def _render_condor_calc(spot, vix) -> str:
     return (
         '<div class="alert-card">'
         f'<div class="muted">At SPY ${c["spot"]:,.2f} &middot; {vix_str} &middot; '
-        f'~45 DTE &middot; estimate — verify vs the live chain</div>'
+        f'~45 DTE &middot; {_priced_stamp()} &middot; estimate — verify vs the live chain</div>'
         f"<div class='legs'>{legs}</div>"
         '<div class="muted" style="margin-top:.25rem">'
         f'Est. credit ${c["credit"]:.2f} &middot; max profit ${c["max_profit"]:.0f} &middot; '
         f'max loss ${c["max_loss"]:.0f} &middot; breakevens '
         f'{c["breakeven_low"]:g}–{c["breakeven_high"]:g} &middot; exp {_esc(_fdate(c["expiry"]))}</div>'
         f'<a class="btn-ghost" style="margin-top:.6rem" href="{log_url}">Log this condor</a>'
+        f'{_calc_refresh_btn("condor")}'
         '</div>'
     )
 
@@ -909,7 +925,7 @@ def _render_butterfly_calc(spot, vix) -> str:
     return (
         '<div class="alert-card">'
         f'<div class="muted">Long call butterfly {b["lower"]:g}/{b["center"]:g}/{b["upper"]:g} '
-        f'&middot; ~45 DTE &middot; estimate — verify vs the live chain</div>'
+        f'&middot; ~45 DTE &middot; {_priced_stamp()} &middot; estimate — verify vs the live chain</div>'
         f"<div class='legs'>{legs}</div>"
         '<div class="muted" style="margin-top:.25rem">'
         f'Cost (= max loss, no collateral) <b>${b["capital"]:,.0f}</b> &middot; '
@@ -918,6 +934,7 @@ def _render_butterfly_calc(spot, vix) -> str:
         '<div class="cp-note" style="margin-top:.4rem">~half a condor\'s capital; '
         'lower win-rate &amp; ROC (see STRUCTURE_COMPARISON). Log it via screenshot '
         'after placing — the 4-slot form can\'t hold a butterfly.</div>'
+        f'{_calc_refresh_btn("butterfly")}'
         '</div>'
     )
 
@@ -1254,10 +1271,19 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
         '<div class="kicker"><span class="dot"></span>Quick calcs <span class="sep">·</span> at current price</div>'
         '<div class="cp-note">Missed the alert? Build one off the live price — mirror it, then log.</div>'
         '<details class="fold calc-fold"><summary>Iron condor @ current price</summary>'
-        f'<div class="fold-body">{_render_condor_calc(spot, vix)}</div></details>'
+        f'<div class="fold-body" id="calc-condor">{_render_condor_calc(spot, vix)}</div></details>'
         '<details class="fold calc-fold"><summary>Low-capital butterfly</summary>'
-        f'<div class="fold-body">{_render_butterfly_calc(spot, vix)}</div></details>'
+        f'<div class="fold-body" id="calc-butterfly">{_render_butterfly_calc(spot, vix)}</div></details>'
         '</div>'
+    )
+    # tiny swap script: refresh a calculator in place (fold stays open)
+    calc_js = (
+        '<script>document.addEventListener("click",async function(e){'
+        'var b=e.target.closest(".calc-refresh");if(!b)return;e.preventDefault();'
+        'var t=document.getElementById(b.dataset.target);var old=b.textContent;'
+        'b.textContent="Refreshing\\u2026";b.disabled=true;'
+        'try{var r=await fetch(b.dataset.src);t.innerHTML=await r.text();}'
+        'catch(err){b.textContent="Retry";b.disabled=false;}});</script>'
     )
     plays_card = (
         '<div class="card span-12">'
@@ -1269,7 +1295,7 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
     )
     todays_card = _render_todays_play_card(plan, walls)
     body = stat_row + (f'<div class="dash">{todays_card}{positions_card}'
-                       f'{condor_card}{plays_card}{risk_card}</div>')
+                       f'{condor_card}{plays_card}{risk_card}</div>') + calc_js
     return _render_page(
         title      = "Trading Assistant - Copilot",
         heading    = "Trade Copilot",
@@ -3221,6 +3247,18 @@ def copilot_page():
     walls = _copilot_walls(spot) if (plan and spot) else {}
     return HTMLResponse(_render_copilot(live, plays, spot, _spy_vix(),
                                         plan=plan, walls=walls))
+
+
+@app.get("/copilot/calc/{kind}", response_class=HTMLResponse)
+def copilot_calc_fragment(kind: str):
+    """Re-render one price calculator with a fresh spot/VIX fetch — the
+    ↻ Refresh button swaps this fragment in place (fold stays open)."""
+    if kind not in ("condor", "butterfly"):
+        return HTMLResponse('<div class="empty">Unknown calculator.</div>',
+                            status_code=404)
+    spot, vix = _spy_spot(), _spy_vix()
+    render = _render_condor_calc if kind == "condor" else _render_butterfly_calc
+    return HTMLResponse(render(spot, vix))
 
 
 @app.post("/copilot/placed", response_class=HTMLResponse)
