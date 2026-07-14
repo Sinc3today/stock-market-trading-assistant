@@ -1274,3 +1274,123 @@ def test_copilot_log_blank_without_params(client):
 
 # Needed by test_macro_page_empty
 import os
+
+
+# ─────────────────────────────────────────
+# COPILOT HOME REDESIGN (2026-07-13): collapsible positions/calcs +
+# today's-play card under the price with an expandable "why" panel
+# ─────────────────────────────────────────
+
+def _seed_live_condor_trade(tmp_log_dir):
+    from journal.trade_recorder import TradeRecorder
+    r = TradeRecorder()
+    return r.log_entry(
+        ticker="SPY", entry_price=1.45, size=3, trade_type="iron_condor",
+        strategy="iron_condor", direction="neutral", mode="swing",
+        legs=[
+            {"action": "BUY",  "option_type": "CALL", "strike": 790, "expiry": "2026-08-21"},
+            {"action": "SELL", "option_type": "CALL", "strike": 785, "expiry": "2026-08-21"},
+            {"action": "BUY",  "option_type": "PUT",  "strike": 708, "expiry": "2026-08-21"},
+            {"action": "SELL", "option_type": "PUT",  "strike": 713, "expiry": "2026-08-21"},
+        ],
+        max_profit=435.0, max_loss=1065.0, book="live",
+    )
+
+
+def _quiet_copilot_net(monkeypatch, web_app, plan=None, walls=None):
+    """Kill every network fetch the copilot page makes."""
+    monkeypatch.setattr(web_app, "_spy_spot", lambda: 750.0)
+    monkeypatch.setattr(web_app, "_spy_vix", lambda: 15.0)
+    monkeypatch.setattr(web_app, "_position_mtm_cached", lambda t: None)
+    monkeypatch.setattr(web_app, "_fetch_spy_walls_for_today",
+                        lambda spot: walls if walls is not None else {})
+
+    class _PL:
+        def get_plan(self, d): return plan
+    monkeypatch.setattr(web_app, "PlanLogger", _PL)
+
+
+def _sample_plan():
+    return {
+        "date": "2026-07-13", "ticker": "SPY", "regime": "trending_up_calm",
+        "play": "BULL PUT CREDIT SPREAD — sell the put side",
+        "confidence": 0.85, "strategy": "credit_spread",
+        "legs": [
+            {"action": "buy",  "option_type": "put", "strike": 747.0,
+             "expiration": "2026-08-28"},
+            {"action": "sell", "option_type": "put", "strike": 752.0,
+             "expiration": "2026-08-28"},
+        ],
+        "max_profit": 171.0, "max_loss": 329.0,
+        "regime_metrics": {"spy_close": 751.7, "ma200": 694.0,
+                           "ma200_dist_%": 8.31, "adx": 34.6,
+                           "vix": 15.8, "ivr": 50.0},
+        "thesis": "ADX 34.6 >= 32.0 (trending) | SPY +8.3% above 200MA",
+        "forecast": {"direction": "bullish", "confidence": 0.9,
+                     "reasons": ["price vs MA20 up", "RSI 58 > 55"]},
+        "plain_summary": "I'm selling a put spread below the market.",
+        "skip_conditions": ["I'll skip if the market opens down big."],
+        "exit_rule": "Close at 70% of max profit",
+    }
+
+
+def test_copilot_positions_are_collapsed_details(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app)
+    _seed_live_condor_trade(None)
+    html = client.get("/copilot").text
+    # each live position renders as a collapsed <details> fold
+    assert '<details class="fold pos-fold"' in html
+    assert '<details class="fold pos-fold" open' not in html
+    # summary row: ticker + strategy + status; legs live INSIDE the fold
+    assert "iron condor" in html
+    assert "SELL $785 CALL" in html
+
+
+def test_copilot_calc_cards_are_collapsed_details(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app)
+    html = client.get("/copilot").text
+    # condor + butterfly calculators fold away (they were the longest cards)
+    assert html.count('<details class="fold calc-fold"') == 2
+    assert '<details class="fold calc-fold" open' not in html
+
+
+def test_copilot_todays_play_sits_under_the_price_row(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app, plan=_sample_plan())
+    html = client.get("/copilot").text
+    # play headline visible without any tap
+    assert "BULL PUT CREDIT SPREAD" in html
+    assert "SELL $752 PUT" in html            # RH-shaped legs visible
+    # order: SPY stat card, then today's play, then live positions
+    i_price = html.index("Market <span")
+    i_play  = html.index("Today&#x27;s play") if "Today&#x27;s play" in html \
+        else html.index("Today's play")
+    i_pos   = html.index("Live positions")
+    assert i_price < i_play < i_pos
+
+
+def test_copilot_why_panel_expands_with_regime_signals_levels(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    walls = {"call_walls": [{"strike": 760.0, "open_interest": 9000}],
+             "put_walls":  [{"strike": 740.0, "open_interest": 8000}],
+             "max_pain": 750.0}
+    _quiet_copilot_net(monkeypatch, web_app, plan=_sample_plan(), walls=walls)
+    html = client.get("/copilot").text
+    assert '<details class="fold why-fold"' in html
+    # regime + signals + S/R data inside the why panel
+    assert "ADX 34.6" in html
+    assert "IVR 50" in html
+    assert "+8.3%" in html                     # extension vs 200MA
+    assert "price vs MA20 up" in html          # forecast reasons
+    assert "$760" in html and "$740" in html   # call/put walls (R/S)
+    assert "max pain" in html.lower()
+    assert "selling a put spread" in html      # plain-English summary
+
+
+def test_copilot_no_plan_shows_quiet_empty_state(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app, plan=None)
+    html = client.get("/copilot").text
+    assert "No play yet" in html

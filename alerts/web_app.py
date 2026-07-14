@@ -820,6 +820,21 @@ _COPILOT_CSS = """
 .cp-shot{position:sticky;top:1rem}
 .cp-shot img{width:100%;border:1px solid var(--border,#e4e4e7);border-radius:8px;display:block}
 .cp-slip{display:inline-block;margin-top:.35rem;font-size:.8rem;padding:.15rem .5rem;border-radius:5px}
+details.fold{border:1px solid var(--border,#e4e4e7);border-radius:8px;background:var(--surface,#fff);margin:.5rem 0}
+details.fold>summary{list-style:none;cursor:pointer;padding:.6rem .75rem;display:flex;flex-wrap:wrap;
+  align-items:center;gap:.45rem;font-size:.92rem;-webkit-tap-highlight-color:transparent}
+details.fold>summary::-webkit-details-marker{display:none}
+details.fold>summary::after{content:"\\203A";margin-left:auto;color:var(--fg-subtle,#a1a1aa);
+  font-size:1.1rem;transform:rotate(90deg);transition:transform .15s ease}
+details.fold[open]>summary::after{transform:rotate(-90deg)}
+@media (prefers-reduced-motion:reduce){details.fold>summary::after{transition:none}}
+details.fold>.fold-body{padding:.15rem .75rem .7rem;border-top:1px solid var(--border,#e4e4e7)}
+.chips{display:flex;flex-wrap:wrap;gap:.35rem;margin:.45rem 0}
+.chip{font-family:var(--font-mono,ui-monospace,monospace);font-size:.78rem;padding:.15rem .5rem;
+  border:1px solid var(--border,#e4e4e7);border-radius:5px;background:var(--bg,#fafafa);color:var(--fg-muted,#52525b)}
+.why-sec{margin:.6rem 0 .15rem;font-size:.72rem;color:var(--fg-subtle,#a1a1aa);
+  text-transform:uppercase;letter-spacing:.05em}
+.play-head{font-size:1.02rem;font-weight:600;margin:.2rem 0 .1rem}
 """
 
 
@@ -990,7 +1005,116 @@ def _stat_card(kicker_html: str, value_html: str, sub: str = "",
             f'<div style="text-align:right">{right_html}</div></div></div>')
 
 
-def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None) -> str:
+def _render_todays_play_card(plan: dict | None, walls: dict | None = None) -> str:
+    """Today's play, right under the price row: the actionable headline + legs
+    visible at a glance, with a tap-to-expand "why" panel (regime, signals,
+    support/resistance) so quick decisions still teach the reasoning."""
+    from alerts.stop_watchdog import rh_leg_lines
+    kicker = ('<div class="kicker"><span class="dot"></span>Today\'s play '
+              '<span class="sep">&middot;</span> ')
+    if not plan:
+        return ('<div class="card span-12">' + kicker + 'waiting</div>'
+                '<div class="empty">No play yet — the 09:15 ET brief posts it here '
+                'on trading days.</div></div>')
+
+    regime_plain = _esc(_regime_label(plan.get("regime") or "?"))
+    is_skip = (plan.get("action") == "SKIP") or not plan.get("strategy")
+    if is_skip:
+        reason = _esc(plan.get("reason") or plan.get("play") or "stand-down day")
+        return ('<div class="card span-12">' + kicker + f'{regime_plain}</div>'
+                f'<div class="play-head">SKIP — {reason}</div>'
+                '<div class="cp-note">No entry today. The regime says stand aside; '
+                'that call is part of the edge.</div>'
+                '<a class="btn-ghost" href="/today">Full morning brief</a></div>')
+
+    play = _esc(plan.get("play") or plan.get("strategy") or "—")
+    conf = plan.get("confidence")
+    conf_str = f' &middot; conviction {conf:.0%}' if isinstance(conf, (int, float)) else ""
+    legs = rh_leg_lines(plan.get("legs") or [])
+    legs_html = ("<div class='legs'>" +
+                 "".join(f"<div class='leg'>{_esc(l)}</div>" for l in legs) +
+                 "</div>") if legs else ""
+    exp = ""
+    for leg in (plan.get("legs") or []):
+        e = leg.get("expiration") or leg.get("expiry")
+        if e:
+            exp = _fdate(str(e)[:10])
+            break
+    mp, ml = plan.get("max_profit"), plan.get("max_loss")
+    nums = " &middot; ".join(x for x in (
+        f"Exp {_esc(exp)}" if exp else "",
+        f"max profit ${mp:,.0f}" if isinstance(mp, (int, float)) else "",
+        f"max loss ${ml:,.0f}" if isinstance(ml, (int, float)) else "",
+        _esc(plan.get("exit_rule") or ""),
+    ) if x)
+
+    # ── the expandable WHY panel ─────────────────────────────────
+    m = plan.get("regime_metrics") or {}
+    chips = []
+    if isinstance(m.get("adx"), (int, float)):
+        chips.append(f"ADX {m['adx']:g}")
+    if isinstance(m.get("vix"), (int, float)):
+        chips.append(f"VIX {m['vix']:g}")
+    if isinstance(m.get("ivr"), (int, float)):
+        chips.append(f"IVR {m['ivr']:g}")
+    if isinstance(m.get("ma200_dist_%"), (int, float)):
+        chips.append(f"{m['ma200_dist_%']:+.1f}% vs 200MA")
+    chips_html = ('<div class="chips">' +
+                  "".join(f'<span class="chip">{_esc(c)}</span>' for c in chips) +
+                  '</div>') if chips else ""
+
+    why = []
+    if chips_html:
+        why.append('<div class="why-sec">Regime signals</div>' + chips_html)
+    if plan.get("thesis"):
+        why.append(f'<div class="cp-note">{_esc(plan["thesis"])}</div>')
+    fc = plan.get("forecast") or {}
+    if fc.get("reasons"):
+        fdir = _esc(fc.get("direction") or "")
+        fconf = fc.get("confidence")
+        fhead = f"Forecast: {fdir}" + (f" ({fconf:.0%})" if isinstance(fconf, (int, float)) else "")
+        why.append('<div class="why-sec">' + _esc(fhead) + '</div>'
+                   '<div class="chips">' +
+                   "".join(f'<span class="chip">{_esc(r)}</span>' for r in fc["reasons"]) +
+                   '</div>')
+    w = walls or {}
+    lvl = []
+    for cw in (w.get("call_walls") or [])[:2]:
+        lvl.append(f"resistance ${cw['strike']:g} (call wall)")
+    for pw in (w.get("put_walls") or [])[:2]:
+        lvl.append(f"support ${pw['strike']:g} (put wall)")
+    if isinstance(w.get("max_pain"), (int, float)):
+        lvl.append(f"max pain ${w['max_pain']:g}")
+    if lvl:
+        why.append('<div class="why-sec">Support / resistance (option walls)</div>'
+                   '<div class="chips">' +
+                   "".join(f'<span class="chip">{_esc(x)}</span>' for x in lvl) +
+                   '</div>')
+    if plan.get("plain_summary"):
+        why.append('<div class="why-sec">In plain English</div>'
+                   f'<div class="cp-note">{_esc(plan["plain_summary"])}</div>')
+    skips = plan.get("skip_conditions") or []
+    if skips:
+        why.append('<div class="why-sec">I would bail if</div>'
+                   '<div class="cp-note">' +
+                   "<br>".join(_esc(s) for s in skips) + '</div>')
+    why_html = ('<details class="fold why-fold"><summary>Why this play '
+                '<span class="sep">&middot;</span> regime, signals &amp; levels</summary>'
+                '<div class="fold-body">' + "".join(why) +
+                '<a class="btn-ghost" style="margin-top:.6rem" href="/today">'
+                'Full morning brief</a></div></details>') if why else ""
+
+    return ('<div class="card span-12">' + kicker + f'{regime_plain}</div>'
+            f'<div class="play-head">{play}</div>'
+            f'<div class="muted" style="font-size:.85rem">{plan.get("ticker","SPY")}'
+            f'{conf_str}</div>'
+            f'{legs_html}'
+            + (f'<div class="muted" style="margin-top:.25rem">{nums}</div>' if nums else "")
+            + why_html + '</div>')
+
+
+def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
+                    plan: dict | None = None, walls: dict | None = None) -> str:
     """Trade copilot: your live (watchdog-tracked) positions + today's plays to
     mirror on Robinhood — copy-ready RH-shaped legs + smart-stop status."""
     from alerts.stop_watchdog import rh_leg_lines, position_status
@@ -1041,13 +1165,20 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None) -> str:
                 label, cls = position_status(legs, spot)
             else:
                 label, cls = "—", "status-open"
-            cards.append(f'''<div class="alert-card">
-  <div><b>{_esc(t.get('ticker','SPY'))}</b> &middot; {_strat(t)} <span class="badge {cls}">{label}</span></div>
+            # Collapsed one-liner by default (user request 2026-07-13): the
+            # summary carries ticker/strategy/expiry/status; legs + MTM +
+            # slippage live behind the tap.
+            cards.append(f'''<details class="fold pos-fold">
+  <summary><b>{_esc(t.get('ticker','SPY'))}</b> &middot; {_strat(t)}
+  <span class="muted" style="font-size:.82rem">exp {_esc(_exp(t))}</span>
+  <span class="badge {cls}">{label}</span></summary>
+  <div class="fold-body">
   {_legs(t)}
-  <div class="muted" style="margin-top:.25rem">Exp {_esc(_exp(t))} &middot; opened {_when(t) or '—'} &middot; watchdog tracking</div>
+  <div class="muted" style="margin-top:.25rem">opened {_when(t) or '—'} &middot; watchdog tracking</div>
   {_live_mtm_badge(t)}
   {_slip(t)}
-</div>''')
+  </div>
+</details>''')
         live_html = "\n".join(cards)
     else:
         live_html = ('<div class="empty">No live positions logged. Mirror a play on '
@@ -1107,12 +1238,13 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None) -> str:
     )
     condor_card = (
         '<div class="card span-5">'
-        '<div class="kicker"><span class="dot"></span>Condor <span class="sep">·</span> current price</div>'
-        '<div class="cp-note">Missed the alert? A condor off SPY right now — mirror it, then log.</div>'
-        f'{_render_condor_calc(spot, vix)}'
-        '<div class="kicker" style="margin-top:1rem"><span class="dot"></span>'
-        'Low capital <span class="sep">·</span> butterfly</div>'
-        f'{_render_butterfly_calc(spot, vix)}</div>'
+        '<div class="kicker"><span class="dot"></span>Quick calcs <span class="sep">·</span> at current price</div>'
+        '<div class="cp-note">Missed the alert? Build one off the live price — mirror it, then log.</div>'
+        '<details class="fold calc-fold"><summary>Iron condor @ current price</summary>'
+        f'<div class="fold-body">{_render_condor_calc(spot, vix)}</div></details>'
+        '<details class="fold calc-fold"><summary>Low-capital butterfly</summary>'
+        f'<div class="fold-body">{_render_butterfly_calc(spot, vix)}</div></details>'
+        '</div>'
     )
     plays_card = (
         '<div class="card span-12">'
@@ -1122,7 +1254,8 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None) -> str:
         '<a class="btn-ghost" href="/copilot/log">+ Log a trade I built myself</a></div>'
         '</div>'
     )
-    body = stat_row + f'<div class="dash">{positions_card}{condor_card}{plays_card}</div>'
+    todays_card = _render_todays_play_card(plan, walls)
+    body = stat_row + f'<div class="dash">{todays_card}{positions_card}{condor_card}{plays_card}</div>'
     return _render_page(
         title      = "Trading Assistant - Copilot",
         heading    = "Trade Copilot",
@@ -3028,13 +3161,46 @@ def trades_page():
     return HTMLResponse(_render_trades(trades))
 
 
+def _et_today_iso() -> str:
+    """Journal + plans stamp US/Eastern dates — never compare with the
+    host-local date.today() (11pm-midnight CT window bug, found 07-10)."""
+    import pytz
+    from datetime import datetime
+    return datetime.now(pytz.timezone("US/Eastern")).date().isoformat()
+
+
+_WALLS_TTL_S = 600
+_walls_cache: dict = {}   # ticker -> (monotonic_ts, walls)
+
+
+def _copilot_walls(spot) -> dict:
+    """Option walls for the why-panel, cached 10 min — the home screen must
+    not pay a full chain fetch on every load."""
+    import time as _time
+    hit = _walls_cache.get("SPY")
+    if hit and _time.monotonic() - hit[0] < _WALLS_TTL_S:
+        return hit[1]
+    walls = _fetch_spy_walls_for_today(spot)
+    _walls_cache["SPY"] = (_time.monotonic(), walls)
+    return walls
+
+
 @app.get("/copilot", response_class=HTMLResponse)
 def copilot_page():
-    """Trade copilot — your live positions (watchdog-tracked) + plays to mirror."""
+    """Trade copilot — today's play under the price, live positions
+    (watchdog-tracked, collapsed) + plays to mirror."""
     opens = TradeRecorder().get_open_trades()
     live  = [t for t in opens if t.get("book") == "live"]
     plays = [t for t in opens if (t.get("book") or "disciplined") == "disciplined"]
-    return HTMLResponse(_render_copilot(live, plays, _spy_spot(), _spy_vix()))
+    spot  = _spy_spot()
+    plan  = None
+    try:
+        plan = PlanLogger().get_plan(_et_today_iso())
+    except Exception as e:
+        logger.warning(f"/copilot plan fetch failed: {e}")
+    walls = _copilot_walls(spot) if (plan and spot) else {}
+    return HTMLResponse(_render_copilot(live, plays, spot, _spy_vix(),
+                                        plan=plan, walls=walls))
 
 
 @app.post("/copilot/placed", response_class=HTMLResponse)
@@ -3189,8 +3355,7 @@ def macro_page():
 def today_page():
     """Today's morning brief: play, thesis, skip/watch, macro, plus a
     SPY sparkline and a "where price sits vs heavy strikes" summary."""
-    from datetime import date
-    plan       = PlanLogger().get_plan(date.today().isoformat())
+    plan       = PlanLogger().get_plan(_et_today_iso())
     spy_closes = _fetch_spy_closes_for_today(days=30) if plan else []
     spot       = spy_closes[-1] if spy_closes else None
     spy_walls  = _fetch_spy_walls_for_today(spot)   if spot     else {}
