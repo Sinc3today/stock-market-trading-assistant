@@ -1415,3 +1415,48 @@ def test_copilot_positions_and_risk_bundled_at_bottom(client, app_modules, monke
     i_mirror = html.index("mirror on RH")
     i_risk   = html.index("Positions &amp; risk")
     assert i_price < i_play < i_pos < i_calc < i_mirror < i_risk
+
+
+def _age_trade(app_modules, trade_id, iso_date):
+    """Rewrite a seeded trade's entry_date directly in the tmp trades.json."""
+    import json as _json
+    import config as _cfg
+    path = os.path.join(_cfg.LOG_DIR, "trades.json")
+    with open(path) as f:
+        trades = _json.load(f)
+    for t in trades:
+        if t.get("trade_id") == trade_id:
+            t["entry_date"] = f"{iso_date} 09:45 AM EST"
+    with open(path, "w") as f:
+        _json.dump(trades, f)
+
+
+def test_copilot_mirror_section_hides_stale_plays(client, app_modules, monkeypatch):
+    # 2026-07-14 feedback: a credit spread opened 06-29 was still presented as
+    # a "today's play" to mirror. Mirroring is same-day actionable only.
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app)
+    from journal.trade_recorder import TradeRecorder
+    tid = TradeRecorder().log_entry(
+        ticker="SPY", entry_price=1.77, size=1, trade_type="credit_spread",
+        strategy="credit_spread", direction="bullish", mode="swing",
+        legs=[{"action": "buy", "option_type": "put", "strike": 724.0,
+               "expiration": "2026-08-07"}],
+        max_profit=171.0, max_loss=329.0, book="disciplined",
+    )
+    _age_trade(app_modules, tid, "2026-06-29")
+    html = client.get("/copilot").text
+    assert "SELL $729" not in html and "$724" not in html
+    assert "No new plays today" in html
+
+
+def test_mobile_css_collapses_every_span_including_12():
+    # 2026-07-14 regression: span-12 was missing from the mobile grid override,
+    # so its `span 12` forced 11 implicit 0-width columns whose GAPS ate ~130px
+    # and left span-7/span-5 cards at ~70% width on phones.
+    from alerts.web_app import _MOBILE_CSS
+    import re
+    m = re.search(r"\.span-3[^{]*\{grid-column:([^}]+)\}", _MOBILE_CSS)
+    assert m, "mobile span override missing"
+    assert ".span-12" in m.group(0), "span-12 must be included in the mobile override"
+    assert m.group(1).strip() == "auto", "single-column grid wants grid-column:auto"

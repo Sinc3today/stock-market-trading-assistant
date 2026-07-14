@@ -371,7 +371,9 @@ _MOBILE_CSS = """
   .grid{grid-template-columns:1fr}
   .row{flex-direction:column}
   .dash{grid-template-columns:1fr;gap:.75rem}
-  .span-3,.span-4,.span-5,.span-6,.span-7,.span-8{grid-column:1/-1}
+  /* auto (not 1/-1): span-12's `span 12` would otherwise force 11 implicit
+     0-width columns whose gaps eat ~130px and squeeze the other cards */
+  .span-3,.span-4,.span-5,.span-6,.span-7,.span-8,.span-12{grid-column:auto}
   #lvl-chart{height:360px !important}
 }
 """
@@ -1198,7 +1200,8 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
 </div>''')
         plays_html = "\n".join(cards)
     else:
-        plays_html = '<div class="empty">No open plays to mirror right now.</div>'
+        plays_html = ('<div class="empty">No new plays today — entries land here '
+                      'the moment the bot opens one (09:45–15:00 ET).</div>')
 
     # ── Stat row (Image-1 dashboard style) ──────────────────────────────
     from alerts.sparkline import sparkline_svg, delta_chip
@@ -3202,7 +3205,13 @@ def copilot_page():
     (watchdog-tracked, collapsed) + plays to mirror."""
     opens = TradeRecorder().get_open_trades()
     live  = [t for t in opens if t.get("book") == "live"]
-    plays = [t for t in opens if (t.get("book") or "disciplined") == "disciplined"]
+    # Mirror section is same-day actionable ONLY — a play opened weeks ago is
+    # not mirrorable at today's prices (user feedback 2026-07-14: a 06-29
+    # credit spread was still shown as "today's play").
+    et_today = _et_today_iso()
+    plays = [t for t in opens
+             if (t.get("book") or "disciplined") == "disciplined"
+             and str(t.get("entry_date", "")).startswith(et_today)]
     spot  = _spy_spot()
     plan  = None
     try:
