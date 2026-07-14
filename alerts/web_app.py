@@ -837,6 +837,9 @@ details.fold>.fold-body{padding:.15rem .75rem .7rem;border-top:1px solid var(--b
 .why-sec{margin:.6rem 0 .15rem;font-size:.72rem;color:var(--fg-subtle,#a1a1aa);
   text-transform:uppercase;letter-spacing:.05em}
 .play-head{font-size:1.02rem;font-weight:600;margin:.2rem 0 .1rem}
+.calc-warns{margin:.45rem 0}
+.calc-warn{font-size:.82rem;color:var(--warn,#d97706);border-left:3px solid var(--warn,#d97706);
+  padding:.25rem .5rem;margin:.25rem 0;background:rgba(217,119,6,.07);border-radius:0 5px 5px 0}
 """
 
 
@@ -861,12 +864,59 @@ def _spy_vix():
 
 
 def _priced_stamp() -> str:
-    """'priced 9:41:07 AM ET' — when the calc's spot/VIX were fetched, so the
-    user can judge how stale 'current price' is before mirroring."""
+    """'priced 9:41:07 AM ET · 07-14-26' — when the calc's spot/VIX were
+    fetched, so the user can judge staleness before mirroring."""
     import pytz
     from datetime import datetime
     now = datetime.now(pytz.timezone("US/Eastern"))
-    return "priced " + now.strftime("%I:%M:%S %p").lstrip("0") + " ET"
+    return ("priced " + now.strftime("%I:%M:%S %p").lstrip("0") + " ET &middot; "
+            + now.strftime("%m-%d-%y"))
+
+
+def _calc_warnings(vix) -> list[str]:
+    """Context warnings for the quick calcs — the studies, applied to the trade
+    the user is about to build by hand. Best-effort; empty list on any failure."""
+    warns = []
+    try:
+        plan = PlanLogger().get_plan(_et_today_iso()) or {}
+        reg = str(plan.get("regime") or "")
+        if reg.startswith("trending"):
+            warns.append(
+                f"Today's regime is {reg.replace('_', ' ')} — condors/butterflies "
+                f"are validated in CHOPPY regimes; this is an off-regime trade "
+                f"(a trending market walks through short strikes)")
+    except Exception:
+        pass
+    if isinstance(vix, (int, float)):
+        if vix >= 20:
+            warns.append(
+                f"VIX {vix:.0f} — stressed tape: premium selling wins less here "
+                f"and weekend gap risk runs 3-7× normal (gap study)")
+        elif vix >= 18:
+            warns.append(
+                f"VIX {vix:.1f} in the 18-22 transition zone — the bot itself "
+                f"would only trade half-size here")
+    try:
+        from data.event_calendar import EventCalendar
+        for e in EventCalendar().get_next_events(days=2) or []:
+            if e.get("days_away", 99) <= 1:
+                when = "today" if e.get("days_away") == 0 else "tomorrow"
+                warns.append(
+                    f"{e.get('type', 'Macro event')} {when} — the bot stands "
+                    f"aside within a day of CPI/FOMC/NFP; the release can gap "
+                    f"straight through a short strike")
+    except Exception:
+        pass
+    return warns
+
+
+def _calc_warn_html(vix) -> str:
+    warns = _calc_warnings(vix)
+    if not warns:
+        return ""
+    return ('<div class="calc-warns">' +
+            "".join(f'<div class="calc-warn">&#9888; {_esc(w)}</div>' for w in warns) +
+            '</div>')
 
 
 def _calc_refresh_btn(kind: str) -> str:
@@ -902,6 +952,11 @@ def _render_condor_calc(spot, vix) -> str:
         f'Est. credit ${c["credit"]:.2f} &middot; max profit ${c["max_profit"]:.0f} &middot; '
         f'max loss ${c["max_loss"]:.0f} &middot; breakevens '
         f'{c["breakeven_low"]:g}–{c["breakeven_high"]:g} &middot; exp {_esc(_fdate(c["expiry"]))}</div>'
+        '<div class="cp-note" style="margin-top:.4rem">'
+        f'<b>Risk:</b> RH holds the max loss (${c["max_loss"]:.0f}/lot) as collateral '
+        f'until you close or expire. A breach costs up to that; the watchdog pages you '
+        f'first. Hist. 74% win closing at the 70% target (5-yr backtest).</div>'
+        f'{_calc_warn_html(vix)}'
         f'<a class="btn-ghost" style="margin-top:.6rem" href="{log_url}">Log this condor</a>'
         f'{_calc_refresh_btn("condor")}'
         '</div>'
@@ -922,6 +977,9 @@ def _render_butterfly_calc(spot, vix) -> str:
         return ""
     from alerts.stop_watchdog import rh_leg_lines
     legs = "".join(f"<div class='leg'>{_esc(l)}</div>" for l in rh_leg_lines(b["legs"]))
+    fly_log_url = (f"/copilot/log?ticker=SPY&expiry={b['expiry']}"
+                   f"&fly_lo={b['lower']:g}&fly_mid={b['center']:g}"
+                   f"&fly_hi={b['upper']:g}&entry_price={b['capital']/100:g}")
     return (
         '<div class="alert-card">'
         f'<div class="muted">Long call butterfly {b["lower"]:g}/{b["center"]:g}/{b["upper"]:g} '
@@ -931,9 +989,14 @@ def _render_butterfly_calc(spot, vix) -> str:
         f'Cost (= max loss, no collateral) <b>${b["capital"]:,.0f}</b> &middot; '
         f'max profit ${b["max_profit"]:,.0f} at pin &middot; profits '
         f'{b["breakeven_low"]:g}–{b["breakeven_high"]:g} &middot; exp {_esc(_fdate(b["expiry"]))}</div>'
-        '<div class="cp-note" style="margin-top:.4rem">~half a condor\'s capital; '
-        'lower win-rate &amp; ROC (see STRUCTURE_COMPARISON). Log it via screenshot '
-        'after placing — the 4-slot form can\'t hold a butterfly.</div>'
+        '<div class="cp-note" style="margin-top:.4rem">'
+        f'<b>Risk:</b> the ${b["capital"]:,.0f} debit is all you can lose — no '
+        f'collateral held, nothing to breach. The flip side: it only pays if SPY '
+        f'pins near {b["center"]:g} into expiry (lower win-rate than the condor; '
+        'see STRUCTURE_COMPARISON).</div>'
+        f'{_calc_warn_html(vix)}'
+        f'<a class="btn-ghost" style="margin-top:.6rem" href="{fly_log_url}">'
+        'Log this butterfly</a>'
         f'{_calc_refresh_btn("butterfly")}'
         '</div>'
     )
@@ -1360,6 +1423,12 @@ def _render_copilot_log(prefill: dict | None = None, error: str | None = None,
         f'<div><label>Sell call</label><input name="sc" value="{_v("sc")}"></div>'
         f'<div><label>Buy put</label><input name="bp" value="{_v("bp")}"></div>'
         f'<div><label>Sell put</label><input name="sp" value="{_v("sp")}"></div>'
+        '</div>'
+        '<label>Butterfly (call, 1-2-1) — instead of the slots above</label>'
+        '<div class="cp-grid" style="grid-template-columns:1fr 1fr 1fr">'
+        f'<div><label>Lower buy</label><input name="fly_lo" value="{_v("fly_lo")}"></div>'
+        f'<div><label>Center sell &times;2</label><input name="fly_mid" value="{_v("fly_mid")}"></div>'
+        f'<div><label>Upper buy</label><input name="fly_hi" value="{_v("fly_hi")}"></div>'
         '</div>'
         '<div class="cp-grid">'
         f'<div><label>Max profit ($, optional)</label><input name="max_profit" value="{_v("max_profit")}"></div>'
@@ -3313,16 +3382,19 @@ def copilot_shot(token: str):
 @app.get("/copilot/log", response_class=HTMLResponse)
 def copilot_log_form(ticker: str = "", expiry: str = "", entry_price: str = "",
                      contracts: str = "", bc: str = "", sc: str = "",
-                     bp: str = "", sp: str = ""):
+                     bp: str = "", sp: str = "",
+                     fly_lo: str = "", fly_mid: str = "", fly_hi: str = ""):
     """Manual-log form. Blank by default; pre-filled from query params when opened
-    via the condor calculator's 'Log this condor' link."""
+    via a calculator's 'Log this …' link (condor slots or butterfly strikes)."""
     prefill = {"ticker": ticker, "expiry": expiry, "entry_price": entry_price,
-               "contracts": contracts, "bc": bc, "sc": sc, "bp": bp, "sp": sp}
+               "contracts": contracts, "bc": bc, "sc": sc, "bp": bp, "sp": sp,
+               "fly_lo": fly_lo, "fly_mid": fly_mid, "fly_hi": fly_hi}
     if any(prefill.values()):
+        which = "butterfly" if fly_mid else "condor"
         return HTMLResponse(_render_copilot_log(
             prefill=prefill,
-            intro="Pre-filled from the condor calculator — confirm your real credit "
-                  "+ contracts (and adjust strikes to the live chain), then log."))
+            intro=f"Pre-filled from the {which} calculator — confirm your real "
+                  "fill + contracts (and adjust strikes to the live chain), then log."))
     return HTMLResponse(_render_copilot_log())
 
 
@@ -3362,13 +3434,15 @@ def copilot_log_submit(
     entry_price: str = Form(""), contracts: str = Form(""),
     max_profit: str = Form(""), max_loss: str = Form(""), bot_mark: str = Form(""),
     bc: str = Form(""), sc: str = Form(""), bp: str = Form(""), sp: str = Form(""),
+    fly_lo: str = Form(""), fly_mid: str = Form(""), fly_hi: str = Form(""),
 ):
     """Log a user-built trade so the smart-stop watchdog tracks it (book=live)."""
     from alerts.copilot_log import build_live_trade_kwargs
     form = {"ticker": ticker, "expiry": expiry, "entry_price": entry_price,
             "contracts": contracts, "max_profit": max_profit, "max_loss": max_loss,
             "bot_mark": bot_mark,
-            "bc": bc, "sc": sc, "bp": bp, "sp": sp}
+            "bc": bc, "sc": sc, "bp": bp, "sp": sp,
+            "fly_lo": fly_lo, "fly_mid": fly_mid, "fly_hi": fly_hi}
     try:
         kwargs = build_live_trade_kwargs(form)
     except ValueError as e:

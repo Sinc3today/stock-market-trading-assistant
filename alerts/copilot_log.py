@@ -37,6 +37,41 @@ def build_live_trade_kwargs(form: dict) -> dict:
     # Accept MM-DD-YY (house display style) or ISO; STORE ISO (parsers depend on it)
     from alerts.fmt import parse_date_flex
     expiry = parse_date_flex(form.get("expiry")) or None
+
+    # ── Butterfly path (fly_lo / fly_mid / fly_hi) ───────────────────────
+    # 1-2-1 call butterfly as FOUR legs (middle sell listed twice) so the
+    # watchdog + MTM marking work without per-leg quantity support.
+    fly_lo, fly_mid, fly_hi = _f(form, "fly_lo"), _f(form, "fly_mid"), _f(form, "fly_hi")
+    if fly_lo is not None and fly_mid is not None and fly_hi is not None:
+        if not (fly_lo < fly_mid < fly_hi):
+            raise ValueError("butterfly strikes must be lower < center < upper")
+        legs = [
+            _leg("BUY",  "CALL", fly_lo,  expiry),
+            _leg("SELL", "CALL", fly_mid, expiry),
+            _leg("SELL", "CALL", fly_mid, expiry),
+            _leg("BUY",  "CALL", fly_hi,  expiry),
+        ]
+        contracts = _f(form, "contracts")
+        size = int(contracts) if contracts and contracts > 0 else 1
+        debit = _f(form, "entry_price") or 0.0
+        width = fly_mid - fly_lo
+        return {
+            "ticker": ticker,
+            "entry_price": debit,
+            "size": size,
+            "trade_type": "butterfly",
+            "strategy": "butterfly",
+            "direction": "neutral",
+            "mode": "swing",
+            "legs": legs,
+            "max_profit": _f(form, "max_profit") or round((width - debit) * 100 * size, 2),
+            "max_loss": _f(form, "max_loss") or round(debit * 100 * size, 2),
+            "book": "live",
+            "source": "user-manual",
+            "notes": "[LIVE] manually logged via copilot (butterfly)",
+            "bot_mark": _f(form, "bot_mark"),
+        }
+
     bc, sc, bp, sp = _f(form, "bc"), _f(form, "sc"), _f(form, "bp"), _f(form, "sp")
 
     legs = []

@@ -123,3 +123,27 @@ def test_prefill_from_extracted_maps_legs_to_slots():
     assert pf["entry_price"] == "1.1"
     assert pf["bc"] == "781" and pf["sc"] == "776"
     assert pf["bp"] == "695" and pf["sp"] == "700"
+
+
+def test_build_kwargs_butterfly_from_fly_fields():
+    # "Log this butterfly" (user request 2026-07-14): fly_lo/mid/hi build a
+    # 1-2-1 call butterfly as FOUR legs (the middle sell twice) so the
+    # watchdog + MTM marking need no per-leg quantity support.
+    from alerts.copilot_log import build_live_trade_kwargs
+    kw = build_live_trade_kwargs({
+        "fly_lo": "740", "fly_mid": "750", "fly_hi": "760",
+        "entry_price": "2.05", "expiry": "08-28-26", "contracts": "1",
+    })
+    assert kw["strategy"] == "butterfly"
+    assert kw["direction"] == "neutral"
+    legs = kw["legs"]
+    assert len(legs) == 4
+    sells = [l for l in legs if l["action"] == "SELL"]
+    assert len(sells) == 2 and all(l["strike"] == 750.0 for l in sells)
+    buys = sorted(l["strike"] for l in legs if l["action"] == "BUY")
+    assert buys == [740.0, 760.0]
+    assert all(l["option_type"] == "CALL" for l in legs)
+    assert all(l["expiry"] == "2026-08-28" for l in legs)
+    # debit = max loss; max profit = (width - debit) * 100
+    assert kw["max_loss"] == pytest.approx(205.0)
+    assert kw["max_profit"] == pytest.approx((10 - 2.05) * 100)

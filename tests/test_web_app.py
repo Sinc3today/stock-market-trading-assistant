@@ -1263,7 +1263,8 @@ def test_copilot_log_prefilled_from_calculator(client):
                    "&bc=794&sc=789&bp=701&sp=706")
     assert r.status_code == 200
     assert 'value="789"' in r.text and 'value="706"' in r.text
-    assert "confirm your real credit" in r.text.lower()
+    assert "confirm your real fill" in r.text.lower()
+    assert "pre-filled from the condor calculator" in r.text.lower()
 
 
 def test_copilot_log_blank_without_params(client):
@@ -1484,3 +1485,50 @@ def test_copilot_page_wires_calc_refresh_buttons(client, app_modules, monkeypatc
     assert 'data-src="/copilot/calc/butterfly"' in html
     assert 'id="calc-condor"' in html and 'id="calc-butterfly"' in html
     assert "calc-refresh" in html and "fetch(" in html   # the swap script
+
+
+def test_calc_stamp_includes_date_and_risk_lines(client, app_modules, monkeypatch):
+    import re
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app)
+    condor = client.get("/copilot/calc/condor").text
+    # priced h:mm:ss AM/PM ET · MM-DD-YY (house date style)
+    assert re.search(r"priced \d{1,2}:\d{2}:\d{2} (AM|PM) ET &middot; \d{2}-\d{2}-\d{2}", condor)
+    # correct risk, spelled out: collateral held + historical context
+    assert "collateral" in condor and "74" in condor
+    fly = client.get("/copilot/calc/butterfly").text
+    assert re.search(r"priced \d{1,2}:\d{2}:\d{2} (AM|PM) ET &middot; \d{2}-\d{2}-\d{2}", fly)
+    assert "all you can lose" in fly
+
+
+def test_calc_warnings_off_regime_and_stressed_tape(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    plan = _sample_plan()                       # regime: trending_up_calm
+    _quiet_copilot_net(monkeypatch, web_app, plan=plan)
+    monkeypatch.setattr(web_app, "_spy_vix", lambda: 21.0)
+    import data.event_calendar as ec
+    monkeypatch.setattr(ec.EventCalendar, "get_next_events",
+                        lambda self, days=2: [{"date": "2026-07-14", "type": "CPI",
+                                               "days_away": 1}])
+    condor = client.get("/copilot/calc/condor").text
+    assert "off-regime" in condor               # trending regime, neutral trade
+    assert "VIX 21" in condor                   # stressed tape
+    assert "CPI tomorrow" in condor             # event proximity
+    # calm/chop day -> no warnings block
+    plan2 = dict(plan, regime="choppy_low_vol")
+    _quiet_copilot_net(monkeypatch, web_app, plan=plan2)
+    monkeypatch.setattr(ec.EventCalendar, "get_next_events", lambda self, days=2: [])
+    monkeypatch.setattr(web_app, "_spy_vix", lambda: 15.0)
+    quiet = client.get("/copilot/calc/condor").text
+    assert "off-regime" not in quiet and "VIX 21" not in quiet
+
+
+def test_butterfly_has_log_button_and_prefilled_form(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app)
+    fly = client.get("/copilot/calc/butterfly").text
+    assert "Log this butterfly" in fly
+    r = client.get("/copilot/log?fly_lo=740&fly_mid=750&fly_hi=760"
+                   "&expiry=2026-08-28&entry_price=2.05")
+    assert r.status_code == 200
+    assert 'name="fly_mid" value="750"' in r.text.replace("750.0", "750")
