@@ -258,6 +258,22 @@ def run_stop_watchdog():
         logger.exception(f"stop_watchdog failed: {e}")
 
 
+def run_walls_snapshot():
+    """10:05 ET weekdays: log today's option walls (max pain / OI walls) to
+    logs/walls_history.jsonl. Historical OI doesn't exist retroactively — this
+    forward log is what makes the real options-magnet study possible
+    (docs/MAGNET_STUDY.md, 2026-07-15)."""
+    try:
+        from alerts.stop_watchdog import yf_spot
+        from alerts.web_app import _fetch_spy_walls_for_today
+        from learning.walls_logger import snapshot
+        spot = yf_spot("SPY")
+        if spot:
+            snapshot(spot, _fetch_spy_walls_for_today(spot))
+    except Exception as e:
+        logger.exception(f"walls snapshot failed: {e}")
+
+
 def run_sunday_gap_sentinel():
     """22:04 ET Sunday: ES futures already show most of Monday's gap — warn
     ~11h early if one is forming against open short-strike positions."""
@@ -389,6 +405,15 @@ def start_scheduler():
         CronTrigger(day_of_week="sun", hour=22, minute=4, timezone=eastern),
         id="sunday_gap_sentinel",
         name="Sunday gap sentinel",
+    )
+
+    # Daily wall snapshot — 10:05 ET weekdays (forward data for the future
+    # options-magnet study; OI history can't be bought retroactively).
+    scheduler.add_job(
+        run_walls_snapshot,
+        CronTrigger(day_of_week="mon-fri", hour=10, minute=5, timezone=eastern),
+        id="walls_snapshot",
+        name="Option walls snapshot",
     )
 
     # Options flow scan — 9:35 AM ET weekdays

@@ -225,6 +225,30 @@ def job_spy_entry(polygon_client, ivr_client):
         ivr = 0.0
     _run_daily_dipbuy(polygon_client, ivr=ivr)
     _run_qqq_condor_forward(polygon_client)
+    _run_seven_dte_forward(polygon_client)
+
+
+def _run_seven_dte_forward(polygon_client) -> None:
+    """7DTE SPY condor PAPER candidate on condor-regime days (Standing Rule
+    #10 — isolated). Best undeployed rung from the DTE-ladder study; must
+    earn live promotion on the paper record (bar in the module docstring)."""
+    try:
+        from journal.plan_logger import PlanLogger
+        from learning.seven_dte_forward import _today_et, maybe_open_seven_dte
+        plan = PlanLogger().get_plan(_today_et().isoformat()) or {}
+        if plan.get("strategy") != "iron_condor":
+            return
+        df = polygon_client.get_bars(
+            "SPY", timeframe=config.SWING_PRIMARY_TIMEFRAME, limit=3, days_back=5)
+        if df is None or not len(df):
+            return
+        spy_spot = float(df["close"].iloc[-1])
+        from alerts.stop_watchdog import yf_spot
+        vix = yf_spot("^VIX") or 16.0
+        from journal.trade_recorder import TradeRecorder
+        maybe_open_seven_dte(TradeRecorder(), spy_spot=spy_spot, vix=vix)
+    except Exception as e:
+        logger.warning(f"7DTE condor forward-test failed (ignored): {e}")
 
 
 def _run_qqq_condor_forward(polygon_client) -> None:
