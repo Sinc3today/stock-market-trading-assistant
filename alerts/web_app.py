@@ -3346,6 +3346,18 @@ _REGIME_CSS = """
 .pop-row .pop-lbl{font-size:.68rem;color:var(--fg-subtle,#a1a1aa);text-transform:uppercase;
   letter-spacing:.04em;display:block}
 @media (max-width:860px){.regime-map{grid-template-columns:repeat(2,1fr)}}
+.pb-wrap{overflow-x:auto;margin:.5rem -0.2rem 0}
+.pb{width:100%;border-collapse:collapse;font-size:.8rem;min-width:640px}
+.pb th{text-align:left;font-size:.68rem;color:var(--fg-subtle,#a1a1aa);text-transform:uppercase;
+  letter-spacing:.05em;padding:.35rem .5rem;border-bottom:1px solid var(--border,#e4e4e7)}
+.pb td{padding:.4rem .5rem;border-bottom:1px solid var(--border,#e4e4e7);vertical-align:top}
+.pb .pb-status{font-family:var(--font-mono,monospace);font-size:.72rem;font-weight:700;
+  padding:.1rem .4rem;border-radius:4px;white-space:nowrap}
+.pb-LIVE{background:rgba(22,163,74,.15);color:var(--ok,#16a34a)}
+.pb-READY{background:rgba(22,163,74,.08);color:var(--ok,#16a34a)}
+.pb-PAPER{background:rgba(217,119,6,.12);color:var(--warn,#d97706)}
+.pb-REJECTED{background:rgba(220,38,38,.10);color:var(--err,#dc2626)}
+.pb-NEVER{background:rgba(220,38,38,.18);color:var(--err,#dc2626)}
 """
 
 
@@ -3467,7 +3479,29 @@ def _render_regime_page(state: dict | None) -> str:
             'When they disagree a lot, trust the backtest; it includes management.</div>'
             '</div>')
 
-    body = f'<div class="dash">{head_card}{why_card}{map_card}{structs_html}</div>'
+    from alerts.regime_view import PLAYBOOK
+    rows = "".join(
+        '<tr>'
+        f'<td>{_esc(r["regime"])}</td>'
+        f'<td><b>{_esc(r["play"])}</b></td>'
+        f'<td style="white-space:nowrap">{_esc(r["dte"])}</td>'
+        f'<td><span class="pb-status pb-{r["status"]}">{r["status"]}</span></td>'
+        f'<td>{_esc(r["evidence"])}</td>'
+        f'<td class="muted" style="font-size:.72rem;white-space:nowrap">{_esc(r["source"])}</td>'
+        '</tr>' for r in PLAYBOOK)
+    playbook_card = (
+        '<div class="card span-12">'
+        '<div class="kicker"><span class="dot"></span>The playbook &middot; '
+        'every play we\'ve researched</div>'
+        '<div class="cp-note">This IS the strategy: trade only the green rows, in their '
+        'regime, at their DTE. Amber = proving itself on paper first. Red = tested and '
+        'buried (kept visible so we don\'t re-litigate them).</div>'
+        '<div class="pb-wrap"><table class="pb">'
+        '<tr><th>Regime</th><th>Play</th><th>DTE</th><th>Status</th>'
+        '<th>Evidence</th><th>Study</th></tr>'
+        f'{rows}</table></div></div>')
+
+    body = f'<div class="dash">{head_card}{why_card}{map_card}{structs_html}{playbook_card}</div>'
     return _render_page(title="Trading Assistant - Regime", heading="Regime Detector",
                         body=body, css=_INDEX_CSS + _COPILOT_CSS + _REGIME_CSS,
                         active_nav="regime")

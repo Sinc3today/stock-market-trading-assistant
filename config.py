@@ -190,9 +190,20 @@ CONCENTRATION_GUARD_PCT     = 1.5
 # slow 45DTE positions can't crowd it out — but entries stay deliberately spread:
 # at most N disciplined opens per day, and never two opens within the spacing
 # window (entries minutes apart ride the same SPY move = correlated losses).
-MAX_CONCURRENT_SHORT_DTE    = 1     # 0DTE/1-3DTE disciplined slots (own budget)
+MAX_CONCURRENT_SHORT_DTE    = 1     # legacy fallback (superseded by the dict below)
 MAX_DAILY_DISCIPLINED_OPENS = 2     # "1-2 trades a day"
 MIN_ENTRY_SPACING_MIN       = 90    # minutes between disciplined opens
+
+# Per-DTE-bucket disciplined slots (user, 2026-07-15): 3 concurrent per rung.
+# A rung only actually TRADES once something generates entries for it — today
+# that's 1-3DTE (intraday router) and 45DTE (daily play). 7/14/21/30DTE passed
+# the ladder study incl. the 10% fill haircut (docs/DTE_LADDER_STUDY.md) and
+# get slots now so paper generators can be wired next. 0DTE shares the 1-3DTE
+# pool (it's learning-book-gated anyway). Daily-opens + spacing caps above
+# still pace total risk; the concentration guard blocks stacked strikes.
+DISCIPLINED_BUCKET_SLOTS = {
+    "1-3DTE": 3, "7DTE": 3, "14DTE": 3, "21DTE": 3, "30DTE": 3, "45DTE": 3,
+}
 
 # News scanner / Polygon API rate limits.
 # Polygon free tier = 5 req/sec; 1.5s between ticker fetches keeps us safe.

@@ -151,6 +151,78 @@ REGIME_CELLS = [
 ]
 
 
+# ── the playbook: every regime x play we've researched, one table ──────────
+# status: LIVE (real-money mirroring) / READY (validated, engine trades it) /
+# PAPER (candidate book, zero capital) / REJECTED (tested, no edge) /
+# NEVER (regime itself is untradeable)
+PLAYBOOK = [
+    {"regime": "Choppy + calm", "play": "Iron condor", "dte": "1-3",
+     "status": "LIVE",
+     "evidence": "73.8% win under touch-exit + 10% fill haircut, no negative years; live 5W/0L",
+     "source": "SHORT_DTE_CONDOR_STUDY"},
+    {"regime": "Choppy + calm", "play": "Iron condor", "dte": "45",
+     "status": "LIVE",
+     "evidence": "74% win 5-yr tuned; model edge is fill-sensitive — live fills are the referee",
+     "source": "EDGE_ROBUSTNESS"},
+    {"regime": "Choppy + calm", "play": "Iron condor", "dte": "7",
+     "status": "PAPER",
+     "evidence": "Best ladder rung: 82% win, $33/trade even with 10% worse fills, both eras",
+     "source": "DTE_LADDER_STUDY"},
+    {"regime": "Choppy + calm", "play": "Iron condor", "dte": "14-30",
+     "status": "PAPER",
+     "evidence": "Ladder-pass but thinner ($14-19 avg under haircut; 30DTE nearly flat pre-2023)",
+     "source": "DTE_LADDER_STUDY"},
+    {"regime": "Choppy + calm", "play": "Long butterfly", "dte": "45",
+     "status": "REJECTED",
+     "evidence": "61% win, 5.8% return-on-capital vs condor's 7.6% — worse per dollar",
+     "source": "STRUCTURE_COMPARISON"},
+    {"regime": "Choppy + calm", "play": "Call debit spread", "dte": "≤30",
+     "status": "REJECTED",
+     "evidence": "Negative under fill haircut (42-46% win) — don't buy direction in chop",
+     "source": "DTE_LADDER_STUDY"},
+    {"regime": "Trending up + calm", "play": "Bull put credit", "dte": "45",
+     "status": "READY",
+     "evidence": "79-85% win, survives haircut at every DTE; the engine's pick",
+     "source": "DIRECTIONAL_SPREAD_STUDY"},
+    {"regime": "Trending up + calm", "play": "Bull call debit", "dte": "30-45",
+     "status": "READY",
+     "evidence": "68-76% win, ~2x the $ of the credit spread; 85% in the 7-9% extension band",
+     "source": "DIRECTIONAL_SPREAD_STUDY"},
+    {"regime": "Trending up + calm", "play": "Any bull entry", "dte": "any",
+     "status": "NEVER",
+     "evidence": "SKIP when SPY >9% above 200MA — 43% win pre-2023 (the extension gate)",
+     "source": "DIRECTIONAL_SPREAD_STUDY"},
+    {"regime": "Trending up + calm", "play": "Iron condor", "dte": "any",
+     "status": "REJECTED",
+     "evidence": "Passes thin but second-tier — trends walk through short strikes",
+     "source": "DTE_LADDER_STUDY"},
+    {"regime": "Trending down + calm", "play": "Bear spreads", "dte": "45",
+     "status": "PAPER",
+     "evidence": "Assumed symmetric to bull side — never separately validated",
+     "source": "—"},
+    {"regime": "Trending + high vol", "play": "Everything", "dte": "any",
+     "status": "NEVER",
+     "evidence": "19% win rate over 5 years; trading it half-size cost -$4,600",
+     "source": "CLAUDE.md tuned thresholds"},
+    {"regime": "Choppy + high vol", "play": "Everything", "dte": "any",
+     "status": "NEVER",
+     "evidence": "Vol expanding without direction is condor poison",
+     "source": "regime backtest"},
+    {"regime": "Event days (CPI/FOMC/NFP)", "play": "New entries", "dte": "any",
+     "status": "NEVER",
+     "evidence": "Brief stands down; (FOMC-condor exception studied: 79% n=14 — NOT deployed)",
+     "source": "FOMC study"},
+    {"regime": "Any", "play": "0DTE anything", "dte": "0",
+     "status": "REJECTED",
+     "evidence": "No edge as designed: -$515 on a full year of REAL option prices",
+     "source": "0DTE backtest (2026-05-21)"},
+    {"regime": "Any (QQQ)", "play": "QQQ condor / dip-buy", "dte": "45",
+     "status": "PAPER",
+     "evidence": "Dip-buy 81.8% OOS; condor bled 3 yrs pre-2024 — must survive a regime change",
+     "source": "QQQ_CONDOR_TRANSFER"},
+]
+
+
 # ── stress-tested structures per regime ────────────────────────────────────
 
 DTE = 45

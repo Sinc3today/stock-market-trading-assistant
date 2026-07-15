@@ -1588,3 +1588,17 @@ def test_copilot_why_panel_links_to_regime_page(client, app_modules, monkeypatch
     _quiet_copilot_net(monkeypatch, web_app, plan=_sample_plan())
     html = client.get("/copilot").text
     assert 'href="/regime"' in html
+
+
+def test_regime_page_shows_the_playbook_table(client, app_modules, monkeypatch):
+    # 2026-07-15: "I'm not sure what the strategy is" — the playbook table IS
+    # the strategy, visible on /regime: every researched play with its status.
+    _, web_app = app_modules
+    monkeypatch.setattr(web_app, "_fetch_regime_state", _canned_regime_state)
+    html = client.get("/regime").text
+    assert "The playbook" in html
+    for status in ("LIVE", "READY", "PAPER", "REJECTED", "NEVER"):
+        assert f'pb-{status}' in html
+    assert "73.8%" in html                 # 1-3DTE condor evidence
+    assert "DTE_LADDER_STUDY" in html      # the new study is cited
+    assert "19% win rate" in html          # trending-high-vol NEVER row

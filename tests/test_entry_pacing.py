@@ -65,17 +65,39 @@ def test_short_dte_has_its_own_slot(iso, monkeypatch):
     assert r["recorded"] is True
 
 
-def test_short_dte_slot_cap_enforced(iso):
-    from journal.trade_recorder import TradeRecorder
+def test_short_dte_slot_cap_enforced(iso, monkeypatch):
+    # 2026-07-15: per-bucket slots — 1-3DTE gets 3 concurrent (was 1); the 4th
+    # is blocked. Strikes spread far apart so the concentration guard stays out
+    # of the way; spacing/daily checks bypassed to isolate the cap under test.
+    import config
     from learning.paper_broker import PaperBroker
-    import learning.paper_broker as pb
+    monkeypatch.setattr(config, "MAX_DAILY_DISCIPLINED_OPENS", 99)
     broker = PaperBroker()
-    assert broker.execute_signal(_setup(sp=700, sc=800))["recorded"]
-    # second short-DTE while one is open -> blocked by its own 1-slot budget
-    # (spacing/daily checks are bypassed to isolate the cap under test)
-    r = broker.execute_signal({**_setup(sp=640, sc=860),
-                               "_test_bypass_pacing": True})
+    assert config.DISCIPLINED_BUCKET_SLOTS["1-3DTE"] == 3     # the new contract
+    setups = [_setup(sp=700, sc=800), _setup(sp=640, sc=860),
+              _setup(sp=580, sc=920), _setup(sp=520, sc=980)]
+    for st in setups[:3]:
+        assert broker.execute_signal({**st, "_test_bypass_pacing": True})["recorded"]
+    r = broker.execute_signal({**setups[3], "_test_bypass_pacing": True})
     assert r["recorded"] is False and "short_dte" in str(r.get("skipped_reason", ""))
+
+
+def test_bucket_slots_are_independent_pools(iso, monkeypatch):
+    # a full 1-3DTE pool must not block a 7DTE open (its own 3-slot pool)
+    import config
+    from learning.paper_broker import PaperBroker
+    monkeypatch.setattr(config, "MAX_DAILY_DISCIPLINED_OPENS", 99)
+    monkeypatch.setattr(config, "DISCIPLINED_BUCKET_SLOTS",
+                        {"1-3DTE": 1, "7DTE": 3, "45DTE": 3})
+    broker = PaperBroker()
+    assert broker.execute_signal({**_setup(sp=700, sc=800),
+                                  "_test_bypass_pacing": True})["recorded"]
+    blocked = broker.execute_signal({**_setup(sp=640, sc=860),
+                                     "_test_bypass_pacing": True})
+    assert blocked["recorded"] is False
+    seven = {**_setup(sp=580, sc=920), "dte_bucket": "7DTE",
+             "_test_bypass_pacing": True}
+    assert broker.execute_signal(seven)["recorded"] is True
 
 
 def test_daily_open_limit(iso, monkeypatch):

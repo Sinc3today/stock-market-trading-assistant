@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from loguru import logger
 
+import config
 from journal.trade_recorder import TradeRecorder
 from journal.plan_logger    import PlanLogger
 from learning.predictions   import PredictionLog, Prediction
@@ -77,6 +78,28 @@ class PaperBroker:
         self.predictions = prediction_log  or PredictionLog()
 
     # ── HELPERS ───────────────────────────────────────
+
+    @staticmethod
+    def _bucket_key(bucket) -> str:
+        """0DTE shares the 1-3DTE pool; legacy untagged trades are 45DTE."""
+        if bucket in ("0DTE", "1-3DTE"):
+            return "1-3DTE"
+        return bucket or "45DTE"
+
+    def _bucket_cap_state(self, bucket) -> tuple:
+        """-> (pool_key, cap, currently_open_in_pool) for a disciplined open."""
+        key = self._bucket_key(bucket)
+        slots = getattr(config, "DISCIPLINED_BUCKET_SLOTS", None) or {}
+        if key in slots:
+            cap = slots[key]
+        elif key == "1-3DTE":
+            cap = getattr(config, "MAX_CONCURRENT_SHORT_DTE", 1)
+        else:
+            cap = MAX_CONCURRENT_DISCIPLINED
+        open_n = sum(1 for t in self.trades.get_open_trades()
+                     if (t.get("book") or "disciplined") == "disciplined"
+                     and self._bucket_key(t.get("dte_bucket")) == key)
+        return key, cap, open_n
 
     def _open_count_by_book(self, book: str) -> int:
         """Count currently-open paper trades tagged with the given book.
@@ -260,10 +283,11 @@ class PaperBroker:
                 return {"prediction_date": today_str, "trade_id": None,
                         "recorded": False, "skipped": "concentration_guard"}
 
-        open_disc = self._open_count_by_book("disciplined")
-        if open_disc >= MAX_CONCURRENT_DISCIPLINED:
+        # Daily play lives in the 45DTE rung — per-bucket slots (2026-07-15).
+        _, cap45, open_45 = self._bucket_cap_state("45DTE")
+        if open_45 >= cap45:
             logger.info(
-                f"PaperBroker: disciplined cap reached ({open_disc}/{MAX_CONCURRENT_DISCIPLINED})"
+                f"PaperBroker: 45DTE slots full ({open_45}/{cap45})"
                 f" — prediction logged, no new position"
             )
             return {
@@ -350,29 +374,16 @@ class PaperBroker:
                     return {"trade_id": None, "recorded": False,
                             "skipped": "concentration_guard"}
 
-            # Smart caps (2026-07-10): short-DTE gets its OWN slot budget so the
-            # slow 45DTE book can't crowd out the fast cycle.
-            bucket = setup.get("dte_bucket")
-            if bucket in ("0DTE", "1-3DTE"):
-                cap = getattr(config, "MAX_CONCURRENT_SHORT_DTE", 1)
-                open_n = sum(1 for t in self.trades.get_open_trades()
-                             if t.get("book") == "disciplined"
-                             and t.get("dte_bucket") in ("0DTE", "1-3DTE"))
-                if open_n >= cap:
-                    logger.info(f"PaperBroker.execute_signal: short-DTE slot full "
-                                f"({open_n}/{cap}) — skipped")
-                    return {"trade_id": None, "recorded": False,
-                            "skipped_reason": "short_dte_slot_cap"}
-            else:
-                cap = MAX_CONCURRENT_DISCIPLINED
-                open_n = sum(1 for t in self.trades.get_open_trades()
-                             if t.get("book") == "disciplined"
-                             and t.get("dte_bucket") not in ("0DTE", "1-3DTE"))
-                if open_n >= cap:
-                    logger.info(f"PaperBroker.execute_signal: disciplined cap "
-                                f"reached ({open_n}/{cap}) — skipped")
-                    return {"trade_id": None, "recorded": False,
-                            "skipped_reason": "disciplined_book_cap"}
+            # Per-bucket slots (2026-07-15): each DTE rung has its own budget
+            # (config.DISCIPLINED_BUCKET_SLOTS) so no rung crowds out another.
+            key, cap, open_n = self._bucket_cap_state(setup.get("dte_bucket"))
+            if open_n >= cap:
+                reason = ("short_dte_slot_cap" if key == "1-3DTE"
+                          else "disciplined_book_cap")
+                logger.info(f"PaperBroker.execute_signal: {key} slots full "
+                            f"({open_n}/{cap}) — skipped")
+                return {"trade_id": None, "recorded": False,
+                        "skipped_reason": reason}
 
             # Entry pacing (user: "1-2 trades a day, not close together —
             # back-to-back entries ride the same SPY move").
