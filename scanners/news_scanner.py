@@ -20,6 +20,7 @@ import pytz
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import config
+from atomic_io import atomic_write_text
 
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_MODEL   = "claude-sonnet-4-6"
@@ -337,12 +338,23 @@ Flag anything that could override a technical signal (earnings, major catalyst).
         try:
             existing = []
             if os.path.exists(self._news_log_path):
-                with open(self._news_log_path, "r") as f:
-                    existing = json.load(f)
+                try:
+                    with open(self._news_log_path, "r") as f:
+                        existing = json.load(f)
+                    if not isinstance(existing, list):
+                        existing = []
+                except (json.JSONDecodeError, ValueError):
+                    # Empty or corrupt file (e.g. truncated by a crash mid-write)
+                    # — start a fresh list rather than failing every save forever.
+                    logger.warning(
+                        f"news_briefings.json unreadable — starting fresh "
+                        f"({self._news_log_path})")
+                    existing = []
             existing.append(briefing)
             existing = existing[-90:]
-            with open(self._news_log_path, "w") as f:
-                json.dump(existing, f, indent=2)
+            # Atomic write: never truncate the target, so a crash mid-write can't
+            # leave the 0-byte file that caused this bug (see atomic_io docstring).
+            atomic_write_text(self._news_log_path, json.dumps(existing, indent=2))
         except Exception as e:
             logger.error(f"Failed to save briefing: {e}")
 
