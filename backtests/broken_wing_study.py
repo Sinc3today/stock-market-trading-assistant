@@ -54,15 +54,17 @@ BWB_LOWER_WING = 10.0    # wide lower wing (K_mid - K_lo) — the "break"
 BWB_SHORT_DELTA = 0.30   # the 2 short body puts, OTM below spot
 
 
-def build_bwb_legs(spot, sigma, dte, hurt=0.0):
+def build_bwb_legs(spot, sigma, dte, hurt=0.0, upper_wing=BWB_UPPER_WING,
+                   lower_wing=BWB_LOWER_WING, short_delta=BWB_SHORT_DELTA):
     """PUT broken-wing butterfly.
     -> (legs [(opt,k,signed_qty)], net_debit, max_profit, max_loss) or None.
     `hurt` shifts the entry premium against us (SKEW_STRESS): net_debit worsens
-    by `hurt` * |net_debit| (collect less credit / pay more debit)."""
+    by `hurt` * |net_debit| (collect less credit / pay more debit). Wings and
+    the short-body delta are parametrized so the robustness sweep can vary them."""
     t = dte / 365.0
-    k_mid = _strike_for_delta("put", spot, t, sigma, BWB_SHORT_DELTA)
-    k_hi = k_mid + BWB_UPPER_WING
-    k_lo = k_mid - BWB_LOWER_WING
+    k_mid = _strike_for_delta("put", spot, t, sigma, short_delta)
+    k_hi = k_mid + upper_wing
+    k_lo = k_mid - lower_wing
     if k_lo <= 0:
         return None
     net_debit = (bs_price("put", spot, k_hi, t, sigma)
@@ -70,8 +72,8 @@ def build_bwb_legs(spot, sigma, dte, hurt=0.0):
                  + bs_price("put", spot, k_lo, t, sigma))
     if hurt:
         net_debit = net_debit + hurt * abs(net_debit)
-    max_profit = (BWB_UPPER_WING - net_debit) * 100
-    max_loss = (BWB_LOWER_WING - BWB_UPPER_WING + net_debit) * 100
+    max_profit = (upper_wing - net_debit) * 100
+    max_loss = (lower_wing - upper_wing + net_debit) * 100
     if max_profit <= 2.0:                    # degenerate / no room
         return None
     legs = [("put", k_hi, +1), ("put", k_mid, -2), ("put", k_lo, +1)]
@@ -210,8 +212,68 @@ def run_magnet():
               f"{sum(p)/len(p):>9.2f}{min(p):>8.0f}  {avg_o:>9.2f}{avg_n:>8.2f}")
 
 
+def run_sweep():
+    """Parameter-robustness sweep: is the trend-regime 30/45DTE edge real, or a
+    knob artifact? Vary short-body delta x (upper,lower) wing ratio, judge each
+    cell under the 10% haircut with the OOS era split. A robust edge shows most
+    cells PASS both eras; a knob artifact shows only the original (0.30, 5/10).
+    Focused on trending_up_calm (where BWB showed promise) at 21/30/45 DTE."""
+    print("=== BWB parameter-robustness sweep — trending_up_calm, 10% haircut ===")
+    print("(PASS = both OOS eras positive; benchmark condor 45DTE ~ +$9/trade here)\n")
+    df = add_features(load())
+    df = df[df.index.year >= 2018]
+    trending, _ = _regime_days(df)
+
+    deltas = (0.25, 0.30, 0.35, 0.40)
+    wings = ((3.0, 8.0), (5.0, 10.0), (5.0, 15.0), (3.0, 10.0))
+    sweep_dtes = (21, 30, 45)
+
+    print(f"{'delta':>6}{'wings':>9}{'dte':>5}{'n':>6}{'win%':>7}{'avg':>9}"
+          f"{'worst':>8}{'entry$':>9}  {'18-22':>9}{'23+':>8}  verdict")
+    summary = {dte: {"pass": 0, "total": 0} for dte in sweep_dtes}
+    for sd in deltas:
+        for (uw, lw) in wings:
+            for dte in sweep_dtes:
+                def builder(spot, sigma, d, _sd=sd, _uw=uw, _lw=lw):
+                    return build_bwb_legs(spot, sigma, d, hurt=0.10,
+                                          upper_wing=_uw, lower_wing=_lw, short_delta=_sd)
+                rows = []
+                for i in trending:
+                    r = simulate(df, i, builder, dte)
+                    if r is None:
+                        continue
+                    spot = float(df["close"].iloc[i]); sg = float(df["vix"].iloc[i]) / 100.0
+                    built = builder(spot, sg, dte)
+                    prem = -built[1] if built else 0.0
+                    rows.append({"pnl": r["pnl"],
+                                 "era": "old" if df.index[i].year <= 2022 else "new",
+                                 "prem": prem})
+                if len(rows) < 30:
+                    continue
+                p = [r["pnl"] for r in rows]
+                old = [r["pnl"] for r in rows if r["era"] == "old"]
+                new = [r["pnl"] for r in rows if r["era"] == "new"]
+                avg_o = sum(old) / len(old) if old else float("nan")
+                avg_n = sum(new) / len(new) if new else float("nan")
+                prem = sum(r["prem"] for r in rows) / len(rows)
+                both_pos = bool(old and new and avg_o > 0 and avg_n > 0)
+                summary[dte]["total"] += 1
+                summary[dte]["pass"] += 1 if both_pos else 0
+                verdict = "PASS" if both_pos else "fail-OOS"
+                print(f"{sd:>6.2f}{f'{uw:.0f}/{lw:.0f}':>9}{dte:>5}{len(p):>6}"
+                      f"{sum(1 for x in p if x > 0)/len(p)*100:>6.0f}%{sum(p)/len(p):>9.2f}"
+                      f"{min(p):>8.0f}{prem:>9.2f}  {avg_o:>9.2f}{avg_n:>8.2f}  {verdict}")
+        print()
+    print("---- robustness summary (cells passing both eras, under haircut) ----")
+    for dte in sweep_dtes:
+        s = summary[dte]
+        print(f"  {dte}DTE: {s['pass']}/{s['total']} parameter combos PASS")
+
+
 if __name__ == "__main__":
     run()
     print("\n")
     run_haircut()
     run_magnet()
+    print("\n")
+    run_sweep()

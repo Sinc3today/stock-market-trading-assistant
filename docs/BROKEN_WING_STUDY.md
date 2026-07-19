@@ -81,15 +81,70 @@ and chop is where the BWB loses anyway, so it changes nothing about deployment.
    - **Naked ratio spreads remain rejected** — this result is *only* about the
      capped-risk BWB.
 
-## Next step (not yet taken)
+## Parameter-robustness sweep (2026-07-18) — the edge is NOT a knob artifact
 
-The disciplined path, same as the 7DTE condor before it:
-1. **Parameter-robustness sweep** — vary short delta (0.25–0.40) and wing ratio
-   (5/10, 5/15, 3/8). Deploy only what survives the sweep *and* OOS *and*
-   haircut. If the edge is a knob artifact, it dies here.
-2. If it survives → a **forward paper generator** (`learning/…`) for the BWB in
-   `trending_up_calm` at 30/45 DTE, 1-lot, with a promotion bar fixed at
-   creation (n≥15, win≥70%, avg>$20, no loss beyond max_loss), mirroring
-   `seven_dte_forward`. Prove it live before it touches the disciplined book.
+`run_sweep()` varied the short-body delta (0.25 / 0.30 / 0.35 / 0.40) against
+four wing ratios (3/8, 5/10, 5/15, 3/10) — 16 parametrizations — over
+`trending_up_calm` at 21/30/45 DTE, **under the 10% haircut**, each judged on the
+OOS era split. If the trend edge were a lucky single tuning, only the original
+(0.30, 5/10) cell would survive. Instead:
 
-Nothing is deployed. This study earns the BWB a *robustness sweep*, not a slot.
+| DTE | parameter combos passing both eras (of 16) |
+|---|---|
+| 21DTE | 13 / 16 |
+| **30DTE** | **15 / 16** |
+| **45DTE** | **16 / 16** |
+
+The edge is **robust across the grid**, and the failures are all in one coherent
+corner — the thinnest-premium configs (0.25 delta + 5/10 wings) at short DTE.
+Everything else passes. The gradient is physically sensible, not noisy: a
+closer-to-money body (higher delta) and a wider lower wing collect more and pay
+more in a calm uptrend.
+
+**But higher average P&L is partly bought with a bigger tail — read the sweep
+for risk, not just return.** The eye-catching cells (0.40 delta, 5/15 wings:
+avg +$88/trade at 45DTE) get there by widening the loss wing: their worst-case
+realized loss runs −$600 to −$800. The honest lens is the *lower-upper wing
+differential*, which sets max loss: 3/8 and 5/10 (differential 5) keep the tail
+at ~−$285 to −$390 — condor-comparable — while 5/15 and 3/10 (differential 7–10)
+balloon it.
+
+**Risk-adjusted sweet spot: short delta 0.30–0.35, wings 3/8, 30–45 DTE.**
+Representative (haircut, both eras):
+
+| delta | wings | DTE | win% | avg | worst | 2018-22 | 2023+ |
+|---|---|---|---|---|---|---|---|
+| 0.35 | 3/8 | 45 | 83% | $48.31 | −$301 | +$32.44 | +$68.83 |
+| 0.35 | 3/8 | 30 | 83% | $41.53 | −$284 | +$31.38 | +$54.65 |
+| 0.30 | 3/8 | 45 | 84% | $40.73 | −$307 | +$25.27 | +$60.73 |
+
+These beat the plain condor's trend numbers (~$9–12/trade under haircut) by 3–5×
+with a *comparable* tail and a higher win rate — the strongest risk-adjusted
+result in the sweep. Going to 0.40 delta juices the average further but pushes
+the short body close to the money (more gamma/assignment risk near expiry), so
+0.35 is the prudent ceiling.
+
+**One honest caveat the OOS split only partly covers:** this is a bullish-lean
+structure with embedded long-equity-drift beta. It survived 2018-22 (which
+includes Q4-2018, the 2020 crash, and the 2022 bear) *in-sample*, which is
+real evidence — but its protection against a sustained downturn is ultimately
+the **regime gate** (it only fires when SPY is >200MA with calm VIX), not the
+structure itself. If the regime classifier is late to flag a top, this bleeds.
+
+## Verdict & next step
+
+The BWB has **survived the full gauntlet**: per-regime, OOS era-split, fill
+haircut, *and* a parameter-robustness sweep. It graduates from "suspected knob
+artifact" to "warrants a live forward-paper test" — the same bar the 7DTE condor
+cleared before it.
+
+Recommended paper-test config: **put BWB, 0.35 delta body, 3/8 wings, entered in
+`trending_up_calm`, laddered at 30 and 45 DTE, 1-lot.**
+
+Proposed path (not yet built — needs go-ahead, it touches the live learning loop):
+- A **forward paper generator** (`learning/broken_wing_forward.py`) mirroring
+  `seven_dte_forward`: opens on trend-regime days, idempotent, `candidate` book,
+  promotion bar fixed at creation (n≥15, win≥70%, avg>$20, no loss beyond
+  max_loss). Prove it live before it ever touches the disciplined book.
+
+Nothing is deployed. The sweep earns the BWB a *forward paper test*, not a slot.
