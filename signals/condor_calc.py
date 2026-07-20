@@ -129,3 +129,64 @@ def build_condor(spot: float, vix: float | None = None, dte: int = 45,
         "expiry": exp_iso,
         "legs": legs,
     }
+
+
+# Validated config from the parameter-robustness sweep (docs/BROKEN_WING_STUDY.md,
+# 2026-07-18): the risk-adjusted sweet spot in trending_up_calm at 30-45 DTE.
+BWB_SHORT_DELTA = 0.35
+BWB_UPPER_WING = 3.0
+BWB_LOWER_WING = 8.0
+
+
+def build_broken_wing(spot: float, vix: float | None = None, dte: int = 45,
+                      short_delta: float = BWB_SHORT_DELTA,
+                      upper_wing: float = BWB_UPPER_WING,
+                      lower_wing: float = BWB_LOWER_WING,
+                      today: date | None = None) -> dict | None:
+    """PUT broken-wing butterfly, bullish/neutral lean — the defined-risk cousin
+    of a ratio spread (long a far wing caps the loss). Body = 2 short puts at
+    ``short_delta`` OTM; +1 put ``upper_wing`` above (near money), +1 put
+    ``lower_wing`` below (the wide "break"). Profits when SPY is flat-to-up, keeps
+    the credit above the upper long strike (no upside risk), and only loses on a
+    hard drop through the body — defined all the way down.
+
+    Priced with the live-parity BS engine (r=0, sigma=VIX). Returns a dict shaped
+    like build_condor (net premium, max profit/loss, legs), or None if the
+    structure is degenerate at this spot. See docs/BROKEN_WING_STUDY.md."""
+    sigma = (vix if vix and vix > 0 else 18.0) / 100.0
+    t = max(dte, 1) / 365.0
+    k_mid = _strike_for_delta("put", spot, t, sigma, short_delta)
+    k_hi = k_mid + upper_wing
+    k_lo = k_mid - lower_wing
+    if k_lo <= 0:
+        return None
+
+    def px(k):
+        return bs_price("put", spot, k, t, sigma)
+
+    net_debit = round(px(k_hi) - 2 * px(k_mid) + px(k_lo), 2)   # signed; <0 = credit
+    max_profit = round((upper_wing - net_debit) * 100, 2)        # structural peak at k_mid
+    max_loss = round((lower_wing - upper_wing + net_debit) * 100, 2)
+    if max_profit <= 2.0 or max_loss <= 0:                       # degenerate / no room
+        return None
+    expiry = _nearest_friday((today or date.today()) + timedelta(days=dte))
+    exp_iso = expiry.isoformat()
+    credit = round(-net_debit, 2)                                # +credit / -debit received
+    legs = [
+        {"action": "BUY",  "option_type": "PUT", "strike": k_hi,  "expiry": exp_iso},
+        {"action": "SELL", "option_type": "PUT", "strike": k_mid, "expiry": exp_iso},
+        {"action": "SELL", "option_type": "PUT", "strike": k_mid, "expiry": exp_iso},
+        {"action": "BUY",  "option_type": "PUT", "strike": k_lo,  "expiry": exp_iso},
+    ]
+    return {
+        "spot": round(spot, 2),
+        "k_hi": k_hi, "k_mid": k_mid, "k_lo": k_lo,
+        "upper_wing": upper_wing, "lower_wing": lower_wing,
+        "credit": credit,             # net premium received (per share); may be < 0
+        "net_debit": net_debit,       # signed entry value (long − short)
+        "max_profit": max_profit,     # structural peak (rarely realized; body pin)
+        "max_loss": max_loss,         # capped — the point vs a naked ratio spread
+        "keeps_credit_above": k_hi,   # SPY >= this at expiry -> keep the credit
+        "expiry": exp_iso,
+        "legs": legs,
+    }

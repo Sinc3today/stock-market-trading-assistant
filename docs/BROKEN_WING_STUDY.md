@@ -141,10 +141,25 @@ cleared before it.
 Recommended paper-test config: **put BWB, 0.35 delta body, 3/8 wings, entered in
 `trending_up_calm`, laddered at 30 and 45 DTE, 1-lot.**
 
-Proposed path (not yet built — needs go-ahead, it touches the live learning loop):
-- A **forward paper generator** (`learning/broken_wing_forward.py`) mirroring
-  `seven_dte_forward`: opens on trend-regime days, idempotent, `candidate` book,
-  promotion bar fixed at creation (n≥15, win≥70%, avg>$20, no loss beyond
-  max_loss). Prove it live before it ever touches the disciplined book.
+### BUILT — forward paper generator (2026-07-20)
 
-Nothing is deployed. The sweep earns the BWB a *forward paper test*, not a slot.
+`learning/broken_wing_forward.py` is live in the learning loop (paper only):
+- **Live builder** `signals.condor_calc.build_broken_wing` (0.35Δ body, 3/8
+  wings) — priced with the same BS engine as the condor calculator.
+- **Opens** at 09:45 ET on `trending_up_calm` days *that the live gates left
+  tradeable* — a `none`/skip day means the extension (>9%) or event gate fired,
+  and we honor it, which reproduces the study's ext≤9% filter through the live
+  read. 1-lot per tenor (30DTE + 45DTE), idempotent per tenor/day, `candidate`
+  book, `source=auto-paper`.
+- **Manages** at 70% of structural max profit OR the ladder time-exit
+  (round(dte·21/45): 21 DTE for the 45s, 14 DTE for the 30s).
+- **P&L**: new first-class `broken_wing` strategy in `TradeRecorder` — a BWB can
+  be worth money to close (it's long a far wing), so the close cost is NOT
+  clamped to ≥0 the way a pure-short condor's is. Getting that wrong would
+  silently zero real gains.
+- **Promotion bar fixed at creation**: n≥15 closed, win≥70%, avg>$20, no loss
+  beyond max_loss. On promotion it follows the 7DTE/1-3DTE path to the
+  disciplined book + approve alert. Kill-switch: `BROKEN_WING_FORWARD_ENABLED`.
+
+Nothing trades real money. The generator proves (or kills) the edge live before
+it earns a disciplined-book slot — the same gate the 7DTE condor is still under.

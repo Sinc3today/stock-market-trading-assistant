@@ -226,6 +226,7 @@ def job_spy_entry(polygon_client, ivr_client):
     _run_daily_dipbuy(polygon_client, ivr=ivr)
     _run_qqq_condor_forward(polygon_client)
     _run_seven_dte_forward(polygon_client)
+    _run_broken_wing_forward(polygon_client)
 
 
 def _run_seven_dte_forward(polygon_client) -> None:
@@ -249,6 +250,34 @@ def _run_seven_dte_forward(polygon_client) -> None:
         maybe_open_seven_dte(TradeRecorder(), spy_spot=spy_spot, vix=vix)
     except Exception as e:
         logger.warning(f"7DTE condor forward-test failed (ignored): {e}")
+
+
+def _run_broken_wing_forward(polygon_client) -> None:
+    """Broken-wing butterfly PAPER candidate on trending_up_calm days (Standing
+    Rule #10 — isolated). First directional-lean structure to survive the full
+    gauntlet; must earn live promotion on its paper record (bar in the module
+    docstring). Gated on the SAME live regime read the daily play uses: only
+    trend days with a tradeable strategy (a 'none'/skip day means the live
+    extension/event gates fired — we honor them, matching the study's ext<=9%)."""
+    try:
+        from journal.plan_logger import PlanLogger
+        from learning.broken_wing_forward import _today_et, maybe_open_broken_wing
+        plan = PlanLogger().get_plan(_today_et().isoformat()) or {}
+        if plan.get("regime") != "trending_up_calm":
+            return
+        if str(plan.get("strategy") or "none").lower() in ("none", "skip", ""):
+            return          # trend day the live gates skipped (extended/event)
+        df = polygon_client.get_bars(
+            "SPY", timeframe=config.SWING_PRIMARY_TIMEFRAME, limit=3, days_back=5)
+        if df is None or not len(df):
+            return
+        spy_spot = float(df["close"].iloc[-1])
+        from alerts.stop_watchdog import yf_spot
+        vix = yf_spot("^VIX") or 16.0
+        from journal.trade_recorder import TradeRecorder
+        maybe_open_broken_wing(TradeRecorder(), spy_spot=spy_spot, vix=vix)
+    except Exception as e:
+        logger.warning(f"broken-wing forward-test failed (ignored): {e}")
 
 
 def _run_qqq_condor_forward(polygon_client) -> None:

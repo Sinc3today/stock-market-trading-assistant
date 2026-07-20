@@ -331,6 +331,14 @@ class TradeRecorder:
             pps = entry - exit_price
             return pps, round(pps * size * 100, 2)
 
+        elif strategy == "broken_wing":
+            # Broken-wing butterfly. entry = net credit received (may be < 0 if
+            # opened for a debit); exit = cost to close (may be < 0 when the long
+            # wing is worth more than the shorts — you'd be paid to close). Same
+            # credit-structure sign convention as a condor.
+            pps = entry - exit_price
+            return pps, round(pps * size * 100, 2)
+
         elif strategy == "single_leg":
             # Bought option for entry_price, sold for exit_price
             pps = exit_price - entry
@@ -347,7 +355,7 @@ class TradeRecorder:
             return entry * size
         elif strategy in ("debit_spread", "single_leg"):
             return entry * size * 100
-        elif strategy in ("credit_spread", "iron_condor"):
+        elif strategy in ("credit_spread", "iron_condor", "broken_wing"):
             return max_loss or (entry * size * 100)
         return entry * size
 

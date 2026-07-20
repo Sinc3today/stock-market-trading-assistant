@@ -421,6 +421,14 @@ DIPBUY_BREAKDOWN_WINDOW    = 50     # 2nd dip trigger: fresh close < prior N-day
 # IWM FAILED the study — do not add it. Paper-first: candidates only.
 DIPBUY_TICKERS             = ["SPY", "QQQ"]
 
+# Broken-wing butterfly forward-test (docs/BROKEN_WING_STUDY.md, 2026-07-18).
+# Put BWB (0.35Δ body, 3/8 wings) beat the plain condor in trending_up_calm at
+# 30/45 DTE and survived the OOS + haircut + parameter-robustness gauntlet — the
+# first directional-lean structure to. Paper candidates only until the record
+# meets the promotion bar (see learning/broken_wing_forward). Kill-switch here.
+BROKEN_WING_FORWARD_ENABLED = os.getenv("BROKEN_WING_FORWARD_ENABLED", "true").lower() == "true"
+BROKEN_WING_FORWARD_DTES    = (30, 45)   # ladder both tenors that passed 16/16-15/16
+
 # ─────────────────────────────────────────────────────────────
 # Phase 4a — Learning Loop Hygiene
 # ─────────────────────────────────────────────────────────────

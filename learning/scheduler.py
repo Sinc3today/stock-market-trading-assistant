@@ -279,6 +279,18 @@ def job_dipbuy_resolver(polygon_client, vix_client=None):
                 logger.info(f"seven_dte_forward -> {len(closed_7)} candidate closes")
     except Exception as e:
         logger.exception(f"seven_dte_forward resolver failed: {e}")
+    # Broken-wing butterfly candidates — same slot, separately wrapped (Rule #10)
+    try:
+        from learning.broken_wing_forward import resolve_broken_wing
+        from alerts.stop_watchdog import yf_spot
+        spy_now = yf_spot("SPY") or spy_close
+        vix_now = yf_spot("^VIX") or vix
+        if spy_now:
+            closed_bwb = resolve_broken_wing(TradeRecorder(), spy_spot=spy_now, vix=vix_now)
+            if closed_bwb:
+                logger.info(f"broken_wing_forward -> {len(closed_bwb)} candidate closes")
+    except Exception as e:
+        logger.exception(f"broken_wing_forward resolver failed: {e}")
 
 
 def job_reflector(post_fn=None):
