@@ -79,3 +79,47 @@ def test_check_positions_fires_emergency_once_per_position():
     n2 = check_open_positions(_Rec(), spot=702.0, pushover=push, alerted=alerted,
                               buffer_pct=0.005)
     assert n2 == 0 and push.sent == [2]
+
+
+def test_debit_spread_is_not_stop_watched():
+    # The 2026-07-20 flood: a bear put DEBIT spread (BUY 743P / SELL 740P) had
+    # its short put flagged as a stop as SPY approached 740 — but that's the
+    # PROFIT side and max loss is the (defined) debit. The watchdog must skip it.
+    from alerts.stop_watchdog import check_open_positions
+
+    class _Rec:
+        def get_open_trades(self):
+            return [{"trade_id": "PDS1", "ticker": "SPY", "strategy": "put_debit_spread",
+                     "book": "disciplined",
+                     "legs": [{"action": "BUY",  "option_type": "PUT", "strike": 743.0},
+                              {"action": "SELL", "option_type": "PUT", "strike": 740.0}]}]
+
+    class _Push:
+        def __init__(self): self.sent = []
+        def send(self, title, msg, priority=0, **kw): self.sent.append(priority); return True
+
+    push = _Push()
+    n = check_open_positions(_Rec(), spot=742.84, pushover=push, alerted=set(),
+                             buffer_pct=0.005)
+    assert n == 0 and push.sent == []          # NO stop alert on a debit spread
+
+
+def test_credit_structures_still_watched():
+    # Regression guard: the fix must NOT silence real credit-structure stops.
+    from alerts.stop_watchdog import check_open_positions
+
+    class _Rec:
+        def get_open_trades(self):
+            return [{"trade_id": "CS1", "ticker": "SPY", "strategy": "credit_spread",
+                     "book": "live",
+                     "legs": [{"action": "SELL", "option_type": "PUT", "strike": 740.0},
+                              {"action": "BUY",  "option_type": "PUT", "strike": 735.0}]}]
+
+    class _Push:
+        def __init__(self): self.sent = []
+        def send(self, title, msg, priority=0, **kw): self.sent.append(priority); return True
+
+    push = _Push()
+    n = check_open_positions(_Rec(), spot=740.5, pushover=push, alerted=set(),
+                             buffer_pct=0.005)
+    assert n == 1 and push.sent == [2]         # credit-spread short-put breach still fires

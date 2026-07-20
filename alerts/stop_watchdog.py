@@ -118,17 +118,34 @@ def position_status(legs, spot: float, buffer_pct: float = 0.005):
     return "SAFE", "status-win"
 
 
+def is_stop_watched_strategy(strategy: str | None) -> bool:
+    """The underlying-stop matters only where breaching a SHORT strike escalates
+    loss toward the wing — credit / undefined-risk structures. A DEBIT spread's
+    max loss is the debit already paid, and its short strike is the PROFIT side,
+    so a stop there is meaningless AND misleading (it tells you to cut a winner).
+    single_leg (a long option) and stock have no short-strike stop either.
+    Default is to watch (unknown structures could be undefined-risk credit)."""
+    s = (strategy or "").lower()
+    if "debit" in s or s in ("single_leg", "stock"):
+        return False
+    return True
+
+
 def check_open_positions(recorder, spot: float, pushover, alerted: set,
                          buffer_pct: float = 0.005,
                          books=("disciplined", "live")) -> int:
-    """For each open position whose underlying is near a short strike, fire one
-    emergency Pushover (deduped via `alerted`). Returns the number of new alerts."""
+    """For each open CREDIT/undefined-risk position whose underlying is near a
+    short strike, fire one emergency Pushover (deduped via `alerted`). Debit
+    spreads and other defined-debit structures are skipped — see
+    is_stop_watched_strategy. Returns the number of new alerts."""
     if spot is None:
         return 0
     n = 0
     for t in recorder.get_open_trades():
         tid = t.get("trade_id")
         if tid in alerted or (t.get("book") or "disciplined") not in books:
+            continue
+        if not is_stop_watched_strategy(t.get("strategy")):
             continue
         legs = t.get("legs") or []
         if not legs:
