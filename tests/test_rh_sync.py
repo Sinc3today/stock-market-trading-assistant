@@ -132,3 +132,89 @@ def test_reconcile_close_only_targets_synced_sources():
     disc = _existing_live(tid="D1"); disc["book"] = "disciplined"
     plan = reconcile([], existing_live=[disc])
     assert plan == []
+
+
+def test_reconcile_updates_in_place_when_position_edited():
+    # The user EDITED a live position on RH (added legs). Same underlying+expiry,
+    # different strike-set. Reconcile must UPDATE the existing trade in place
+    # (same trade_id) — NOT close it (phantom max-loss) and mint a new id (which
+    # re-armed the stop watchdog every cycle: the 2026-07-20 alert-flood bug).
+    from learning.rh_sync import reconcile
+    # RH now shows a 4-leg call structure at 07-27; journal has the old 2-leg.
+    positions = [{"ticker": "SPY", "expiry": "2026-07-27", "strategy": "custom",
+                  "size": 1, "entry_price": 6.63,
+                  "legs": [{"action": "BUY",  "option_type": "CALL", "strike": 729.0, "expiry": "2026-07-27"},
+                           {"action": "SELL", "option_type": "CALL", "strike": 744.0, "expiry": "2026-07-27"},
+                           {"action": "SELL", "option_type": "CALL", "strike": 745.0, "expiry": "2026-07-27"},
+                           {"action": "BUY",  "option_type": "CALL", "strike": 760.0, "expiry": "2026-07-27"}]}]
+    existing = [{"trade_id": "OLD2LEG1", "book": "live", "ticker": "SPY", "outcome": "open",
+                 "legs": [{"option_type": "CALL", "strike": 729.0, "expiry": "2026-07-27"},
+                          {"option_type": "CALL", "strike": 745.0, "expiry": "2026-07-27"}]}]
+    plan = reconcile(positions, existing)
+    assert len(plan) == 1
+    assert plan[0]["action"] == "update"          # NOT close + create
+    assert plan[0]["trade_id"] == "OLD2LEG1"      # id preserved -> no alert churn
+
+
+def test_reconcile_still_closes_genuinely_gone_position():
+    # A journal live trade with NO RH position at its (ticker, expiry) is a real
+    # close, not an edit — must still close.
+    from learning.rh_sync import reconcile
+    existing = [_existing_live()]                 # 07-24 condor
+    plan = reconcile([], existing)                # nothing on RH
+    assert len(plan) == 1 and plan[0]["action"] == "close"
+
+
+def test_close_estimate_sign_correct_for_debit_spread(monkeypatch):
+    # The phantom-loss bug: the old formula used the credit convention and
+    # clamped at 0, so closing a debit spread booked a total-debit loss.
+    import learning.rh_sync as rh
+    # BUY 729C (deep ITM ~16) / SELL 745C (~0) at expiry with SPY ~745.
+    monkeypatch.setattr("data.market_quotes.fetch_leg_quotes", lambda tk, legs: [
+        {"action": "BUY",  "mid": 16.0}, {"action": "SELL", "mid": 0.0}], raising=False)
+    trade = {"ticker": "SPY", "strategy": "debit_spread",
+             "legs": [{"action": "BUY", "option_type": "CALL", "strike": 729.0},
+                      {"action": "SELL", "option_type": "CALL", "strike": 745.0}]}
+    est = rh._close_estimate(trade)
+    # For a debit spread, log_exit wants the SALE value (positive), not 0.
+    assert est is not None and est > 10          # ~ $16 spread value, NOT $0
+
+
+def test_update_open_position_preserves_id_and_clears_stale_risk(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from journal.trade_recorder import TradeRecorder
+    from datetime import date
+    rec = TradeRecorder()
+    tid = rec.log_entry(ticker="SPY", entry_price=13.26, size=1,
+                        trade_type="debit_spread", strategy="debit_spread",
+                        direction="bullish", mode="swing",
+                        legs=[{"action": "BUY", "option_type": "CALL", "strike": 729.0,
+                               "expiry": "2026-07-27"},
+                              {"action": "SELL", "option_type": "CALL", "strike": 745.0,
+                               "expiry": "2026-07-27"}],
+                        max_profit=274.0, max_loss=1326.0, book="live", source="rh-sync")
+    ok = rec.update_open_position(
+        tid, legs=[{"action": "BUY", "option_type": "CALL", "strike": 729.0, "expiry": "2026-07-27"},
+                   {"action": "SELL", "option_type": "CALL", "strike": 744.0, "expiry": "2026-07-27"},
+                   {"action": "SELL", "option_type": "CALL", "strike": 745.0, "expiry": "2026-07-27"},
+                   {"action": "BUY", "option_type": "CALL", "strike": 760.0, "expiry": "2026-07-27"}],
+        strategy="custom", size=1)
+    assert ok
+    t = rec.get_trade_by_id(tid)
+    assert t["outcome"] == "open" and len(t["legs"]) == 4 and t["strategy"] == "custom"
+    assert t["max_profit"] is None and t["max_loss"] is None   # stale risk cleared
+    assert rec.get_open_trades() and len(rec.get_open_trades()) == 1  # no new id
+
+
+def test_update_open_position_ignores_closed_trade(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from journal.trade_recorder import TradeRecorder
+    rec = TradeRecorder()
+    tid = rec.log_entry(ticker="SPY", entry_price=1.0, size=1, trade_type="iron_condor",
+                        strategy="iron_condor", direction="neutral", mode="swing",
+                        legs=[{"action": "SELL", "option_type": "PUT", "strike": 700.0,
+                               "expiry": "2026-07-27"}], book="live")
+    rec.void_trade(tid, "test")
+    assert rec.update_open_position(tid, legs=[]) is False

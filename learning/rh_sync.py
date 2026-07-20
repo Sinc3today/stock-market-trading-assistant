@@ -112,16 +112,31 @@ def reconcile(positions: list[dict], existing_live: list[dict]) -> list[dict]:
     matched_ids = set()
     for pos in positions:
         key = _strike_key(pos["legs"])
-        match = next((t for t in open_live
-                      if t.get("ticker") == pos["ticker"]
+        # Exact match: same underlying + expiry + strike-set -> already logged.
+        exact = next((t for t in open_live
+                      if t.get("trade_id") not in matched_ids
+                      and t.get("ticker") == pos["ticker"]
                       and _trade_expiry(t) == pos["expiry"]
                       and _strike_key(t.get("legs") or []) == key), None)
-        if match:
-            matched_ids.add(match.get("trade_id"))
-            plan.append({"action": "match", "trade_id": match.get("trade_id"),
+        if exact:
+            matched_ids.add(exact.get("trade_id"))
+            plan.append({"action": "match", "trade_id": exact.get("trade_id"),
                          "position": pos})
-        else:
-            plan.append({"action": "create", "position": pos})
+            continue
+        # Same position IDENTITY (underlying + expiry) but the strike-set changed
+        # -> the user EDITED the position on RH. Update in place, keeping the
+        # trade_id, instead of close+create (which booked a phantom max-loss and
+        # re-armed the stop watchdog every cycle — the 2026-07-20 flood bug).
+        edited = next((t for t in open_live
+                       if t.get("trade_id") not in matched_ids
+                       and t.get("ticker") == pos["ticker"]
+                       and _trade_expiry(t) == pos["expiry"]), None)
+        if edited:
+            matched_ids.add(edited.get("trade_id"))
+            plan.append({"action": "update", "trade_id": edited.get("trade_id"),
+                         "position": pos})
+            continue
+        plan.append({"action": "create", "position": pos})
     for t in open_live:
         if t.get("trade_id") not in matched_ids:
             plan.append({"action": "close", "trade_id": t.get("trade_id"),
@@ -198,17 +213,29 @@ def last_success_date():
 
 
 def _close_estimate(trade: dict):
-    """Best-effort cost-to-close (per share) for a position the user closed on
-    RH — we don't know their real fill, so mark at the current NBBO mid."""
+    """Best-effort exit price (per share) for a position the user closed on RH —
+    we don't know their real fill, so mark at the current NBBO mid, in the sign
+    convention log_exit expects for this strategy. Returns None when quotes are
+    unavailable (caller falls back to a scratch mark).
+
+    The market value of HOLDING the position is Σ(+long − short) mids. log_exit
+    wants:
+      - debit_spread / single_leg: the SALE value  = +value
+      - credit_spread / iron_condor / broken_wing: the COST to buy back = −value
+    The old version used the credit formula for everything AND clamped at 0, so
+    closing a debit spread booked a total-debit loss (the 2026-07-20 −$1,326
+    phantom). No clamp: an ITM debit spread is genuinely worth money to close."""
     try:
-        from data.market_quotes import fetch_leg_quotes, position_mtm
+        from data.market_quotes import fetch_leg_quotes
         legs = fetch_leg_quotes(trade.get("ticker", "SPY"), trade.get("legs") or [])
-        if any(l.get("mid") is None for l in legs):
+        if not legs or any(l.get("mid") is None for l in legs):
             return None
-        # cost to close a credit structure = value of the shorts minus longs now
-        cost = sum((-l["mid"] if (l.get("action") or "").upper().startswith("B") else l["mid"])
-                   for l in legs)
-        return round(max(0.0, cost), 2)
+        value = sum((l["mid"] if (l.get("action") or "").upper().startswith("B") else -l["mid"])
+                    for l in legs)
+        strat = (trade.get("strategy") or "").lower()
+        if strat in ("credit_spread", "iron_condor", "broken_wing"):
+            return round(-value, 2)       # cost to buy back the short-premium book
+        return round(value, 2)            # sale value of a debit/long structure
     except Exception:
         return None
 
@@ -240,6 +267,15 @@ def sync(dry_run: bool = True):
         if step["action"] == "match":
             logger.info(f"[sync] MATCH {step['trade_id']} {pos['ticker']} "
                         f"{pos['strategy']} {pos['expiry']} {strikes} (already logged)")
+        elif step["action"] == "update":
+            logger.info(f"[sync] UPDATE {step['trade_id']} {pos['ticker']} "
+                        f"{pos['strategy']} {pos['expiry']} {strikes} (edited on RH)")
+            if not dry_run:
+                rec.update_open_position(
+                    step["trade_id"], legs=pos["legs"], strategy=pos["strategy"],
+                    size=pos["size"],
+                    notes="[LIVE] edited on Robinhood; re-synced read-only "
+                          "(confirm net fill on /copilot)")
         else:
             logger.info(f"[sync] NEW {pos['ticker']} {pos['strategy']} "
                         f"{pos['expiry']} {strikes} x{pos['size']}")

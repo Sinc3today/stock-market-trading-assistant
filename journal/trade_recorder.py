@@ -284,6 +284,48 @@ class TradeRecorder:
             logger.warning(f"Trade not found to void: {trade_id}")
         return updated
 
+    def update_open_position(self, trade_id: str, *, legs: list,
+                             strategy: str | None = None,
+                             size: float | None = None,
+                             entry_price: float | None = None,
+                             notes: str | None = None) -> bool:
+        """Rewrite an OPEN trade's legs/strategy/size in place, keeping the same
+        trade_id, book, source and entry_date. Used by the RH reconcile when the
+        user EDITS a position on Robinhood (legs changed) — updating beats
+        close+recreate, which minted a new id every cycle and re-armed the stop
+        watchdog. max_profit/max_loss are cleared to None (unknown until the user
+        confirms the new fill on /copilot) so nothing downstream trusts a stale
+        risk basis. Never touches closed/void trades."""
+        trades = self._load()
+        updated = False
+        for trade in trades:
+            if trade.get("trade_id") != trade_id.upper():
+                continue
+            if trade.get("outcome", "open") != "open":
+                logger.warning(f"update_open_position: {trade_id} not open — skip")
+                break
+            trade["legs"] = legs
+            if strategy is not None:
+                trade["strategy"] = strategy
+            if size is not None:
+                trade["size"] = size
+            if entry_price is not None:
+                trade["entry_price"] = entry_price
+            trade["max_profit"] = None      # unknown after an edit; confirm on /copilot
+            trade["max_loss"] = None
+            if notes is not None:
+                trade["notes_entry"] = notes
+            updated = True
+            logger.info(f"Trade updated in place: [{trade_id}] "
+                        f"{trade.get('ticker')} -> {trade.get('strategy')} "
+                        f"({len(legs)} legs)")
+            break
+        if updated:
+            self._save(trades)
+        else:
+            logger.warning(f"update_open_position: trade not found/open: {trade_id}")
+        return updated
+
     # ─────────────────────────────────────────
     # P&L CALCULATIONS
     # ─────────────────────────────────────────
