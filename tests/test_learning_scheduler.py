@@ -148,3 +148,17 @@ def test_job_off_hours_learner_swallows_exceptions(monkeypatch):
             raise RuntimeError("off-hours exploded")
     monkeypatch.setattr(sched, "OffHoursLearner", lambda: Boom())
     sched.job_off_hours_learner()
+
+
+def test_job_rh_sync_paused_by_kill_switch(monkeypatch):
+    """RH_SYNC_ENABLED=false must short-circuit before any RH call — the pause
+    used during manual position testing (2026-07-20 reconcile-thrash incident)."""
+    import config
+    monkeypatch.setattr(config, "RH_SYNC_ENABLED", False)
+
+    def _boom(*a, **k):
+        raise AssertionError("rh_sync.sync must not run while paused")
+
+    monkeypatch.setattr("learning.rh_sync.sync", _boom, raising=False)
+    # Should return quietly without touching RH.
+    sched.job_rh_sync(alert_fn=None)

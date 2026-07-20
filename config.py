@@ -421,6 +421,14 @@ DIPBUY_BREAKDOWN_WINDOW    = 50     # 2nd dip trigger: fresh close < prior N-day
 # IWM FAILED the study — do not add it. Paper-first: candidates only.
 DIPBUY_TICKERS             = ["SPY", "QQQ"]
 
+# RH read-only sync kill-switch. Set false (env RH_SYNC_ENABLED=false) to PAUSE
+# the 15-min Robinhood reconcile — e.g. while manually testing/editing positions
+# on RH, where each edit would otherwise churn the journal (close+recreate with a
+# new trade_id) and re-arm the stop watchdog every cycle. Default on. The exit
+# watchdog for already-tracked positions keeps running; only new-position
+# reconcile pauses. Re-enable when done testing.
+RH_SYNC_ENABLED = os.getenv("RH_SYNC_ENABLED", "true").lower() == "true"
+
 # Broken-wing butterfly forward-test (docs/BROKEN_WING_STUDY.md, 2026-07-18).
 # Put BWB (0.35Δ body, 3/8 wings) beat the plain condor in trending_up_calm at
 # 30/45 DTE and survived the OOS + haircut + parameter-robustness gauntlet — the

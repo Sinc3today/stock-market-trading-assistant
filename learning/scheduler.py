@@ -86,6 +86,9 @@ def job_rh_sync(alert_fn=None):
     days; on an expired session it pushes ONE nudge per day (T1.3 — the old
     silent warning left sync dead for days) and never crashes the bot."""
     today = datetime.now(pytz.timezone("US/Eastern")).date()
+    if not getattr(config, "RH_SYNC_ENABLED", True):
+        logger.info("rh_sync: paused (RH_SYNC_ENABLED=false) — skipping reconcile")
+        return
     if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
         return
     try:
