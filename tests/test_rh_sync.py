@@ -218,3 +218,77 @@ def test_update_open_position_ignores_closed_trade(tmp_path, monkeypatch):
                                "expiry": "2026-07-27"}], book="live")
     rec.void_trade(tid, "test")
     assert rec.update_open_position(tid, legs=[]) is False
+
+
+def test_session_status_thresholds(tmp_path, monkeypatch):
+    import config
+    from datetime import datetime, timedelta
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    import learning.rh_sync as rh
+    # no timestamp yet -> unknown
+    assert rh.session_status() == "unknown"
+    # valid: expiry 3 days out
+    rh._write_session_expiry(3 * 86400)
+    assert rh.session_status() == "valid"
+    now = datetime.now()
+    # expiring soon: < 24h left
+    exp_soon = (now + timedelta(hours=5)).isoformat()
+    open(rh._session_expiry_path(), "w").write(exp_soon)
+    assert rh.session_status() == "expiring_soon"
+    # expired: in the past
+    open(rh._session_expiry_path(), "w").write((now - timedelta(hours=1)).isoformat())
+    assert rh.session_status() == "expired"
+
+
+def test_load_session_fails_fast_when_expired(tmp_path, monkeypatch):
+    # Expired-by-timestamp must raise WITHOUT calling robin_stocks (no hammering
+    # a dead login every cycle — the whole point of the proactive design).
+    import config
+    from datetime import datetime, timedelta
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    import learning.rh_sync as rh
+    open(rh._session_expiry_path(), "w").write((datetime.now() - timedelta(hours=1)).isoformat())
+
+    import robin_stocks.robinhood as r
+    def _boom(*a, **k):
+        raise AssertionError("must not attempt r.login on an expired session")
+    monkeypatch.setattr(r, "login", _boom)
+    import pytest
+    with pytest.raises(RuntimeError):
+        rh._load_session()
+
+
+def test_job_rh_sync_warns_before_expiry(tmp_path, monkeypatch):
+    import config
+    from datetime import datetime, timedelta
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    monkeypatch.setattr(config, "RH_SYNC_ENABLED", True)
+    monkeypatch.setattr(config, "is_trading_day", lambda *a, **k: True)
+    import learning.rh_sync as rh
+    open(rh._session_expiry_path(), "w").write((datetime.now() + timedelta(hours=5)).isoformat())
+    # sync must NOT be called with a dead session? here it's still valid -> it will
+    # be called; stub it so the test stays offline.
+    monkeypatch.setattr(rh, "sync", lambda dry_run=False: [], raising=False)
+    from learning import scheduler as sched
+    sched._rh_expiring_soon_pushed[0] = None
+    pushes = []
+    sched.job_rh_sync(alert_fn=lambda **kw: pushes.append(kw["title"]))
+    assert any("expires soon" in t for t in pushes)
+
+
+def test_job_rh_sync_skips_and_notifies_when_expired(tmp_path, monkeypatch):
+    import config
+    from datetime import datetime, timedelta
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    monkeypatch.setattr(config, "RH_SYNC_ENABLED", True)
+    monkeypatch.setattr(config, "is_trading_day", lambda *a, **k: True)
+    import learning.rh_sync as rh
+    open(rh._session_expiry_path(), "w").write((datetime.now() - timedelta(hours=1)).isoformat())
+    def _boom(*a, **k):
+        raise AssertionError("must not run sync on an expired session")
+    monkeypatch.setattr(rh, "sync", _boom, raising=False)
+    from learning import scheduler as sched
+    sched._rh_expiry_pushed[0] = None
+    pushes = []
+    sched.job_rh_sync(alert_fn=lambda **kw: pushes.append(kw["title"]))
+    assert any("expired" in t.lower() for t in pushes)

@@ -144,6 +144,53 @@ def reconcile(positions: list[dict], existing_live: list[dict]) -> list[dict]:
     return plan
 
 
+# ── Session lifetime (proactive re-auth, no hammering) ──────────────────────
+
+# Request a WEEK-long token so re-auth is ~weekly, not daily (robin_stocks
+# defaults to 24h). We also stamp our own expiry timestamp on login so the
+# scheduler can warn BEFORE the session dies and skip cheaply once it has —
+# rather than retrying a dead login every cycle.
+SESSION_DAYS = 7
+EXPIRING_SOON_HOURS = 24          # heads-up window before expiry
+
+
+def _session_expiry_path() -> str:
+    import config
+    return os.path.join(config.LOG_DIR, "rh_session_expiry")
+
+
+def _write_session_expiry(seconds: int) -> None:
+    from datetime import datetime, timedelta
+    from atomic_io import atomic_write_text
+    exp = datetime.now() + timedelta(seconds=seconds)
+    atomic_write_text(_session_expiry_path(), exp.isoformat())
+
+
+def session_expiry():
+    """The local timestamp when the stored token is expected to expire, or None."""
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(open(_session_expiry_path()).read().strip())
+    except Exception:
+        return None
+
+
+def session_status(now=None) -> str:
+    """'valid' | 'expiring_soon' (< EXPIRING_SOON_HOURS left) | 'expired' |
+    'unknown' (no timestamp yet). Drives the scheduler's proactive notify +
+    clean-skip so we never hammer a dead session."""
+    from datetime import datetime, timedelta
+    exp = session_expiry()
+    if exp is None:
+        return "unknown"
+    now = now or datetime.now()
+    if now >= exp:
+        return "expired"
+    if now >= exp - timedelta(hours=EXPIRING_SOON_HOURS):
+        return "expiring_soon"
+    return "valid"
+
+
 # ── I/O: robin_stocks read-only fetch + login (validated via dry-run) ───────
 
 def _load_session():
@@ -152,6 +199,12 @@ def _load_session():
     it's still valid. Raises a clear error if there's no valid session yet."""
     import os
     import robin_stocks.robinhood as r
+    # If our own timestamp says the token is dead, fail immediately WITHOUT
+    # calling r.login — a dead-pickle login falls through to an interactive
+    # prompt (which hangs headless) and is exactly the "constant retry" we want
+    # to avoid. The scheduler turns this into ONE notification, not a loop.
+    if session_status() == "expired":
+        raise RuntimeError("RH session expired (local timestamp) — re-run `login`")
     pickle_path = os.path.expanduser("~/.tokens/robinhood.pickle")
     if not os.path.isfile(pickle_path):
         raise RuntimeError("No stored RH session — run `python -m learning.rh_sync login` first")
@@ -185,8 +238,12 @@ def login_interactive() -> bool:
     user = os.getenv("RH_USERNAME") or input("RH email/username: ").strip()
     pw = os.getenv("RH_PASSWORD") or getpass.getpass("RH password: ")
     mfa = input("RH MFA code (blank if none): ").strip() or None
-    r.login(username=user, password=pw, mfa_code=mfa, store_session=True)
-    logger.info("rh_sync: login stored a session token (read-only use)")
+    expires = SESSION_DAYS * 86400
+    r.login(username=user, password=pw, mfa_code=mfa, store_session=True,
+            expiresIn=expires)
+    _write_session_expiry(expires)             # so the scheduler can warn early
+    logger.info(f"rh_sync: login stored a {SESSION_DAYS}-day session token "
+                f"(read-only use)")
     return True
 
 

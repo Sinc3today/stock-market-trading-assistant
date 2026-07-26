@@ -78,19 +78,45 @@ def job_paper_broker(play_fn=None, approve_fn=None):
 
 
 _rh_expiry_pushed: list = [None]   # date of the last expired-session push
+_rh_expiring_soon_pushed: list = [None]   # expiry ts we've already warned about
 
 
 def job_rh_sync(alert_fn=None):
     """Poll Robinhood READ-ONLY and reconcile open positions into the live book
     so the copilot/watchdog track real trades hands-off. Self-gated to trading
-    days; on an expired session it pushes ONE nudge per day (T1.3 — the old
-    silent warning left sync dead for days) and never crashes the bot."""
+    days. Session hygiene: warns ONCE before the token expires (so you can
+    re-auth on your schedule), and once it IS expired skips cleanly with one
+    nudge/day instead of retrying a dead login every cycle. Never crashes."""
     today = datetime.now(pytz.timezone("US/Eastern")).date()
     if not getattr(config, "RH_SYNC_ENABLED", True):
         logger.info("rh_sync: paused (RH_SYNC_ENABLED=false) — skipping reconcile")
         return
     if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
         return
+    # Proactive session-lifetime handling — notify BEFORE we ever hit a dead
+    # session, and don't hammer a dead one.
+    from learning import rh_sync as _rh
+    status = _rh.session_status()
+    if status == "expired":
+        logger.warning("rh_sync: session expired (local timestamp) — skipping")
+        if alert_fn and _rh_expiry_pushed[0] != today:
+            _rh_expiry_pushed[0] = today
+            alert_fn(title="⚠️ RH session expired",
+                     body="Robinhood position sync is paused until you re-auth:\n"
+                          "cd ~/Projects/stock-market-trading-assistant && "
+                          ".venv/bin/python -m learning.rh_sync login")
+        return
+    if status == "expiring_soon":
+        exp = _rh.session_expiry()
+        exp_key = exp.isoformat() if exp else None
+        if alert_fn and _rh_expiring_soon_pushed[0] != exp_key:
+            _rh_expiring_soon_pushed[0] = exp_key
+            alert_fn(title="🔑 RH session expires soon",
+                     body="Your Robinhood session expires within a day. Re-auth "
+                          "when convenient (no rush, sync still works until then):\n"
+                          "cd ~/Projects/stock-market-trading-assistant && "
+                          ".venv/bin/python -m learning.rh_sync login")
+        # fall through — session is still valid, keep syncing
     try:
         from learning.rh_sync import sync
         plan = sync(dry_run=False)
