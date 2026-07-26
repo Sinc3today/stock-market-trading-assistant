@@ -80,8 +80,12 @@ class OptionsLayer:
         direction = score_result.get("direction", "neutral")
         score     = score_result.get("final_score", 0)
 
-        if direction == "neutral" and (iv_rank is None or iv_rank < IV_RANK_HIGH):
-            return self._no_trade("Direction neutral and IV not high enough for iron condor")
+        # NOTE: no IV-Rank veto on the neutral/condor path. VIX<18 (the regime
+        # filter that produces a neutral read) mechanically forces IV Rank low,
+        # so an IVR>=50 requirement here structurally blocked the condor's own
+        # home regime — IVR<25 condors are 77% win / +$23, both eras, under
+        # haircut (docs/IVR_GATE_STUDY.md). Premium quality stays guarded by the
+        # MIN_CREDIT_SPREAD_RR r/r gate below; extreme-high IV by _assess_iv.
 
         if score < config.SCORE_ALERT_MINIMUM and direction != "neutral":
             return self._no_trade(f"Stock score too low ({score}) for options")
@@ -204,8 +208,10 @@ class OptionsLayer:
         """
         iv = iv_rank or 0
 
-        # Neutral signal → iron condor if IV is high enough
-        if direction == "neutral" and iv >= IV_RANK_HIGH:
+        # Neutral signal → iron condor. The regime layer only issues a neutral
+        # read on VIX<18 chop (the condor's validated home regime), so IV Rank
+        # is not a further gate here (see IVR_GATE_STUDY + the veto note above).
+        if direction == "neutral":
             return "iron_condor"
 
         # High conviction + low IV → debit spread (primary)

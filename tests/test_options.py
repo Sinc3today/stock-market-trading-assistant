@@ -55,6 +55,27 @@ def test_neutral_high_iv_gets_iron_condor(options, neutral_score):
     assert result["strategy"] == "iron_condor"
     print(f"\n✅ Neutral + high IV → {result['strategy']}")
 
+
+def test_neutral_low_iv_now_gets_iron_condor(options, neutral_score):
+    # IVR-gate study (docs/IVR_GATE_STUDY.md): VIX<18 mechanically means low IVR,
+    # so the old IVR>=50 veto blocked the condor's OWN regime ~permanently. A
+    # neutral day is a regime-decided condor day regardless of IV Rank now.
+    result = options.analyze("SPY", neutral_score, 450, 455, 445, iv_rank=20)
+    assert result["strategy"] == "iron_condor"
+    assert result["tradeable"] is True
+
+
+def test_neutral_iron_condor_still_rr_gated(options, neutral_score, monkeypatch):
+    # Removing the IVR veto must NOT remove the premium-quality guard: a condor
+    # whose credit is too thin for its width still gets rejected.
+    import signals.options_layer as ol
+    monkeypatch.setattr(ol.OptionsLayer, "_calculate_risk_reward",
+                        lambda self, strat, legs: {
+                            "net_premium": 0.5, "max_profit": 50, "max_loss": 450,
+                            "rr_ratio": 0.11})
+    result = options.analyze("SPY", neutral_score, 450, 455, 445, iv_rank=20)
+    assert result["tradeable"] is False       # r/r 0.11 < MIN_CREDIT_SPREAD_RR
+
 def test_danger_iv_blocked(options, bullish_standard):
     result = options.analyze("AAPL", bullish_standard, 170, 182, 166, iv_rank=85)
     assert result["tradeable"] is False
