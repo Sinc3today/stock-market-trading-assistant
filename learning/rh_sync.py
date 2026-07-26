@@ -247,6 +247,54 @@ def login_interactive() -> bool:
     return True
 
 
+# ── One-tap re-auth from the phone (SMTA button) ────────────────────────────
+# login_headless is driven by the /rh-reauth web button so re-auth is a single
+# tap when the heads-up push arrives — no terminal. It uses RH_USERNAME/
+# RH_PASSWORD from .env and Robinhood's DEVICE-APPROVAL challenge (you approve
+# the login in your Robinhood app; no typed MFA). STILL strictly read-only:
+# stores only the token, never touches orders. State is polled by the page.
+
+_REAUTH: dict = {"state": "idle", "detail": "", "ts": None}
+
+
+def reauth_status() -> dict:
+    return dict(_REAUTH)
+
+
+def _set_reauth(state: str, detail: str = "") -> None:
+    from datetime import datetime
+    _REAUTH.update(state=state, detail=detail, ts=datetime.now().isoformat())
+
+
+def login_headless() -> dict:
+    """Non-interactive re-auth for the phone button. Requires RH_USERNAME/
+    RH_PASSWORD in the environment; triggers Robinhood's device-approval push
+    (approve it in the RH app). Updates reauth_status() for the page to poll.
+    Read-only: stores only the token."""
+    user = os.getenv("RH_USERNAME")
+    pw = os.getenv("RH_PASSWORD")
+    if not user or not pw:
+        _set_reauth("error", "RH_USERNAME / RH_PASSWORD not set in .env — add them "
+                             "first, then this button works with one tap.")
+        return reauth_status()
+    _set_reauth("running", "Sent to Robinhood — open your RH app and approve the "
+                           "login. This page updates when it's done.")
+    try:
+        import robin_stocks.robinhood as r
+        expires = SESSION_DAYS * 86400
+        r.login(username=user, password=pw, mfa_code=None, store_session=True,
+                expiresIn=expires)                # device-approval challenge
+        _write_session_expiry(expires)
+        stamp_success()                            # token proven to work
+        _set_reauth("ok", f"Re-authenticated — session good for {SESSION_DAYS} days.")
+        logger.info("rh_sync: headless re-auth succeeded (read-only)")
+    except Exception as e:
+        _set_reauth("error", f"Re-auth failed: {e}. You can still use the terminal "
+                             f"login as a fallback.")
+        logger.warning(f"rh_sync: headless re-auth failed: {e}")
+    return reauth_status()
+
+
 def _stamp_path() -> str:
     import config
     return os.path.join(config.LOG_DIR, "rh_sync_last_success")

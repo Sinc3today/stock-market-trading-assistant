@@ -36,10 +36,12 @@ class Notifier:
 
     # ── PLAY: actionable-play push (the only thing that reaches the phone) ──
 
-    def play(self, alert: dict | None = None, *, title: str, body: str) -> None:
-        """Push a priority-1 notification; persists `alert` (if given) for the deep link."""
-        url = None
-        if alert is not None:
+    def play(self, alert: dict | None = None, *, title: str, body: str,
+             url: str | None = None) -> None:
+        """Push a priority-1 notification; persists `alert` (if given) for the
+        deep link. An explicit `url` (e.g. "/rh-reauth") wins over the
+        alert-derived one so a push can deep-link straight to an action page."""
+        if url is None and alert is not None:
             try:
                 alert_id = alert_store.save_alert(alert)
                 if alert_id:

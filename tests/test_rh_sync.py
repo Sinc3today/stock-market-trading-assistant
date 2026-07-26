@@ -292,3 +292,53 @@ def test_job_rh_sync_skips_and_notifies_when_expired(tmp_path, monkeypatch):
     pushes = []
     sched.job_rh_sync(alert_fn=lambda **kw: pushes.append(kw["title"]))
     assert any("expired" in t.lower() for t in pushes)
+
+
+def test_login_headless_requires_env_creds(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    monkeypatch.delenv("RH_USERNAME", raising=False)
+    monkeypatch.delenv("RH_PASSWORD", raising=False)
+    import learning.rh_sync as rh
+    out = rh.login_headless()
+    assert out["state"] == "error" and "RH_USERNAME" in out["detail"]
+
+
+def test_login_headless_success_uses_device_approval(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    monkeypatch.setenv("RH_USERNAME", "u@example.com")
+    monkeypatch.setenv("RH_PASSWORD", "secret")
+    import robin_stocks.robinhood as r
+    calls = {}
+    def _login(**kw):
+        calls.update(kw)
+        return {"access_token": "x"}
+    monkeypatch.setattr(r, "login", _login)
+    import learning.rh_sync as rh
+    out = rh.login_headless()
+    assert out["state"] == "ok"
+    assert calls["mfa_code"] is None                 # device approval, not typed
+    assert calls["store_session"] is True
+    assert calls["expiresIn"] == rh.SESSION_DAYS * 86400
+    # session now marked valid + success stamped
+    assert rh.session_status() == "valid"
+
+
+def test_rh_reauth_route_renders_and_starts(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from fastapi.testclient import TestClient
+    import alerts.web_app as wa
+    import learning.rh_sync as rh
+    rh._REAUTH.update(state="idle", detail="", ts=None)
+    client = TestClient(wa.app)
+    # page renders
+    r = client.get("/rh-reauth")
+    assert r.status_code == 200 and "Re-authenticate Robinhood" in r.text
+    # POST starts a background login; stub it so nothing hits the network
+    started = {"n": 0}
+    monkeypatch.setattr(rh, "login_headless",
+                        lambda: started.update(n=started["n"] + 1))
+    r2 = client.post("/rh-reauth", follow_redirects=False)
+    assert r2.status_code == 303 and r2.headers["location"] == "/rh-reauth"

@@ -1469,6 +1469,62 @@ def _render_copilot_log(prefill: dict | None = None, error: str | None = None,
     )
 
 
+def _render_rh_reauth(status: dict) -> str:
+    """One-tap Robinhood re-auth page (deep-linked from the heads-up push)."""
+    state = (status or {}).get("state", "idle")
+    detail = (status or {}).get("detail", "")
+    tone = {"ok": "status-win", "error": "status-loss",
+            "running": "status-be"}.get(state, "")
+    running = state == "running"
+    # auto-refresh while the device-approval is pending so the page flips to
+    # success/error on its own once you approve in the RH app.
+    refresh = ('<meta http-equiv="refresh" content="4">' if running else "")
+    label = {"idle": "Re-authenticate Robinhood",
+             "ok": "Re-authenticate again",
+             "error": "Try again",
+             "running": "Waiting for your Robinhood approval…"}.get(state,
+             "Re-authenticate Robinhood")
+    status_line = (f'<p class="reauth-detail {tone}">{html.escape(detail)}</p>'
+                   if detail else "")
+    button = ("" if running else
+              '<form method="post" action="/rh-reauth">'
+              f'<button class="btn-primary" type="submit">{html.escape(label)}</button>'
+              '</form>')
+    spinner = ('<p class="reauth-detail status-be">'
+               f'{html.escape(label)}</p>' if running else "")
+    body = (
+        '<div class="card reauth-card">'
+        '<p>Tap the button, then open your <b>Robinhood app</b> and approve the '
+        'login prompt. The session lasts a week, and this page updates itself '
+        'once you approve.</p>'
+        f'{status_line}{spinner}{button}'
+        '<p class="reauth-fallback">Fallback (terminal): '
+        '<code>.venv/bin/python -m learning.rh_sync login</code></p>'
+        '</div>'
+    )
+    return _render_page(
+        title      = "Trading Assistant - Re-authenticate Robinhood",
+        heading    = "Robinhood re-auth",
+        body       = body,
+        css        = _INDEX_CSS + _COPILOT_CSS + _REAUTH_CSS,
+        active_nav = "copilot",
+        extra_head = refresh,
+    )
+
+
+_REAUTH_CSS = """
+.reauth-card{max-width:32rem}
+.reauth-card p{margin:0 0 1rem;line-height:1.5}
+.reauth-detail{font-weight:600;padding:.6rem .8rem;border-radius:var(--r-sm,6px);
+  background:var(--surface-2,#f4f4f5)}
+.reauth-detail.status-win{color:var(--ok,#16a34a)}
+.reauth-detail.status-loss{color:var(--err,#dc2626)}
+.reauth-detail.status-be{color:var(--warn,#d97706)}
+.reauth-fallback{font-size:.8rem;color:var(--fg-subtle,#a1a1aa);margin-top:1.2rem}
+.reauth-fallback code{font-size:.78rem}
+"""
+
+
 def _render_journal(entries: list[dict]) -> str:
     """Cross-alert journal feed."""
     if not entries:
@@ -3524,6 +3580,26 @@ def copilot_calc_fragment(kind: str):
     spot, vix = _spy_spot(), _spy_vix()
     render = _render_condor_calc if kind == "condor" else _render_butterfly_calc
     return HTMLResponse(render(spot, vix))
+
+
+@app.get("/rh-reauth", response_class=HTMLResponse)
+def rh_reauth_page():
+    """One-tap Robinhood re-auth (deep-linked from the heads-up push). Tailnet-
+    only, like the rest of the app."""
+    from learning.rh_sync import reauth_status
+    return HTMLResponse(_render_rh_reauth(reauth_status()))
+
+
+@app.post("/rh-reauth", response_class=HTMLResponse)
+def rh_reauth_start():
+    """Kick off the headless re-auth in the background (Robinhood then pushes a
+    device-approval prompt to your app). Re-entrant-safe: won't start a second
+    login while one is pending."""
+    import threading
+    from learning import rh_sync
+    if rh_sync.reauth_status().get("state") != "running":
+        threading.Thread(target=rh_sync.login_headless, daemon=True).start()
+    return RedirectResponse("/rh-reauth", status_code=303)
 
 
 @app.post("/copilot/placed", response_class=HTMLResponse)
