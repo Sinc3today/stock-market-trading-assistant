@@ -342,3 +342,39 @@ def test_rh_reauth_route_renders_and_starts(tmp_path, monkeypatch):
                         lambda: started.update(n=started["n"] + 1))
     r2 = client.post("/rh-reauth", follow_redirects=False)
     assert r2.status_code == 303 and r2.headers["location"] == "/rh-reauth"
+
+
+def test_load_session_marks_expired_when_rh_rejects_token(tmp_path, monkeypatch):
+    # RH can invalidate the token BEFORE our nominal expiry. When r.login fails,
+    # _load_session must correct local state to expired so we stop retrying and
+    # the scheduler sends the re-auth push (the 2026-07-28 early-death gap).
+    import config
+    from datetime import datetime, timedelta
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    import learning.rh_sync as rh
+    # local timestamp still says valid (5 days out) — the bug condition
+    rh._write_session_expiry(5 * 86400)
+    assert rh.session_status() == "valid"
+    # pickle exists but RH rejects it
+    import os
+    tok = tmp_path / "robinhood.pickle"; tok.write_text("x")
+    monkeypatch.setattr(os.path, "expanduser", lambda p: str(tok))
+    import robin_stocks.robinhood as r
+    monkeypatch.setattr(r, "login", lambda **k: (_ for _ in ()).throw(Exception("bad token")))
+    import pytest
+    with pytest.raises(RuntimeError):
+        rh._load_session()
+    # local state corrected -> future cycles skip cleanly + notify
+    assert rh.session_status() == "expired"
+
+
+def test_rh_page_shows_sync_status_and_is_in_nav(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from fastapi.testclient import TestClient
+    import alerts.web_app as wa
+    client = TestClient(wa.app)
+    r = client.get("/rh-reauth")
+    assert r.status_code == 200
+    assert "Last successful sync" in r.text          # status card present
+    assert "Robinhood" in r.text                      # nav label

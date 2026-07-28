@@ -166,6 +166,14 @@ def _write_session_expiry(seconds: int) -> None:
     atomic_write_text(_session_expiry_path(), exp.isoformat())
 
 
+def _mark_session_expired() -> None:
+    """Force the local session state to 'expired'. Called when RH rejects the
+    token BEFORE our nominal expiry (RH can invalidate server-side early), so
+    the scheduler flips to clean-skip + the re-auth push instead of retrying a
+    dead login every cycle."""
+    _write_session_expiry(-60)
+
+
 def session_expiry():
     """The local timestamp when the stored token is expected to expire, or None."""
     from datetime import datetime
@@ -207,10 +215,15 @@ def _load_session():
         raise RuntimeError("RH session expired (local timestamp) — re-run `login`")
     pickle_path = os.path.expanduser("~/.tokens/robinhood.pickle")
     if not os.path.isfile(pickle_path):
+        _mark_session_expired()
         raise RuntimeError("No stored RH session — run `python -m learning.rh_sync login` first")
     try:
         r.login(store_session=True)            # reloads + validates the pickle
     except Exception as e:
+        # RH rejected the token before our nominal expiry (server-side
+        # invalidation). Correct local state so we stop retrying and the
+        # scheduler sends the re-auth push next cycle.
+        _mark_session_expired()
         raise RuntimeError(f"Stored RH session invalid/expired — re-run `login`: {e}") from e
 
 

@@ -141,11 +141,10 @@ def job_rh_sync(alert_fn=None):
         logger.warning(f"rh_sync skipped: {e}")
         if alert_fn and _rh_expiry_pushed[0] != today:
             _rh_expiry_pushed[0] = today
-            alert_fn(title="⚠️ RH sync is down",
-                     body="Robinhood session expired — position sync and close-"
-                          "detection are blind until you re-run:\n"
-                          "cd ~/Projects/stock-market-trading-assistant && "
-                          ".venv/bin/python -m learning.rh_sync login")
+            _rh_push(alert_fn, title="⚠️ RH session expired",
+                     body="Robinhood position sync is down until you re-auth. "
+                          "Tap to re-authenticate — one button, then approve in "
+                          "your Robinhood app.")
     except Exception as e:
         logger.exception(f"rh_sync failed: {e}")
 

@@ -447,6 +447,7 @@ _NAV_ITEMS = [
     ("regime",   "/regime",   "Regime"),
     ("trades",   "/trades",   "Trades"),
     ("learning", "/learning", "Learning"),
+    ("rh",       "/rh-reauth", "Robinhood"),
 ]
 _ICON_BELL = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
               'stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>'
@@ -1469,8 +1470,37 @@ def _render_copilot_log(prefill: dict | None = None, error: str | None = None,
     )
 
 
+def _rh_sync_status_card() -> str:
+    """Session + last-sync status so the page tells you whether you even need to
+    re-auth."""
+    from learning import rh_sync as rh
+    sess = rh.session_status()
+    last = rh.last_success_date()
+    exp = rh.session_expiry()
+    label, tone = {
+        "valid": ("Connected", "status-win"),
+        "expiring_soon": ("Expires soon — re-auth when convenient", "status-be"),
+        "expired": ("Expired — re-authenticate below", "status-loss"),
+        "unknown": ("Unknown — re-authenticate below", "status-be"),
+    }.get(sess, ("Unknown", ""))
+    # a valid local timestamp but a stale last-sync means the token likely died
+    # early (RH server-side) — nudge toward re-auth.
+    from datetime import date
+    if sess == "valid" and last and (date.today() - last).days >= 1:
+        label, tone = ("Sync stale — token may have expired early, re-auth below",
+                       "status-be")
+    rows = [f'<div class="rh-row"><span>Session</span>'
+            f'<span class="reauth-detail {tone}">{html.escape(label)}</span></div>']
+    if exp:
+        rows.append(f'<div class="rh-row"><span>Token expires</span>'
+                    f'<span>{exp.strftime("%b %d, %Y")}</span></div>')
+    rows.append(f'<div class="rh-row"><span>Last successful sync</span>'
+                f'<span>{last.isoformat() if last else "—"}</span></div>')
+    return '<div class="card rh-status">' + "".join(rows) + '</div>'
+
+
 def _render_rh_reauth(status: dict) -> str:
-    """One-tap Robinhood re-auth page (deep-linked from the heads-up push)."""
+    """Robinhood sync + one-tap re-auth page (also deep-linked from the push)."""
     state = (status or {}).get("state", "idle")
     detail = (status or {}).get("detail", "")
     tone = {"ok": "status-win", "error": "status-loss",
@@ -1493,21 +1523,23 @@ def _render_rh_reauth(status: dict) -> str:
     spinner = ('<p class="reauth-detail status-be">'
                f'{html.escape(label)}</p>' if running else "")
     body = (
-        '<div class="card reauth-card">'
-        '<p>Tap the button, then open your <b>Robinhood app</b> and approve the '
-        'login prompt. The session lasts a week, and this page updates itself '
-        'once you approve.</p>'
+        _rh_sync_status_card()
+        + '<div class="card reauth-card">'
+        '<p>Position sync runs automatically every 15 min in market hours. If the '
+        'status above says expired or stale, tap below, then open your '
+        '<b>Robinhood app</b> and approve the login prompt — the session lasts a '
+        'week and this page updates itself once you approve.</p>'
         f'{status_line}{spinner}{button}'
         '<p class="reauth-fallback">Fallback (terminal): '
         '<code>.venv/bin/python -m learning.rh_sync login</code></p>'
         '</div>'
     )
     return _render_page(
-        title      = "Trading Assistant - Re-authenticate Robinhood",
-        heading    = "Robinhood re-auth",
+        title      = "Trading Assistant - Robinhood sync",
+        heading    = "Robinhood sync",
         body       = body,
         css        = _INDEX_CSS + _COPILOT_CSS + _REAUTH_CSS,
-        active_nav = "copilot",
+        active_nav = "rh",
         extra_head = refresh,
     )
 
@@ -1522,6 +1554,11 @@ _REAUTH_CSS = """
 .reauth-detail.status-be{color:var(--warn,#d97706)}
 .reauth-fallback{font-size:.8rem;color:var(--fg-subtle,#a1a1aa);margin-top:1.2rem}
 .reauth-fallback code{font-size:.78rem}
+.rh-status{max-width:32rem;margin-bottom:1rem}
+.rh-row{display:flex;justify-content:space-between;gap:1rem;padding:.4rem 0;
+  border-bottom:1px solid var(--border,#e4e4e7);font-size:.9rem}
+.rh-row:last-child{border-bottom:none}
+.rh-row > span:first-child{color:var(--fg-muted,#52525b)}
 """
 
 
