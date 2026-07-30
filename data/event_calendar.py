@@ -330,6 +330,11 @@ class EventCalendar:
             date(2026, 1, 28), date(2026, 3, 18), date(2026, 4, 29),
             date(2026, 6, 17), date(2026, 7, 29), date(2026, 9, 16),
             date(2026, 10, 28), date(2026, 12, 9),
+            # 2027 (Fed tentative schedule, decision = 2nd day) — extended
+            # 2026-07-30 when the static fallback dropped below 4 future dates.
+            date(2027, 1, 27), date(2027, 3, 17), date(2027, 4, 28),
+            date(2027, 6, 9), date(2027, 7, 28), date(2027, 9, 15),
+            date(2027, 10, 27), date(2027, 12, 8),
         ]
         today  = date.today()
         events = []
