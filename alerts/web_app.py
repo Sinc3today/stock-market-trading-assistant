@@ -80,6 +80,12 @@ class MacroChatRequest(BaseModel):
     message: str
 
 
+class AssistantRequest(BaseModel):
+    """A turn for the local-LLM /assistant route (client keeps history)."""
+    message: str
+    history: list[dict] = []
+
+
 # ─────────────────────────────────────────
 # CLAUDE SYSTEM PROMPT
 # ─────────────────────────────────────────
@@ -447,6 +453,7 @@ _NAV_ITEMS = [
     ("regime",   "/regime",   "Regime"),
     ("trades",   "/trades",   "Trades"),
     ("learning", "/learning", "Learning"),
+    ("assistant", "/assistant", "Assistant"),
     ("rh",       "/rh-reauth", "Robinhood"),
 ]
 _ICON_BELL = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
@@ -2005,6 +2012,101 @@ def _render_learning(
         css         = _INDEX_CSS,
         active_nav  = "learning",
     )
+
+
+def _render_assistant(model: str) -> str:
+    """Local-LLM assistant page: free market/position Q&A on the nucbox model,
+    with HANDOFF cards that route hard questions to Claude Code."""
+    body = f'''
+<div class="card asst-head">
+  <p><b>Local assistant</b> — runs on <code>{html.escape(model)}</code> on your
+  nucbox. <b>No API credits.</b> It knows your live regime, positions, plan and
+  recent learnings. For anything needing a backtest, code change, or deep
+  analysis, it hands you a ready-to-paste prompt for Claude Code.</p>
+</div>
+<div id="chat" class="chat-box asst-chat"></div>
+<div class="asst-input">
+  <textarea id="msg" rows="2" placeholder="e.g. How's my Aug-3 condor? · What's the regime? · Explain the transition-condor study"></textarea>
+  <button id="send" class="btn-primary">Send</button>
+</div>
+<script>
+const chat = document.getElementById("chat");
+const msg = document.getElementById("msg");
+const send = document.getElementById("send");
+let history = [];
+
+function bubble(role, text) {{
+  const d = document.createElement("div");
+  d.className = "asst-msg " + role;
+  d.textContent = text;
+  chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
+  return d;
+}}
+function handoffCard(prompt) {{
+  const wrap = document.createElement("div");
+  wrap.className = "asst-handoff";
+  wrap.innerHTML = '<div class="asst-handoff-h">↗ Better asked in Claude Code</div>'
+    + '<p>This needs the frontier model. Copy this refined prompt into your Claude Code session:</p>';
+  const pre = document.createElement("pre"); pre.textContent = prompt;
+  const btn = document.createElement("button"); btn.className = "btn-ghost"; btn.textContent = "Copy prompt";
+  btn.onclick = () => {{ navigator.clipboard.writeText(prompt); btn.textContent = "Copied \\u2713"; }};
+  wrap.appendChild(pre); wrap.appendChild(btn);
+  chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
+}}
+async function ask() {{
+  const text = msg.value.trim(); if (!text) return;
+  bubble("user", text); msg.value = ""; send.disabled = true;
+  const thinking = bubble("assistant muted", "…thinking (local model)");
+  try {{
+    const r = await fetch("/assistant/ask", {{
+      method: "POST", headers: {{"Content-Type": "application/json"}},
+      body: JSON.stringify({{message: text, history}})
+    }});
+    const data = await r.json();
+    thinking.remove();
+    if (data.handoff) {{ handoffCard(data.refined_prompt || text); }}
+    else {{
+      bubble("assistant", data.reply);
+      history.push({{role: "user", content: text}});
+      history.push({{role: "assistant", content: data.reply}});
+      if (history.length > 12) history = history.slice(-12);
+    }}
+  }} catch (e) {{ thinking.remove(); bubble("assistant muted", "Error reaching the assistant."); }}
+  send.disabled = false; msg.focus();
+}}
+send.onclick = ask;
+msg.addEventListener("keydown", (e) => {{ if (e.key === "Enter" && !e.shiftKey) {{ e.preventDefault(); ask(); }} }});
+</script>
+'''
+    return _render_page(
+        title      = "Trading Assistant - Assistant",
+        heading    = "Assistant",
+        body       = body,
+        css        = _INDEX_CSS + _COPILOT_CSS + _ASST_CSS,
+        active_nav  = "assistant",
+    )
+
+
+_ASST_CSS = """
+.asst-head{max-width:46rem;margin-bottom:1rem}
+.asst-head code{font-size:.82rem}
+.asst-chat{min-height:360px;max-height:60vh;overflow-y:auto;display:flex;
+  flex-direction:column;gap:.6rem;padding:.5rem 0}
+.asst-msg{max-width:80%;padding:.55rem .8rem;border-radius:var(--r-md,8px);
+  white-space:pre-wrap;line-height:1.5;font-size:.92rem}
+.asst-msg.user{align-self:flex-end;background:var(--accent,#4f46e5);color:#fff}
+.asst-msg.assistant{align-self:flex-start;background:var(--surface-2,#f4f4f5);
+  color:var(--fg,#18181b)}
+.asst-msg.muted{opacity:.6;font-style:italic}
+.asst-handoff{align-self:stretch;border:1px solid var(--accent,#4f46e5);
+  border-radius:var(--r-md,8px);padding:.8rem;background:var(--accent-weak,#eef2ff)}
+.asst-handoff-h{font-weight:700;color:var(--accent,#4f46e5);margin-bottom:.4rem}
+.asst-handoff pre{white-space:pre-wrap;background:var(--surface,#fff);
+  border:1px solid var(--border,#e4e4e7);border-radius:6px;padding:.6rem;
+  font-size:.82rem;margin:.5rem 0}
+.asst-input{display:flex;gap:.5rem;margin-top:.6rem}
+.asst-input textarea{flex:1;resize:vertical}
+"""
 
 
 def _render_macro_chat(history: list[dict], context_summary: str) -> str:
@@ -3900,6 +4002,24 @@ def _macro_chat_instance() -> MacroChat:
     """Construct MacroChat with read-only sources (no live API calls per request)."""
     # EarningsCalendar with polygon_client=None reads cache only.
     return MacroChat(earnings_calendar=EarningsCalendar(polygon_client=None))
+
+
+@app.get("/assistant", response_class=HTMLResponse)
+def assistant_page():
+    """Local-LLM assistant — free market/position Q&A on the nucbox model."""
+    import config
+    return HTMLResponse(_render_assistant(getattr(config, "OLLAMA_MODEL", "phi4:14b")))
+
+
+@app.post("/assistant/ask")
+def assistant_ask(body: AssistantRequest):
+    """Answer on the LOCAL model (no API credits), grounded in bot state, with
+    HANDOFF routing for frontier-grade questions."""
+    msg = (body.message or "").strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="message required")
+    from alerts.smta_assistant import ask
+    return JSONResponse(ask(msg, history=body.history or []))
 
 
 @app.get("/chat", response_class=HTMLResponse)
