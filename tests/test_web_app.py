@@ -1500,10 +1500,42 @@ def test_copilot_page_wires_calc_refresh_buttons(client, app_modules, monkeypatc
     _, web_app = app_modules
     _quiet_copilot_net(monkeypatch, web_app)
     html = client.get("/copilot").text
-    assert 'data-src="/copilot/calc/condor"' in html
-    assert 'data-src="/copilot/calc/butterfly"' in html
+    assert 'data-src="/copilot/calc/condor?dte=' in html
+    assert 'data-src="/copilot/calc/butterfly?dte=' in html
     assert 'id="calc-condor"' in html and 'id="calc-butterfly"' in html
     assert "calc-refresh" in html and "fetch(" in html   # the swap script
+
+
+def test_copilot_page_has_market_price_refresh(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app)
+    html = client.get("/copilot").text
+    assert 'id="spy-refresh"' in html          # the manual price-refresh button
+    assert 'id="spy-price"' in html and 'id="spy-price-ts"' in html
+    assert 'fetch("/copilot/spot")' in html    # wired to the spot endpoint
+
+
+def test_copilot_spot_endpoint_returns_price_and_stamp(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app)
+    r = client.get("/copilot/spot")
+    assert r.status_code == 200
+    data = r.json()
+    assert "price" in data and "ts" in data and "priced" in data["ts"]
+
+
+def test_calc_fragment_honors_short_dte(client, app_modules, monkeypatch):
+    _, web_app = app_modules
+    _quiet_copilot_net(monkeypatch, web_app)
+    # DTE chips present + active, and a 7DTE request re-prices at 7 DTE
+    condor7 = client.get("/copilot/calc/condor?dte=7").text
+    assert "~7 DTE" in condor7
+    assert 'class="calc-refresh calc-dte active"' in condor7   # 7 chip marked active
+    assert 'data-src="/copilot/calc/condor?dte=14"' in condor7  # other chips present
+    # bogus dte falls back to 45 (whitelist)
+    assert "~45 DTE" in client.get("/copilot/calc/condor?dte=999").text
+    fly7 = client.get("/copilot/calc/butterfly?dte=7").text
+    assert "~7 DTE" in fly7
 
 
 def test_calc_stamp_includes_date_and_risk_lines(client, app_modules, monkeypatch):

@@ -804,6 +804,17 @@ _COPILOT_UPLOAD_DIR = os.path.join(config.LOG_DIR, "copilot_uploads")
 
 _COPILOT_CSS = """
 .cp-spot{font-family:var(--font-mono,ui-monospace,monospace);color:var(--fg-muted,#52525b);margin-bottom:.75rem}
+.calc-dtes{display:flex;gap:.35rem;flex-wrap:wrap;margin:0 0 .5rem}
+.calc-dte{appearance:none;border:1px solid var(--border,#e4e4e7);background:var(--surface,#fff);
+  color:var(--fg-muted,#52525b);border-radius:999px;padding:.2rem .6rem;font-size:.78rem;
+  cursor:pointer;font-variant-numeric:tabular-nums}
+.calc-dte:hover{border-color:var(--accent,#4f46e5)}
+.calc-dte.active{background:var(--accent,#4f46e5);color:var(--accent-fg,#fff);border-color:var(--accent,#4f46e5)}
+.price-refresh{appearance:none;border:none;background:transparent;cursor:pointer;
+  color:var(--fg-subtle,#a1a1aa);font-size:.95rem;padding:0 .2rem;line-height:1}
+.price-refresh:hover{color:var(--accent,#4f46e5)}
+.price-refresh.spin{animation:price-spin .7s linear infinite;display:inline-block}
+@keyframes price-spin{to{transform:rotate(360deg)}}
 .legs{margin:.4rem 0;display:flex;flex-direction:column;gap:.2rem}
 .leg{font-family:var(--font-mono,ui-monospace,monospace);font-size:.95rem;letter-spacing:.02em}
 .cp-h{margin:1.4rem 0 .5rem;font-size:1rem;color:var(--fg-muted,#52525b);text-transform:uppercase;letter-spacing:.04em}
@@ -929,29 +940,53 @@ def _calc_warn_html(vix) -> str:
             '</div>')
 
 
-def _calc_refresh_btn(kind: str) -> str:
+CALC_DTES = (7, 14, 21, 45)   # quick-calc timeframes (shorter + the 45 default)
+
+
+def _calc_refresh_btn(kind: str, dte: int = 45) -> str:
     return (f'<button class="btn-ghost calc-refresh" '
-            f'data-src="/copilot/calc/{kind}" data-target="calc-{kind}" '
+            f'data-src="/copilot/calc/{kind}?dte={dte}" data-target="calc-{kind}" '
             f'type="button">&#8635; Refresh price</button>')
 
 
-def _calc_actions(log_html: str, kind: str) -> str:
+def _calc_dte_selector(kind: str, active: int) -> str:
+    """DTE chips (7/14/21/45) that re-price the calc in place at that timeframe.
+    Reuses the .calc-refresh swap mechanism — each chip just carries its DTE."""
+    chips = "".join(
+        f'<button class="calc-refresh calc-dte{" active" if d == active else ""}" '
+        f'data-src="/copilot/calc/{kind}?dte={d}" data-target="calc-{kind}" '
+        f'type="button">{d}DTE</button>'
+        for d in CALC_DTES)
+    return (f'<div class="calc-dtes" role="group" aria-label="timeframe">{chips}</div>')
+
+
+def _calc_actions(log_html: str, kind: str, dte: int = 45) -> str:
     """Log + Refresh side by side (flex row, wraps only if truly cramped)."""
     return ('<div class="calc-actions" style="display:flex;gap:.5rem;'
             'flex-wrap:wrap;align-items:center;margin-top:.6rem">'
-            f'{log_html}{_calc_refresh_btn(kind)}</div>')
+            f'{log_html}{_calc_refresh_btn(kind, dte)}</div>')
 
 
-def _render_condor_calc(spot, vix) -> str:
+def _clamp_calc_dte(dte) -> int:
+    """Only allow the whitelisted quick-calc timeframes; default 45."""
+    try:
+        d = int(dte)
+    except (TypeError, ValueError):
+        return 45
+    return d if d in CALC_DTES else 45
+
+
+def _render_condor_calc(spot, vix, dte: int = 45) -> str:
     """On-demand condor at the CURRENT price (0.20-delta shorts, $5 wings) — for
     when the morning notification was missed. Estimate; the 'Log this' link
     pre-fills the log form to confirm the real fill."""
     if not isinstance(spot, (int, float)):
         return '<div class="empty">SPY quote unavailable — calculator needs a live price.</div>'
+    dte = _clamp_calc_dte(dte)
     from signals.condor_calc import build_condor
     from alerts.stop_watchdog import rh_leg_lines
     try:
-        c = build_condor(spot, vix)
+        c = build_condor(spot, vix, dte=dte)
     except Exception as e:
         logger.warning(f"condor calc failed: {e}")
         return '<div class="empty">Could not build a condor right now.</div>'
@@ -962,8 +997,9 @@ def _render_condor_calc(spot, vix) -> str:
                f"&bp={c['long_put']:g}&sp={c['short_put']:g}")
     return (
         '<div class="alert-card">'
-        f'<div class="muted">At SPY ${c["spot"]:,.2f} &middot; {vix_str} &middot; '
-        f'~45 DTE &middot; {_priced_stamp()} &middot; estimate — verify vs the live chain</div>'
+        + _calc_dte_selector("condor", dte)
+        + f'<div class="muted">At SPY ${c["spot"]:,.2f} &middot; {vix_str} &middot; '
+        f'~{dte} DTE &middot; {_priced_stamp()} &middot; estimate — verify vs the live chain</div>'
         f"<div class='legs'>{legs}</div>"
         '<div class="muted" style="margin-top:.25rem">'
         f'Est. credit ${c["credit"]:.2f} &middot; max profit ${c["max_profit"]:.0f} &middot; '
@@ -974,20 +1010,22 @@ def _render_condor_calc(spot, vix) -> str:
         f'until you close or expire. A breach costs up to that; the watchdog pages you '
         f'first. Hist. 74% win closing at the 70% target (5-yr backtest).</div>'
         f'{_calc_warn_html(vix)}'
-        + _calc_actions(f'<a class="btn-ghost" href="{log_url}">Log this condor</a>', "condor")
+        + _calc_actions(f'<a class="btn-ghost" href="{log_url}">Log this condor</a>',
+                        "condor", dte)
         + '</div>'
     )
 
 
-def _render_butterfly_calc(spot, vix) -> str:
+def _render_butterfly_calc(spot, vix, dte: int = 45) -> str:
     """Low-capital alternative to the condor: long call butterfly over the same
     zone at ~half the capital (docs/STRUCTURE_COMPARISON.md). Debit = max loss —
     nothing held as collateral."""
     if not isinstance(spot, (int, float)):
         return ""
+    dte = _clamp_calc_dte(dte)
     from signals.condor_calc import build_butterfly
     try:
-        b = build_butterfly(spot, vix)
+        b = build_butterfly(spot, vix, dte=dte)
     except Exception as e:
         logger.warning(f"butterfly calc failed: {e}")
         return ""
@@ -998,8 +1036,9 @@ def _render_butterfly_calc(spot, vix) -> str:
                    f"&fly_hi={b['upper']:g}&entry_price={b['capital']/100:g}")
     return (
         '<div class="alert-card">'
-        f'<div class="muted">Long call butterfly {b["lower"]:g}/{b["center"]:g}/{b["upper"]:g} '
-        f'&middot; ~45 DTE &middot; {_priced_stamp()} &middot; estimate — verify vs the live chain</div>'
+        + _calc_dte_selector("butterfly", dte)
+        + f'<div class="muted">Long call butterfly {b["lower"]:g}/{b["center"]:g}/{b["upper"]:g} '
+        f'&middot; ~{dte} DTE &middot; {_priced_stamp()} &middot; estimate — verify vs the live chain</div>'
         f"<div class='legs'>{legs}</div>"
         '<div class="muted" style="margin-top:.25rem">'
         f'Cost (= max loss, no collateral) <b>${b["capital"]:,.0f}</b> &middot; '
@@ -1012,7 +1051,7 @@ def _render_butterfly_calc(spot, vix) -> str:
         'see STRUCTURE_COMPARISON).</div>'
         f'{_calc_warn_html(vix)}'
         + _calc_actions(f'<a class="btn-ghost" href="{fly_log_url}">Log this butterfly</a>',
-                        "butterfly")
+                        "butterfly", dte)
         + '</div>'
     )
 
@@ -1328,11 +1367,14 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
 
     # Top row is JUST the price (user feedback 2026-07-14): MTM + collateral
     # bundle into one "Positions & risk" card at the very bottom.
+    price_refresh = ('<button id="spy-refresh" class="price-refresh" type="button" '
+                     'title="Refresh price" aria-label="Refresh price">&#8635;</button>')
     stat_row = (
         '<div class="dash">'
-        + _stat_card('Market <span class="sep">·</span> SPY', spy_val,
-                     sub="live underlying", right_html=spark + day_delta,
-                     span="span-12")
+        + _stat_card('Market <span class="sep">·</span> SPY ' + price_refresh,
+                     f'<span id="spy-price">{spy_val}</span>',
+                     sub='<span id="spy-price-ts">live underlying</span>',
+                     right_html=spark + day_delta, span="span-12")
         + '</div>'
     )
     risk_card = (
@@ -1365,14 +1407,22 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
         '<a class="btn-ghost" href="/copilot/log">+ Log a trade I built myself</a></div>'
         '</div>'
     )
-    # tiny swap script: refresh a calculator in place (fold stays open)
+    # tiny swap script: refresh a calculator (or a DTE chip) in place, plus a
+    # manual market-price refresh that updates the SPY stat from /copilot/spot.
     calc_js = (
         '<script>document.addEventListener("click",async function(e){'
         'var b=e.target.closest(".calc-refresh");if(!b)return;e.preventDefault();'
         'var t=document.getElementById(b.dataset.target);var old=b.textContent;'
         'b.textContent="Refreshing\\u2026";b.disabled=true;'
         'try{var r=await fetch(b.dataset.src);t.innerHTML=await r.text();}'
-        'catch(err){b.textContent="Retry";b.disabled=false;}});</script>'
+        'catch(err){b.textContent="Retry";b.disabled=false;}});'
+        'var pr=document.getElementById("spy-refresh");'
+        'if(pr)pr.addEventListener("click",async function(){'
+        'pr.classList.add("spin");'
+        'try{var r=await fetch("/copilot/spot");var d=await r.json();'
+        'if(d.price)document.getElementById("spy-price").textContent=d.price;'
+        'if(d.ts)document.getElementById("spy-price-ts").innerHTML=d.ts;}'
+        'catch(err){}finally{pr.classList.remove("spin");}});</script>'
     )
     todays_card = _render_todays_play_card(plan, walls, todays_trades=plays)
     body = stat_row + (f'<div class="dash">{todays_card}{positions_card}'
@@ -3710,15 +3760,25 @@ def regime_page():
 
 
 @app.get("/copilot/calc/{kind}", response_class=HTMLResponse)
-def copilot_calc_fragment(kind: str):
-    """Re-render one price calculator with a fresh spot/VIX fetch — the
-    ↻ Refresh button swaps this fragment in place (fold stays open)."""
+def copilot_calc_fragment(kind: str, dte: int = 45):
+    """Re-render one price calculator with a fresh spot/VIX fetch at the chosen
+    timeframe — the ↻ Refresh and the DTE chips both swap this fragment in place
+    (fold stays open)."""
     if kind not in ("condor", "butterfly"):
         return HTMLResponse('<div class="empty">Unknown calculator.</div>',
                             status_code=404)
     spot, vix = _spy_spot(), _spy_vix()
     render = _render_condor_calc if kind == "condor" else _render_butterfly_calc
-    return HTMLResponse(render(spot, vix))
+    return HTMLResponse(render(spot, vix, dte=_clamp_calc_dte(dte)))
+
+
+@app.get("/copilot/spot")
+def copilot_spot():
+    """Fresh SPY price + a 'priced …' timestamp for the manual price-refresh
+    button on the copilot (no full page reload)."""
+    spot = _spy_spot()
+    price = f"${spot:,.2f}" if isinstance(spot, (int, float)) else "—"
+    return JSONResponse({"price": price, "ts": _priced_stamp()})
 
 
 @app.get("/rh-reauth", response_class=HTMLResponse)
