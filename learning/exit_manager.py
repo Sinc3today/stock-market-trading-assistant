@@ -393,27 +393,36 @@ class ExitManager:
             elif action == "SELL":
                 short_val += price
 
-        s = (strategy or "").lower()
-        if s in ("credit_spread", "iron_condor"):
-            cost = max(0.0, short_val - long_val)
+        from journal.trade_recorder import _pnl_convention
+        if _pnl_convention(strategy) == "credit":
+            cost = short_val - long_val
+            # NOT clamped at zero: a broken-wing butterfly is long a far wing,
+            # so its close cost can legitimately go negative (you'd be paid to
+            # close). Clamping booked phantom max-loss. See FORWARD_TEST_AUDIT A2.
             return round(cost + EXIT_SLIPPAGE, 2)        # pay more to close
         proceeds = max(0.0, long_val - short_val)
         return round(max(0.0, proceeds - EXIT_SLIPPAGE), 2)  # receive less
 
     @staticmethod
     def _pnl_dollars(strategy: str, entry, exit_price: float, size) -> float | None:
-        """Mirror TradeRecorder._calculate_pnl so 'profit captured' matches
-        what a real close would book."""
+        """Defer to the recorder's convention table so 'profit captured' matches
+        what a real close would book.
+
+        This used to carry its own `if s in ("credit_spread", "iron_condor")`
+        list, which silently SIGN-FLIPPED broken_wing (a credit structure that
+        fell into the debit branch). See docs/FORWARD_TEST_AUDIT.md A2.
+        """
+        from journal.trade_recorder import _pnl_convention
         try:
             entry = float(entry)
             size  = float(size or 1)
         except (TypeError, ValueError):
             return None
-        s = (strategy or "").lower()
-        if s in ("credit_spread", "iron_condor"):
-            pps = entry - exit_price
-        else:  # debit_spread, single_leg
-            pps = exit_price - entry
+        convention = _pnl_convention(strategy)
+        if convention is None:
+            logger.error(f"_pnl_dollars: no P&L convention for '{strategy}'")
+            return None
+        pps = (entry - exit_price) if convention == "credit" else (exit_price - entry)
         return round(pps * size * 100, 2)
 
     @staticmethod

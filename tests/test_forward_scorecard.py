@@ -50,16 +50,44 @@ def test_call_debit_spread_also_unscored():
     assert fs.integrity(t) == fs.UNSCORED
 
 
-def test_pnl_handled_set_matches_the_recorder():
-    """If someone adds a branch to _calculate_pnl, this set must follow.
+def test_convention_resolver_is_shared_not_mirrored():
+    """The scorecard must ask the recorder, never keep its own copy — a local
+    copy is exactly how the two implementations drifted apart."""
+    from journal.trade_recorder import _pnl_convention
+    assert fs._pnl_convention is _pnl_convention
+    assert not hasattr(fs, "PNL_HANDLED_STRATEGIES")
 
-    Guards the exact drift that caused the bug.
-    """
-    import inspect
-    from journal.trade_recorder import TradeRecorder
-    src = inspect.getsource(TradeRecorder._calculate_pnl)
-    for name in fs.PNL_HANDLED_STRATEGIES:
-        assert f'"{name}"' in src, f"{name} not actually handled by _calculate_pnl"
+
+def test_variant_spread_names_resolve_to_a_convention():
+    from journal.trade_recorder import _pnl_convention
+    assert _pnl_convention("put_debit_spread") == "debit"
+    assert _pnl_convention("call_debit_spread") == "debit"
+    assert _pnl_convention("put_credit_spread") == "credit"
+    assert _pnl_convention("broken_wing") == "credit"
+    assert _pnl_convention("moon_spread") is None
+
+
+def test_legacy_fabricated_zero_is_caught_arithmetically():
+    """P&L of exactly $0 while entry != exit is impossible — catches the old
+    engine's fake breakevens whatever the strategy is called."""
+    t = _t(strategy="debit_spread", entry_price=0.78, exit_price=0.0,
+           pnl_dollars=0, outcome="breakeven", notes_exit="expired")
+    assert fs.integrity(t) == fs.UNSCORED
+
+
+def test_genuine_breakeven_stays_scored():
+    """Entry == exit really is $0. Don't punish an honest scratch."""
+    t = _t(entry_price=1.50, exit_price=1.50, pnl_dollars=0.0,
+           outcome="breakeven", notes_exit="scratched")
+    assert fs.integrity(t) == fs.SCORED
+
+
+def test_none_pnl_is_unscored():
+    assert fs.integrity(_t(pnl_dollars=None)) == fs.UNSCORED
+
+
+def test_recorder_marked_unscored_is_respected():
+    assert fs.integrity(_t(outcome="unscored", pnl_dollars=None)) == fs.UNSCORED
 
 
 def test_zero_fill_on_a_stop_is_suspect():
@@ -95,7 +123,8 @@ def test_recompute_pnl_for_unscored_debit_spread():
 
 
 def test_recompute_respects_size():
-    t = _t(strategy="call_debit_spread", entry_price=1.00, exit_price=1.50, size=3)
+    t = _t(strategy="call_debit_spread", entry_price=1.00, exit_price=1.50, size=3,
+           pnl_dollars=0, outcome="breakeven")      # legacy fabricated zero
     assert fs.recompute_pnl(t) == pytest.approx(150.0)
 
 
@@ -161,7 +190,8 @@ def test_untagged_book_defaults_to_disciplined():
 def test_integrity_summary_counts_each_class():
     trades = [
         _t(trade_id="A"),
-        _t(trade_id="B", strategy="put_debit_spread", outcome="breakeven"),
+        _t(trade_id="B", strategy="put_debit_spread", outcome="breakeven",
+           pnl_dollars=0),
         _t(trade_id="C", outcome="void"),
         _t(trade_id="D", outcome="open"),
     ]
@@ -174,7 +204,8 @@ def test_integrity_summary_counts_each_class():
 
 def test_integrity_summary_flags_trust_ratio():
     trades = [_t(trade_id="A")] + [
-        _t(trade_id=str(i), strategy="put_debit_spread", outcome="breakeven")
+        _t(trade_id=str(i), strategy="put_debit_spread", outcome="breakeven",
+           pnl_dollars=0)
         for i in range(3)
     ]
     s = fs.integrity_summary(trades)

@@ -34,15 +34,9 @@ UNSCORED = "unscored"
 SUSPECT_FILL = "suspect_fill"
 VOID = "void"
 
-# Mirrors the branches in TradeRecorder._calculate_pnl. A strategy outside this
-# set silently yields a $0 P&L, which is why the drift is guarded by a test.
-PNL_HANDLED_STRATEGIES = frozenset({
-    "stock", "debit_spread", "credit_spread",
-    "iron_condor", "broken_wing", "single_leg",
-})
-
-# Debit-convention structures whose true P&L we can rebuild from entry/exit.
-_DEBIT_LIKE = ("debit_spread", "single_leg", "custom")
+# Single source of truth — imported, never mirrored. A local copy of this set
+# is exactly how the two implementations drifted apart in the first place.
+from journal.trade_recorder import _pnl_convention  # noqa: E402
 
 # Promotion bars, mirrored from the forward-test modules so the dashboard can
 # show progress toward them. (bucket -> (label, n, win%, avg$))
@@ -69,19 +63,41 @@ def book_of(trade: dict) -> str:
 
 
 def integrity(trade: dict) -> str:
-    """Classify how much we can trust this record's P&L."""
-    if trade.get("outcome") == "void":
+    """Classify how much we can trust this record's P&L.
+
+    Checked in order of how badly each defect corrupts the number.
+    """
+    outcome = trade.get("outcome")
+    if outcome == "void":
         return VOID
-    if trade.get("strategy") not in PNL_HANDLED_STRATEGIES:
+    # The recorder now marks what it cannot score, instead of writing a $0.
+    if outcome == "unscored" or trade.get("pnl_dollars") is None:
         return UNSCORED
-    # A stop is defined as a *partial* loss; it cannot fill at zero. When the
-    # exit-price lookup fails it returns 0.0 and the trade books a phantom
-    # breakeven, so treat a zero stop-fill as untrustworthy. Expiring worthless
-    # is a genuine $0 and stays SCORED.
+
     exit_price = trade.get("exit_price")
+    entry = trade.get("entry_price")
     notes = (trade.get("notes_exit") or "").lower()
+
+    # A stop is by definition a PARTIAL loss; it cannot fill at zero. When the
+    # price lookup fails it returns 0.0 and the trade books a phantom exit.
+    # Expiring worthless is a genuine $0 and stays SCORED.
     if exit_price is not None and float(exit_price) == 0.0 and "stop" in notes:
         return SUSPECT_FILL
+
+    if _pnl_convention(trade.get("strategy")) is None:
+        return UNSCORED
+
+    # Legacy fabricated zero: the old engine returned (0, 0) for strategies it
+    # did not recognise. A P&L of exactly $0 while entry and exit differ is
+    # arithmetically impossible, so it identifies those records regardless of
+    # what the strategy is called.
+    try:
+        if (float(trade.get("pnl_dollars")) == 0.0 and entry is not None
+                and exit_price is not None
+                and abs(float(entry) - float(exit_price)) > 0.01):
+            return UNSCORED
+    except (TypeError, ValueError):
+        return UNSCORED
     return SCORED
 
 
@@ -98,12 +114,16 @@ def recompute_pnl(trade: dict) -> float | None:
     if entry is None or exit_price is None:
         return None
     size = trade.get("size") or 1
-    strategy = str(trade.get("strategy") or "")
+    convention = _pnl_convention(trade.get("strategy"))
     try:
-        if any(k in strategy for k in _DEBIT_LIKE) or strategy.endswith("_spread"):
-            return round((float(exit_price) - float(entry)) * 100 * float(size), 2)
+        entry, exit_price, size = float(entry), float(exit_price), float(size)
     except (TypeError, ValueError):
         return None
+    if convention == "credit":
+        return round((entry - exit_price) * 100 * size, 2)
+    if convention == "debit":
+        return round((exit_price - entry) * 100 * size, 2)
+    # No convention: an unrecognised structure stays unrecoverable by design.
     return None
 
 

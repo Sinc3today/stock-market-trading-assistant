@@ -299,3 +299,56 @@ def test_shadow_get_all_trades_still_includes_shadow(recorder):
     shadow_trades = [t for t in all_trades if t.get("book") == "shadow"]
     assert len(shadow_trades) == 1
     print(f"\n✅ get_all_trades() still includes shadow trades for lifecycle management")
+
+# ── P&L strategy-name coverage (audit A1 / A2) ────────────────────
+# Positions are recorded as put_debit_spread / call_debit_spread, but
+# _calculate_pnl only branched on "debit_spread" — so 32 live records fell
+# through to `return 0, 0` and were filed as $0 "breakeven". See
+# docs/FORWARD_TEST_AUDIT.md.
+
+def test_put_debit_spread_is_scored(recorder):
+    """Bought at 0.73, sold at 1.89 -> +$116, not a fake $0 breakeven."""
+    _, dollars = recorder._calculate_pnl("put_debit_spread", "BEARISH", 0.73, 1.89, 1)
+    assert dollars == pytest.approx(116.0)
+
+
+def test_call_debit_spread_is_scored(recorder):
+    _, dollars = recorder._calculate_pnl("call_debit_spread", "BULLISH", 0.78, 0.0, 1)
+    assert dollars == pytest.approx(-78.0)      # expired worthless = full debit lost
+
+
+def test_named_credit_spread_variants_use_the_credit_convention(recorder):
+    _, dollars = recorder._calculate_pnl("put_credit_spread", "BULLISH", 2.00, 0.50, 1)
+    assert dollars == pytest.approx(150.0)      # sold 2.00, bought back 0.50
+
+
+def test_broken_wing_keeps_the_credit_convention(recorder):
+    """A BWB is a credit structure: pps = entry - exit."""
+    _, dollars = recorder._calculate_pnl("broken_wing", "neutral", 2.00, 1.00, 1)
+    assert dollars == pytest.approx(100.0)
+
+
+def test_unknown_strategy_no_longer_silently_returns_zero(recorder, caplog):
+    """The core sin was a silent $0. An unknown structure must be loud."""
+    import logging
+    with caplog.at_level(logging.ERROR):
+        pps, dollars = recorder._calculate_pnl("moon_spread", "NEUTRAL", 2.0, 1.0, 1)
+    assert dollars is None and pps is None
+
+
+def test_log_exit_marks_an_unscorable_trade_instead_of_breakeven(recorder):
+    tid = recorder.log_entry("SPY", 2.00, 1, strategy="moon_spread",
+                             book="disciplined")
+    recorder.log_exit(tid, 1.00)
+    t = recorder.get_trade_by_id(tid)
+    assert t["outcome"] == "unscored"
+    assert t["pnl_dollars"] is None
+
+
+def test_log_exit_scores_a_put_debit_spread_end_to_end(recorder):
+    tid = recorder.log_entry("SPY", 0.73, 1, strategy="put_debit_spread",
+                             book="disciplined")
+    recorder.log_exit(tid, 1.89)
+    t = recorder.get_trade_by_id(tid)
+    assert t["outcome"] == "win"
+    assert t["pnl_dollars"] == pytest.approx(116.0)

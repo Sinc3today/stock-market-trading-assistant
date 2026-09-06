@@ -55,12 +55,22 @@ def test_a1_passes_when_all_scored():
 
 # ── A2 sign conventions ──────────────────────────────────────────
 
-def test_a2_detects_the_broken_wing_sign_flip():
-    """The recorder treats BWB as a credit structure; exit_manager as a debit.
-    17 open BWBs currently ride on that disagreement."""
+def test_a2_broken_wing_no_longer_sign_flips():
+    """Regression guard. exit_manager kept its own credit-strategy list, which
+    dropped broken_wing into the debit branch and flipped its sign. Both engines
+    now defer to trade_recorder._pnl_convention."""
     r = fa.v_a2_sign_conventions([_t(strategy="broken_wing")])
+    assert r["verdict"] == fa.PASS
+
+
+def test_a2_still_detects_a_real_disagreement(monkeypatch):
+    """The validator must be able to fail — prove it by rigging a flip."""
+    from learning.exit_manager import ExitManager
+    monkeypatch.setattr(ExitManager, "_pnl_dollars",
+                        staticmethod(lambda s, entry, exit_p, size: -999.0))
+    r = fa.v_a2_sign_conventions([_t(strategy="iron_condor")])
     assert r["verdict"] == fa.FAIL
-    assert any("SIGN FLIP" in e for e in r["evidence"])
+    assert any("mismatch" in e or "SIGN FLIP" in e for e in r["evidence"])
 
 
 def test_a2_passes_for_agreeing_strategies():

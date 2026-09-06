@@ -28,6 +28,30 @@ STRATEGY_TYPES = [
     "iron_condor",
 ]
 
+# ── P&L sign conventions ──────────────────────────────────────
+# CREDIT structures are sold to open: profit = entry - exit.
+# DEBIT structures are bought to open: profit = exit - entry.
+# Positions are recorded under variant names ("put_debit_spread",
+# "call_debit_spread"), so matching is by suffix as well as exact name —
+# an exact-only match is what silently zeroed 32 live trades
+# (docs/FORWARD_TEST_AUDIT.md A1).
+_CREDIT_STRATEGIES = frozenset({"credit_spread", "iron_condor", "broken_wing"})
+_DEBIT_STRATEGIES  = frozenset({"debit_spread", "single_leg"})
+
+
+def _pnl_convention(strategy: str | None) -> str | None:
+    """'credit' | 'debit' | None for an unrecognised structure."""
+    s = (strategy or "").strip().lower()
+    if s in _CREDIT_STRATEGIES:
+        return "credit"
+    if s in _DEBIT_STRATEGIES:
+        return "debit"
+    if s.endswith("_credit_spread"):
+        return "credit"
+    if s.endswith("_debit_spread"):
+        return "debit"
+    return None
+
 
 class TradeRecorder:
     """
@@ -215,6 +239,26 @@ class TradeRecorder:
                 strategy, direction, entry, exit_price, size
             )
 
+            # An unrecognised structure yields None, NOT a fake $0. Recording it
+            # as "breakeven" is what hid 32 real trades (docs/FORWARD_TEST_AUDIT.md
+            # A1) — a trade we cannot score must say so.
+            if pnl_dollars is None:
+                trade["exit_price"]       = round(exit_price, 2)
+                trade["exit_date"]        = now_est
+                trade["pnl_dollars"]      = None
+                trade["pnl_pct"]          = None
+                trade["pnl_per_contract"] = None
+                trade["outcome"]          = "unscored"
+                trade["notes_exit"]       = notes
+                trade["exit_reason"]      = exit_reason
+                updated = True
+                logger.error(
+                    f"Trade exit UNSCORED: [{trade_id}] {trade['ticker']} "
+                    f"{strategy} — no P&L convention for this strategy. "
+                    "Add it to _calculate_pnl."
+                )
+                break
+
             # P&L percentage
             cost_basis = self._get_cost_basis(strategy, entry, size, trade.get("max_loss"))
             pnl_pct    = round((pnl_dollars / abs(cost_basis)) * 100, 2) \
@@ -354,7 +398,14 @@ class TradeRecorder:
         size:        float,
     ) -> tuple[float, float]:
         """
-        Returns (pnl_per_share, total_pnl_dollars)
+        Returns (pnl_per_share, total_pnl_dollars), or (None, None) when the
+        strategy has no known P&L convention.
+
+        Returning None rather than 0 is deliberate. This method used to end in
+        `return 0, 0`, so structures recorded under a variant name
+        ("put_debit_spread" vs the handled "debit_spread") silently booked a $0
+        "breakeven" — 32 live trades, -$718 of real P&L, hidden for months.
+        See docs/FORWARD_TEST_AUDIT.md A1. Unknown now means unknown.
         """
         if strategy == "stock":
             if direction == "BULLISH":
@@ -363,30 +414,26 @@ class TradeRecorder:
                 pps = entry - exit_price
             return pps, round(pps * size, 2)
 
-        elif strategy == "debit_spread":
-            # Bought spread for entry_price, sold for exit_price
-            pps = exit_price - entry
-            return pps, round(pps * size * 100, 2)
-
-        elif strategy in ("credit_spread", "iron_condor"):
-            # Sold spread for entry_price, bought back for exit_price
+        convention = _pnl_convention(strategy)
+        if convention == "credit":
+            # Sold the structure for entry_price, bought it back for exit_price.
+            # Covers condors, credit spreads, and the broken-wing butterfly —
+            # a BWB's close cost can go negative (it is long a far wing), so
+            # this is deliberately NOT clamped.
             pps = entry - exit_price
             return pps, round(pps * size * 100, 2)
 
-        elif strategy == "broken_wing":
-            # Broken-wing butterfly. entry = net credit received (may be < 0 if
-            # opened for a debit); exit = cost to close (may be < 0 when the long
-            # wing is worth more than the shorts — you'd be paid to close). Same
-            # credit-structure sign convention as a condor.
-            pps = entry - exit_price
-            return pps, round(pps * size * 100, 2)
-
-        elif strategy == "single_leg":
-            # Bought option for entry_price, sold for exit_price
+        if convention == "debit":
+            # Bought the structure for entry_price, sold it for exit_price.
             pps = exit_price - entry
             return pps, round(pps * size * 100, 2)
 
-        return 0, 0
+        logger.error(
+            f"_calculate_pnl: no P&L convention for strategy '{strategy}' — "
+            "refusing to fabricate $0. Add it to _CREDIT_STRATEGIES / "
+            "_DEBIT_STRATEGIES in journal/trade_recorder.py."
+        )
+        return None, None
 
     def _get_cost_basis(
         self, strategy: str, entry: float,
