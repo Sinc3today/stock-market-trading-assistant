@@ -30,11 +30,12 @@ from __future__ import annotations
 import math
 import os
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import config
+import pytz
 from loguru import logger
 
 from journal.trade_recorder import TradeRecorder
@@ -172,6 +173,29 @@ def exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
 
 def _norm_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+# Options expire at the 16:00 ET close, not at midnight.
+_EXPIRY_HOUR = 16
+
+
+def _years_to_expiry(expiry: date, today: date, now=None) -> float:
+    """Calendar time to expiry IN YEARS, including the hours left today.
+
+    `dte // 1 day` is not good enough on expiry day: whole-day DTE makes
+    t_years 0, bs_price falls back to pure intrinsic, and every 0DTE spread
+    marks at its intrinsic value. That instantly showed max loss and tripped
+    the stop minutes after entry — it destroyed 18 live records before it was
+    found (docs/FORWARD_TEST_AUDIT.md B1).
+    """
+    eastern = pytz.timezone("US/Eastern")
+    now = now or datetime.now(eastern)
+    if now.tzinfo is None:
+        now = eastern.localize(now)
+    close = eastern.localize(datetime(expiry.year, expiry.month, expiry.day,
+                                      _EXPIRY_HOUR, 0))
+    seconds = (close - now).total_seconds()
+    return max(0.0, seconds / (365.0 * 24 * 3600))
 
 
 def bs_price(opt_type: str, spot: float, strike: float, t_years: float,
@@ -320,7 +344,7 @@ class ExitManager:
     # ── DECISION ──────────────────────────────────────
 
     def _evaluate(self, trade: dict, spy: float, vix: float,
-                  today: date) -> tuple[float, str] | None:
+                  today: date, now=None) -> tuple[float, str] | None:
         """
         Return (exit_price, reason) if the position should close today,
         else None. exit_price already includes the slippage haircut.
@@ -342,7 +366,8 @@ class ExitManager:
         # Look up the per-sub-strategy rule.
         rule = _exit_rule_for(strategy, trade.get("dte_bucket"))
 
-        exit_px = self._mark_exit_price(strategy, legs, spy, vix, today, dte)
+        exit_px = self._mark_exit_price(strategy, legs, spy, vix, today, dte,
+                                        now=now)
         pnl     = self._pnl_dollars(strategy, trade.get("entry_price"), exit_px,
                                     trade.get("size", 1))
         max_profit = self._numeric(trade.get("max_profit"))
@@ -354,8 +379,18 @@ class ExitManager:
                 return exit_px, f"profit target {rule['profit_target_pct']:.0%}"
 
         # 2. Hard stop — Phase 2b experimental for 45DTE; configured for 0DTE/1-3DTE.
+        # A stop books a PARTIAL loss. A mark of exactly $0.00 means the position
+        # is worthless, which is the ExpiryResolver's job — closing it here as a
+        # "stop" is how a marking failure disguises itself as a trade. Refuse.
         if rule["stop_pct"] is not None and max_loss and max_loss > 0 and pnl is not None:
             if pnl <= -rule["stop_pct"] * max_loss:
+                if exit_px <= 0.0:
+                    logger.warning(
+                        f"exit_manager: refusing a $0.00 stop fill on "
+                        f"{trade.get('trade_id')} ({strategy}, {dte}DTE) — "
+                        "leaving it for the expiry resolver."
+                    )
+                    return None
                 return exit_px, f"stop {rule['stop_pct']:.0%} of max loss"
 
         # 3. Time stop — close N DTE before expiry.
@@ -367,15 +402,21 @@ class ExitManager:
     # ── PRICING ───────────────────────────────────────
 
     def _mark_exit_price(self, strategy: str, legs: list[dict], spy: float,
-                         vix: float, today: date, dte: int) -> float:
+                         vix: float, today: date, dte: int, now=None) -> float:
         """
         Black-Scholes mark of the spread, converted to the price you'd
         actually transact at to CLOSE, with EXIT_SLIPPAGE applied against us:
           - credit_spread / iron_condor : cost to buy back  (slippage adds)
           - debit_spread / single_leg   : proceeds to sell   (slippage subtracts)
+
+        Time to expiry is measured to the 16:00 ET close, NOT in whole days —
+        see _years_to_expiry for why that distinction destroyed 18 records.
         """
-        sigma   = vix / 100.0
-        t_years = max(dte, 0) / 365.0
+        sigma = vix / 100.0
+        # Prefer the legs' real expiry; fall back to today+dte so the intraday
+        # correction applies on BOTH paths (the fallback carried the same bug).
+        exp = self._nearest_expiration(legs) or (today + timedelta(days=max(dte, 0)))
+        t_years = _years_to_expiry(exp, today, now=now)
         long_val = short_val = 0.0
         for leg in legs:
             strike = leg.get("strike")
