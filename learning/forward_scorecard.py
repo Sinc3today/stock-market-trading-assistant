@@ -91,6 +91,10 @@ def integrity(trade: dict) -> str:
     if _pnl_convention(trade.get("strategy")) is None:
         return UNSCORED
 
+    # A closed trade with no exit price cannot be checked against anything.
+    if exit_price is None or entry is None:
+        return UNSCORED
+
     # Legacy fabricated zero: the old engine returned (0, 0) for strategies it
     # did not recognise. A P&L of exactly $0 while entry and exit differ is
     # arithmetically impossible, so it identifies those records regardless of

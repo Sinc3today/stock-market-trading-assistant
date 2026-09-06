@@ -197,3 +197,41 @@ def test_a_raising_validator_does_not_hide_the_others():
 def test_every_validator_declares_a_severity():
     for r in fa.run_all([_t()]):
         assert r["severity"] in ("P1", "P2", "P3", "?")
+
+
+# ── quarantine handling (post-repair) ─────────────────────────────
+# journal_repair marks unrecoverable records permanently. A validator that
+# keeps failing on acknowledged records cries wolf and stops being read — but
+# it must still fire on a NEW occurrence.
+
+def _quarantined(**kw):
+    from learning.journal_repair import REPAIR_TAG
+    base = dict(strategy="call_debit_spread", entry_price=0.78, exit_price=0.0,
+                pnl_dollars=None, outcome="unscored",
+                notes_exit=f"[AUTO-EXIT] stop 75% of max loss\n{REPAIR_TAG} 0DTE mark")
+    base.update(kw)
+    return _t(**base)
+
+
+def test_a1_passes_when_the_only_unscored_are_quarantined():
+    r = fa.v_a1_unscored([_quarantined()])
+    assert r["verdict"] == fa.PASS
+    assert "quarantined" in r["headline"]
+
+
+def test_a1_still_fails_on_a_new_unscored_record():
+    r = fa.v_a1_unscored([_quarantined(),
+                          _t(trade_id="new", strategy="moon_spread",
+                             pnl_dollars=None, outcome="unscored")])
+    assert r["verdict"] == fa.FAIL
+
+
+def test_b1_passes_when_phantom_fills_are_quarantined():
+    r = fa.v_b1_impossible_fills([_quarantined()])
+    assert r["verdict"] == fa.PASS
+
+
+def test_b1_still_fails_on_a_new_phantom_fill():
+    fresh = _t(trade_id="new", exit_price=0.0,
+               notes_exit="[AUTO-EXIT] stop 75% of max loss fill=$0.00")
+    assert fa.v_b1_impossible_fills([_quarantined(), fresh])["verdict"] == fa.FAIL

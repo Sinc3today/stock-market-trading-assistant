@@ -60,11 +60,27 @@ from learning.forward_scorecard import wilson  # noqa: E402,F401
 
 # ── A1: records the P&L engine never scored ──────────────────────
 
+def _is_quarantined(t: dict) -> bool:
+    """Deliberately marked unrecoverable by learning.journal_repair.
+
+    These are acknowledged and permanently recorded, not outstanding defects —
+    a validator that keeps failing on them cries wolf and stops being read.
+    """
+    from learning.journal_repair import REPAIR_TAG
+    return REPAIR_TAG in (t.get("notes_exit") or "")
+
+
 def v_a1_unscored(trades):
-    unscored = [t for t in trades if fs.is_closed(t) and fs.integrity(t) == fs.UNSCORED]
+    all_unscored = [t for t in trades
+                    if fs.is_closed(t) and fs.integrity(t) == fs.UNSCORED]
+    quarantined = [t for t in all_unscored if _is_quarantined(t)]
+    unscored = [t for t in all_unscored if not _is_quarantined(t)]
     if not unscored:
+        note = (f"All closed records carry engine-computed P&L "
+                f"({len(quarantined)} quarantined as unrecoverable)."
+                if quarantined else "All closed records carry engine-computed P&L.")
         return _result("A1", "Every closed trade was actually scored", "P1", PASS,
-                       "All closed records carry engine-computed P&L.")
+                       note)
     rec = [(t, fs.recompute_pnl(t)) for t in unscored]
     recoverable = [(t, p) for t, p in rec if p is not None]
     hidden = sum(p for _, p in recoverable)
@@ -195,14 +211,17 @@ def v_b1_impossible_fills(trades):
         if not fs.is_closed(t) or t.get("outcome") == "void":
             continue
         xp, notes = t.get("exit_price"), (t.get("notes_exit") or "").lower()
-        if xp is None:
-            continue
+        if xp is None or _is_quarantined(t):
+            continue           # already acknowledged and quarantined
         if float(xp) == 0.0 and "stop" in notes:
             bad.append((t.get("trade_id"), t.get("strategy"), t.get("book"),
                         (t.get("notes_exit") or "")[:64]))
     if not bad:
-        return _result("B1", "Exit prices are physically possible", "P1", PASS,
-                       "No stop-exit recorded an impossible $0.00 fill.")
+        quarantined = sum(1 for t in trades if _is_quarantined(t))
+        note = ("No stop-exit recorded an impossible $0.00 fill"
+                + (f" ({quarantined} historical ones quarantined)." if quarantined
+                   else "."))
+        return _result("B1", "Exit prices are physically possible", "P1", PASS, note)
     ev = [f"{tid} {s:18} {b:12} {n}" for tid, s, b, n in bad[:12]]
     if len(bad) > 12:
         ev.append(f"... and {len(bad)-12} more")
