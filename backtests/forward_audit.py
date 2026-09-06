@@ -54,15 +54,8 @@ def _n_legs(t: dict) -> int:
     return max(1, len(_legs_of(t)))
 
 
-def wilson(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
-    """95% Wilson score interval for a win rate — honest small-n error bars."""
-    if n == 0:
-        return (0.0, 0.0)
-    p = wins / n
-    d = 1 + z * z / n
-    centre = (p + z * z / (2 * n)) / d
-    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
-    return (max(0.0, (centre - half) * 100), min(100.0, (centre + half) * 100))
+# One implementation, shared with the dashboard.
+from learning.forward_scorecard import wilson  # noqa: E402,F401
 
 
 # ── A1: records the P&L engine never scored ──────────────────────

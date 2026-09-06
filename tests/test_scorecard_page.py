@@ -97,7 +97,49 @@ def test_negative_average_candidate_is_visually_flagged():
 
 def test_open_positions_are_excluded_from_totals_note():
     html = _render_scorecard(_card())
-    assert "only honest once positions close" in html
+    assert "excluded from every" in html
+
+
+def test_headline_states_when_a_win_rate_cannot_beat_chance():
+    """Audit D2: a bare '61.5%' implies confidence n=13 cannot support."""
+    head = {"n": 13, "wins": 8, "win_pct": 61.5, "total": 837.0, "avg": 64.4,
+            "worst": -136.0, "excluded": 12, "ci_low": 35.5, "ci_high": 82.3,
+            "beats_chance": False}
+    html = _render_scorecard(_card(headline=head))
+    assert "not distinguishable from a coin flip" in html
+    assert "95% CI [36%" in html or "95% CI [35%" in html
+
+
+def test_headline_credits_a_sample_that_does_beat_chance():
+    head = {"n": 40, "wins": 33, "win_pct": 82.5, "total": 3000.0, "avg": 75.0,
+            "worst": -200.0, "excluded": 0, "ci_low": 68.1, "ci_high": 91.0,
+            "beats_chance": True}
+    html = _render_scorecard(_card(headline=head))
+    assert "beats chance" in html
+    assert "coin flip" not in html
+
+
+def test_untested_regimes_are_named_as_untested():
+    cov = [{"regime": "choppy_low_vol", "n": 19, "state": "covered"},
+           {"regime": "trending_high_vol", "n": 0, "state": "untested"},
+           {"regime": "choppy_high_vol", "n": 0, "state": "untested"}]
+    html = _render_scorecard(_card(regime_coverage=cov))
+    assert "2 regimes have never been traded live" in html
+    assert "untested" in html
+
+
+def test_unmarked_open_tail_says_unknown_not_zero():
+    expo = {"count": 26, "marked": 0, "unrealized": None, "by_book": {},
+            "note": "Could not mark the open tail"}
+    html = _render_scorecard(_card(open_exposure=expo))
+    assert "unrealized P&amp;L unknown" in html
+
+
+def test_marked_open_tail_shows_the_number():
+    expo = {"count": 26, "marked": 24, "unrealized": 533.0,
+            "by_book": {"candidate": 312.0}, "note": "Modelled at SPY 770"}
+    html = _render_scorecard(_card(open_exposure=expo))
+    assert "533" in html and "unrealized" in html
 
 
 def test_empty_state_does_not_crash():

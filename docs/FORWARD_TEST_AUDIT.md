@@ -212,6 +212,65 @@ loudly*, not to reassure. A validator that cannot fail is not a validator.
 
 ---
 
+---
+
+## RESULTS — first full run, 2026-09-06
+
+`.venv/bin/python -m backtests.forward_audit` → **7 FAIL · 3 WARN · 3 PASS**
+(from 9/2/2 before the fixes below landed).
+
+### Fixed during this pass
+
+| | |
+|---|---|
+| **A2 · PASS** | Three modules each kept a private credit-vs-debit list and they disagreed. `broken_wing` SIGN-FLIPPED in `exit_manager`, and its close cost was clamped at zero (phantom max-loss on a structure that can legitimately pay you to close). Now one source of truth: `trade_recorder._pnl_convention`. |
+| **A1 · improved** | `_calculate_pnl` no longer ends in `return 0, 0`. Unknown structures return `None` and `log_exit` records `outcome="unscored"`. Variant names (`put_debit_spread`) now resolve by suffix. Remaining 14 are legacy records awaiting repair. |
+| **C2 · PASS** | Was a false positive in the validator itself — it matched the void reason against a 70-char *display* slice, truncating "thrash". All 6 voids are structural. |
+
+**The BWB fix moved a headline number:** the open tail re-marked from
+**−$2,482 to +$533**. The earlier deficit was an artifact of the clamp, not a
+real loss. This is the audit working — and a reminder that a scary number from
+a broken instrument is still a broken number.
+
+### Still failing — these gate real money
+
+| ID | Finding |
+|---|---|
+| **A1** | 14 legacy records still unscored (+$315 hidden). Repair pending. |
+| **B1** | 18 stop-exits recorded an impossible `$0.00` fill. |
+| **C1** | Claims resting on <10 closed trades: 7DTE (n=8), QQQ (n=6), **BWB (n=1 closed, 17 open)**, dip-buy (n=3). |
+| **D1** | `choppy_high_vol` and `trending_high_vol` **never traded live (n=0)**. `choppy_transition` (6), `trending_up_calm` (7), `event_day` (1) are thin. 12 trades have no plan record. |
+| **D2** | **Disciplined 8/13 = 61.5%, CI [35.5, 82.3], p=0.291 — not distinguishable from a coin flip.** Only `candidate` beats chance (15/18, p=0.004). |
+| **E2** | Only **1** closed trade exists under the post-IVR-veto ruleset. The headline describes a strategy we no longer run. |
+| **A3** | 51 records store `entry_value` per-share instead of dollars. |
+
+### Passing
+
+- **F1** — direction accuracy *rises* as the push band widens (61% → 69% at
+  ±0.5%), so it is not riding noise. The lone clean result.
+- **A4 (WARN)** — no book flips sign under $0.65/leg commissions, but the
+  **7DTE condor** was already negative and goes to −$59/trade. Fees are still
+  unmodeled in the live path.
+
+### What the dashboard now shows because of this
+
+- 95% Wilson interval next to every win rate, and the words *"not
+  distinguishable from a coin flip"* where the interval spans 50%.
+- The open tail's model mark, or an explicit *"unmarked — unknown"* rather
+  than an implied $0.
+- A regime-coverage table naming what has **never** been traded live.
+
+### Next actions
+
+1. **V-A1 repair** the 14 legacy records (backup `trades.json` first).
+2. **B1**: stop writing a `$0.00` fill when the price lookup fails — record the
+   exit as unscored instead, so a failure never masquerades as a trade.
+3. **A3**: normalise `entry_value` to dollars; audit readers first.
+4. Keep accumulating. D1/D2/E2 are not bugs — they are *"the sample is too
+   young and too calm"*, and only time and a regime change fix them.
+
+---
+
 ## Standing rule this establishes
 
 > A forward-test number is not publishable until (a) every record in it was

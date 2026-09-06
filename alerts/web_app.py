@@ -3609,6 +3609,13 @@ _SCORECARD_CSS = """
 .sc-tag{font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-subtle);
         border:1px solid var(--border);border-radius:999px;padding:.1rem .4rem;font-weight:600}
 .sc-excl{color:var(--warn);font-size:.74rem}
+.sc-ci{font-size:.75rem;color:var(--fg-muted);margin-top:.4rem;
+       font-variant-numeric:tabular-nums}
+.sc-ci b{color:var(--warn)}
+.sc-ci-inline{font-size:.7rem;color:var(--fg-subtle);margin-left:.15rem}
+.sc-mark{font-size:.8rem;font-weight:600;margin:-.2rem 0 .7rem;
+         font-variant-numeric:tabular-nums}
+.sc-mark-unknown{color:var(--warn);font-weight:500}
 .sc-prom{display:flex;flex-direction:column;gap:.9rem}
 .sc-prom-row{display:grid;grid-template-columns:1fr auto;gap:.2rem .8rem;align-items:baseline}
 .sc-prom-name{font-size:.85rem;font-weight:600}
@@ -3690,13 +3697,22 @@ def _render_scorecard(card: dict) -> str:
     h_total = head.get("total", 0.0)
     h_win   = head.get("win_pct", 0.0)
     worst_txt = f' &middot; worst {_money(head.get("worst"))}' if h_n else ""
-    win_chip = "delta-up" if h_win >= 60 else "delta-flat"
+    # The confidence interval, not the point estimate, is the honest headline.
+    beats = head.get("beats_chance")
+    win_chip = "delta-up" if beats else "delta-flat"
+    ci_txt = ""
+    if h_n:
+        ci_txt = (f'<div class="sc-ci">95% CI [{head.get("ci_low", 0):.0f}% &ndash; '
+                  f'{head.get("ci_high", 0):.0f}%] &middot; '
+                  + ("beats chance" if beats
+                     else "<b>not distinguishable from a coin flip</b>") + '</div>')
     hero_pnl = (
         '<div class="card">'
         '<div class="kicker"><span class="dot"></span>Disciplined book &middot; real-money proxy</div>'
         f'<div class="stat"><div class="stat-value">{_money(h_total)}</div>'
         f'<span class="delta-chip {win_chip}">{h_win:.0f}% win</span></div>'
         f'<div class="stat-sub">{h_n} closed trades with trustworthy P&amp;L{worst_txt}</div>'
+        f'{ci_txt}'
         '</div>'
     )
 
@@ -3767,22 +3783,27 @@ def _render_scorecard(card: dict) -> str:
             tag = '<span class="sc-tag">proxy</span>'
         elif name == "live":
             tag = '<span class="sc-tag">real</span>'
+        ci = (f'<span class="sc-ci-inline">[{st.get("ci_low",0):.0f}&ndash;'
+              f'{st.get("ci_high",0):.0f}]</span>' if st["n"] else "")
         rows.append(
             f'<tr><td><div class="sc-book">{_esc(name)}{tag}</div></td>'
-            f'<td>{st["n"]}</td><td>{st["win_pct"]:.0f}%</td>'
+            f'<td>{st["n"]}</td><td>{st["win_pct"]:.0f}% {ci}</td>'
             f'<td>{_money(st["total"])}</td><td>{_money(st["avg"])}</td>'
             f'<td>{_money(st["worst"])}</td><td>{excl}</td></tr>'
         )
     books_card = (
         '<div class="card span-7">'
         '<div class="kicker"><span class="dot"></span>Books &middot; scored trades only</div>'
-        '<table class="sc-table"><tr class="is-head"><th>Book</th><th>n</th><th>Win</th>'
+        '<table class="sc-table"><tr class="is-head"><th>Book</th><th>n</th>'
+        '<th>Win &middot; 95% CI</th>'
         '<th>Total</th><th>Avg</th><th>Worst</th><th>Excl</th></tr>'
         f'{"".join(rows) or "<tr><td colspan=7 class=muted>No closed trades yet.</td></tr>"}'
         '</table>'
-        '<div class="cp-note" style="margin-top:.7rem">"Excl" = closed trades dropped for '
-        'untrustworthy P&amp;L. <b>disciplined</b> is the real-money proxy; <b>live</b> is '
-        'actual broker fills; <b>learning</b> is the no-edge sandbox.</div></div>'
+        '<div class="cp-note" style="margin-top:.7rem">The bracket is the 95% Wilson '
+        'interval. Where it spans 50%, the win rate does not yet exclude chance. '
+        '"Excl" = closed trades dropped for untrustworthy P&amp;L. <b>disciplined</b> is '
+        'the real-money proxy; <b>live</b> is actual broker fills; <b>learning</b> is the '
+        'no-edge sandbox.</div></div>'
     )
 
     # ── strategy breakdown ──────────────────────────────────────────
@@ -3843,17 +3864,54 @@ def _render_scorecard(card: dict) -> str:
         )
     more = (f'<div class="cp-note" style="margin-top:.7rem">+{len(opens)-12} more open.</div>'
             if len(opens) > 12 else "")
+    expo = card.get("open_exposure") or {}
+    unreal = expo.get("unrealized")
+    mark_txt = (f'<div class="sc-mark">Model mark: {_money(unreal)} unrealized '
+                f'across {expo.get("marked", 0)} of {len(opens)}</div>'
+                if unreal is not None else
+                '<div class="sc-mark sc-mark-unknown">Unmarked &mdash; '
+                'unrealized P&amp;L unknown</div>')
     open_card = (
         '<div class="card span-5">'
         f'<div class="kicker"><span class="dot"></span>Open &middot; {len(opens)} positions</div>'
+        f'{mark_txt}'
         f'<div class="sc-open">{"".join(items) or "<div class=muted>Nothing open.</div>"}</div>'
         f'{more}'
-        '<div class="cp-note" style="margin-top:.7rem">Unrealized. These are not in any '
-        'number above &mdash; a forward test is only honest once positions close.</div></div>'
+        '<div class="cp-note" style="margin-top:.7rem">Unrealized, and excluded from every '
+        f'number above. {_esc(expo.get("note", ""))}</div></div>'
+    )
+
+    # ── regime coverage: what the sample has NOT seen ───────────────
+    cov_rows = []
+    for r in (card.get("regime_coverage") or []):
+        tone = {"untested": "status-loss", "thin": "status-be",
+                "covered": "status-win"}.get(r["state"], "")
+        cov_rows.append(
+            f'<tr><td>{_esc(r["regime"].replace("_", " "))}</td>'
+            f'<td>{r["n"]}</td>'
+            f'<td><span class="badge {tone}">{_esc(r["state"])}</span></td></tr>'
+        )
+    untested = [r["regime"] for r in (card.get("regime_coverage") or [])
+                if r["state"] == "untested"]
+    cov_note = (
+        f'<b>{len(untested)} regimes have never been traded live.</b> '
+        'A premium-selling book is <i>supposed</i> to look good in a calm drift '
+        '&mdash; the states that would hurt it are exactly the ones missing.'
+        if untested else
+        'Every regime has a live sample.'
+    )
+    coverage_card = (
+        '<div class="card span-12">'
+        '<div class="kicker"><span class="dot"></span>Regime coverage &middot; what the sample has seen</div>'
+        '<table class="sc-table"><tr class="is-head"><th>Market state</th>'
+        '<th>Scored trades</th><th>Status</th></tr>'
+        f'{"".join(cov_rows)}</table>'
+        f'<div class="cp-note" style="margin-top:.7rem">{cov_note}</div></div>'
     )
 
     body = (f'{hero}{warn}<div class="dash">{books_card}{strat_card}</div>'
-            f'<div class="dash">{prom_card}{open_card}</div>')
+            f'<div class="dash">{prom_card}{open_card}</div>'
+            f'<div class="dash">{coverage_card}</div>')
     return _render_page(
         title="Trading Assistant - Scorecard", heading="Forward-Test Scorecard",
         body=body, css=_INDEX_CSS + _SCORECARD_CSS, active_nav="scorecard",

@@ -26,6 +26,10 @@ so a clean-looking number can never hide a dirty sample.
 """
 from __future__ import annotations
 
+import json
+import math
+import os
+
 from loguru import logger
 
 # ── integrity classes ────────────────────────────────────────────
@@ -127,9 +131,27 @@ def recompute_pnl(trade: dict) -> float | None:
     return None
 
 
+def wilson(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% Wilson score interval for a win rate.
+
+    Shown next to every point estimate because at n=13 a 61.5% win rate spans
+    [35.5, 82.3] — it does not exclude a coin flip, and a bare "61.5%" implies
+    a confidence the sample cannot support (audit D2).
+    """
+    if n <= 0:
+        return (0.0, 0.0)
+    p = wins / n
+    d = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / d
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
+    return (round(max(0.0, (centre - half) * 100), 1),
+            round(min(100.0, (centre + half) * 100), 1))
+
+
 def _blank_stats() -> dict:
     return {"n": 0, "wins": 0, "win_pct": 0.0, "total": 0.0,
-            "avg": 0.0, "worst": 0.0, "excluded": 0}
+            "avg": 0.0, "worst": 0.0, "excluded": 0,
+            "ci_low": 0.0, "ci_high": 0.0, "beats_chance": False}
 
 
 def book_stats(trades: list[dict]) -> dict[str, dict]:
@@ -161,6 +183,8 @@ def book_stats(trades: list[dict]) -> dict[str, dict]:
             st["win_pct"] = round(st["wins"] / st["n"] * 100, 1)
             st["avg"] = round(st["total"] / st["n"], 2)
             st["total"] = round(st["total"], 2)
+            st["ci_low"], st["ci_high"] = wilson(st["wins"], st["n"])
+            st["beats_chance"] = st["ci_low"] > 50.0
     return out
 
 
@@ -275,6 +299,91 @@ def prediction_stats(window: int = 250) -> dict:
     }
 
 
+REGIMES = ("choppy_low_vol", "choppy_transition", "choppy_high_vol",
+           "trending_up_calm", "trending_high_vol", "event_day")
+
+
+def regime_coverage(trades: list[dict]) -> list[dict]:
+    """Which market states the live sample has actually seen (audit D1).
+
+    A regime with n=0 is UNTESTED, not validated — and a premium-selling book
+    is supposed to look good in the calm drift that dominates this sample.
+    """
+    import config
+    try:
+        with open(os.path.join(config.LOG_DIR, "spy_daily_plans.json")) as fh:
+            plans = json.load(fh)
+    except Exception:
+        plans = {}
+    if isinstance(plans, list):
+        plans = {p.get("date"): p for p in plans if isinstance(p, dict)}
+    regime_of = {d: (p or {}).get("regime") for d, p in (plans or {}).items()}
+
+    counts: dict[str, int] = {r: 0 for r in REGIMES}
+    unknown = 0
+    for t in trades:
+        if not is_closed(t) or integrity(t) != SCORED:
+            continue
+        day = str(t.get("entry_date") or "")[:10]
+        r = regime_of.get(day)
+        if r in counts:
+            counts[r] += 1
+        else:
+            unknown += 1
+    rows = [{"regime": r, "n": counts[r],
+             "state": ("untested" if counts[r] == 0
+                       else "thin" if counts[r] < 10 else "covered")}
+            for r in REGIMES]
+    if unknown:
+        rows.append({"regime": "no plan recorded", "n": unknown, "state": "thin"})
+    return rows
+
+
+def open_exposure(trades: list[dict]) -> dict:
+    """Mark the open tail (audit B2). Best-effort — never raises, and says so
+    when it cannot mark rather than implying $0."""
+    from datetime import date
+    out = {"count": sum(1 for t in trades if not is_closed(t)),
+           "marked": 0, "unrealized": None, "by_book": {}, "note": ""}
+    if not out["count"]:
+        out["note"] = "Nothing open."
+        return out
+    try:
+        from learning.exit_manager import ExitManager
+        from alerts.stop_watchdog import yf_spot
+        spy, vix = yf_spot("SPY"), yf_spot("^VIX")
+        if not spy or not vix:
+            raise RuntimeError("no live SPY/VIX")
+        em = ExitManager.__new__(ExitManager)
+        by_book: dict[str, float] = {}
+        total = 0.0
+        for t in trades:
+            if is_closed(t):
+                continue
+            legs = t.get("legs") or []
+            exp = ExitManager._nearest_expiration(legs)
+            if not exp or not legs:
+                continue
+            mark = em._mark_exit_price(t.get("strategy"), legs, spy, vix,
+                                       date.today(), (exp - date.today()).days)
+            pnl = ExitManager._pnl_dollars(t.get("strategy"), t.get("entry_price"),
+                                           mark, t.get("size"))
+            if pnl is None:
+                continue
+            by_book[book_of(t)] = round(by_book.get(book_of(t), 0.0) + pnl, 2)
+            total += pnl
+            out["marked"] += 1
+        out["unrealized"] = round(total, 2)
+        out["by_book"] = by_book
+        out["note"] = (f"Modelled at SPY {spy:.2f} / VIX {vix:.2f} — no live "
+                       "option quotes exist, so this is a model mark.")
+    except Exception as e:
+        logger.warning(f"forward_scorecard: open marking failed: {e}")
+        out["note"] = ("Could not mark the open tail — its P&L is unknown and "
+                       "sits outside every number here.")
+    return out
+
+
 def _load_trades() -> list[dict]:
     try:
         from journal.trade_recorder import TradeRecorder
@@ -299,6 +408,8 @@ def scorecard() -> dict:
         "integrity": integrity_summary(trades),
         "promotion": promotion_progress(trades),
         "open_positions": open_positions(trades),
+        "open_exposure": open_exposure(trades),
+        "regime_coverage": regime_coverage(trades),
         "predictions": prediction_stats(),
         "total_records": len(trades),
     }
