@@ -40,6 +40,7 @@ from learning import forward_scorecard as fs
 
 RESCORE = "rescore"
 MARK_UNSCORED = "mark_unscored"
+NORMALISE = "normalise"          # entry_value units + commission backfill
 REPAIR_TAG = "[REPAIRED 2026-09-06]"
 
 
@@ -81,6 +82,48 @@ def _is_phantom_fill(trade: dict) -> bool:
     exit_price = trade.get("exit_price")
     notes = (trade.get("notes_exit") or "").lower()
     return exit_price is not None and float(exit_price) == 0.0 and "stop" in notes
+
+
+def plan_normalisations(trades: list[dict]) -> list[dict]:
+    """Field-level fixes that do not change any P&L verdict (audit A3/A4).
+
+    * entry_value stored per-share instead of dollars (missing the x100).
+    * commission / pnl_net absent on records written before fees were modelled.
+
+    Kept separate from plan_repairs because these are bookkeeping corrections,
+    not re-judgements of a trade's outcome.
+    """
+    from journal.trade_recorder import TradeRecorder, round_trip_commission
+    rec = TradeRecorder.__new__(TradeRecorder)
+    plan: list[dict] = []
+    for t in trades:
+        before, after = {}, {}
+        ep, size = t.get("entry_price"), t.get("size") or 1
+        strategy = t.get("strategy")
+        if ep is not None and strategy:
+            try:
+                want = rec._calculate_entry_value(strategy, float(ep), float(size),
+                                                  t.get("max_loss"))
+            except (TypeError, ValueError):
+                want = None
+            have = t.get("entry_value")
+            if want is not None and (have is None or abs(float(have) - want) > 0.01):
+                before["entry_value"], after["entry_value"] = have, want
+
+        # Backfill fees on closed, scored trades only — an unscored record has
+        # no gross to net off.
+        if fs.is_closed(t) and t.get("pnl_dollars") is not None:
+            if t.get("commission") is None or t.get("pnl_net") is None:
+                fee = round_trip_commission(strategy, t.get("legs"), size)
+                before["commission"] = t.get("commission")
+                after["commission"] = fee
+                after["pnl_net"] = round(float(t["pnl_dollars"]) - fee, 2)
+
+        if after:
+            plan.append({"trade_id": t.get("trade_id"), "action": NORMALISE,
+                         "reason": "entry_value units / commission backfill",
+                         "before": before, "after": after})
+    return plan
 
 
 def plan_repairs(trades: list[dict]) -> list[dict]:
@@ -137,6 +180,10 @@ def apply_repairs(trades: list[dict], plan: list[dict]) -> list[dict]:
             out.append(dict(t))
             continue
         n = dict(t)
+        if p["action"] == NORMALISE:
+            n.update(p["after"])        # field-level fix; no verdict changes
+            out.append(n)
+            continue
         n["pnl_dollars"] = p["after"]["pnl_dollars"]
         n["outcome"] = p["after"]["outcome"]
         if p["action"] == RESCORE:
@@ -163,22 +210,31 @@ def run(apply: bool = False) -> list[dict]:
         logger.error(f"journal_repair: cannot read {path}: {e}")
         return []
 
+    # Verdict repairs first, then bookkeeping normalisation over the result —
+    # a rescored trade needs its commission backfilled from the NEW P&L.
     plan = plan_repairs(trades)
-    if not plan or not apply:
-        return plan
+    if not apply:
+        preview = apply_repairs(trades, plan) if plan else trades
+        return plan + plan_normalisations(preview)
+
+    repaired = apply_repairs(trades, plan) if plan else [dict(t) for t in trades]
+    norm = plan_normalisations(repaired)
+    if not plan and not norm:
+        return []
+    repaired = apply_repairs(repaired, norm)
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = f"{path}.bak-{stamp}"
     shutil.copy2(path, backup)
     logger.info(f"journal_repair: backed up {path} -> {backup}")
 
-    repaired = apply_repairs(trades, plan)
     tmp = f"{path}.tmp"
     with open(tmp, "w") as fh:
         json.dump(repaired, fh, indent=2)
     os.replace(tmp, path)
-    logger.info(f"journal_repair: applied {len(plan)} repairs")
-    return plan
+    logger.info(f"journal_repair: applied {len(plan)} repairs, "
+                f"{len(norm)} normalisations")
+    return plan + norm
 
 
 def main():
@@ -189,6 +245,7 @@ def main():
         return
     rescore = [p for p in plan if p["action"] == RESCORE]
     unscored = [p for p in plan if p["action"] == MARK_UNSCORED]
+    norm = [p for p in plan if p["action"] == NORMALISE]
 
     print("=" * 76)
     print(f"JOURNAL REPAIR — {'APPLIED' if apply else 'DRY RUN'} — {len(plan)} records")
@@ -205,6 +262,15 @@ def main():
     print(f"\nMARK UNSCORED ({len(unscored)}) — exit price is fiction:")
     for p in unscored:
         print(f"  {p['trade_id']}  {p['reason']}")
+
+    if norm:
+        ev_fixes = [p for p in norm if "entry_value" in p["after"]]
+        fee_fixes = [p for p in norm if "commission" in p["after"]]
+        fees = sum(p["after"].get("commission") or 0 for p in fee_fixes)
+        print(f"\nNORMALISE ({len(norm)}) — bookkeeping, no verdict changes:")
+        print(f"  entry_value rescaled to dollars: {len(ev_fixes)}")
+        print(f"  commission backfilled:           {len(fee_fixes)}"
+              f"  (total fees ${fees:,.2f})")
 
     if not apply:
         print("\nDry run. Re-run with --apply to write (a backup is made first).")

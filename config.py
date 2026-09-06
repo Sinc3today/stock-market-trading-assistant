@@ -543,3 +543,10 @@ REGIME_DRIFT_PRIOR_DAYS              = 60    # prior-N trading days for comparis
 SHADOW_TEST_ENABLED = True
 SHADOW_MIN_DAYS     = 10
 SHADOW_MIN_WINRATE  = 0.55
+
+# ── Commissions (audit A4) ────────────────────────────────────────
+# Per contract, per LEG, per side. A 4-leg condor round trip therefore costs
+# 4 x 2 x this. Unmodeled until 2026-09-06, which mattered: the 7DTE condor
+# candidate averaged +$18/trade gross, and $5.20 of fees is 29% of that.
+# Typical retail options rate; override in .env when the broker is known.
+COMMISSION_PER_CONTRACT_LEG = float(os.getenv("COMMISSION_PER_CONTRACT_LEG", "0.65"))

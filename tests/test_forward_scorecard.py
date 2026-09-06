@@ -261,3 +261,62 @@ def test_scorecard_on_real_logs_is_wellformed():
     card = fs.scorecard()
     for key in ("books", "integrity", "open_positions", "promotion", "predictions"):
         assert key in card, key
+
+
+# ── commissions (audit A4) ────────────────────────────────────────
+
+def _condor_legs():
+    return [{"action": "SELL", "option_type": "call", "strike": 780},
+            {"action": "BUY", "option_type": "call", "strike": 785},
+            {"action": "SELL", "option_type": "put", "strike": 750},
+            {"action": "BUY", "option_type": "put", "strike": 745}]
+
+
+def test_net_pnl_prefers_the_stored_value():
+    assert fs.net_pnl(_t(pnl_dollars=100.0, pnl_net=94.8)) == pytest.approx(94.8)
+
+
+def test_net_pnl_is_computed_for_legacy_records():
+    """Records written before commissions existed must still compare fairly."""
+    t = _t(pnl_dollars=100.0, legs=_condor_legs(), size=1)
+    assert fs.net_pnl(t) == pytest.approx(100.0 - 4 * 2 * 0.65)
+
+
+def test_net_pnl_is_none_without_gross():
+    assert fs.net_pnl(_t(pnl_dollars=None)) is None
+
+
+def test_book_stats_reports_fees_separately_from_gross():
+    trades = [_t(trade_id=str(i), pnl_dollars=100.0, legs=_condor_legs())
+              for i in range(3)]
+    st = fs.book_stats(trades)["disciplined"]
+    assert st["total"] == pytest.approx(300.0)        # gross preserved
+    assert st["fees"] == pytest.approx(3 * 5.2)
+    assert st["net_total"] == pytest.approx(300.0 - 3 * 5.2)
+
+
+def test_promotion_bar_is_judged_net_of_commissions():
+    """15 wins averaging $22 gross clears the $20 bar; net of a 4-leg round
+    trip it averages $16.80 and does not."""
+    trades = [_t(trade_id=str(i), book="candidate", dte_bucket="7DTE",
+                 pnl_dollars=22.0, outcome="win", legs=_condor_legs())
+              for i in range(15)]
+    row = {r["bucket"]: r for r in fs.promotion_progress(trades)}["7DTE"]
+    assert row["avg"] == pytest.approx(16.8)
+    assert not row["met"], "a bar that only clears before fees has not cleared"
+
+
+def test_promotion_bar_still_passes_when_it_clears_net():
+    trades = [_t(trade_id=str(i), book="candidate", dte_bucket="7DTE",
+                 pnl_dollars=40.0, outcome="win", legs=_condor_legs())
+              for i in range(15)]
+    row = {r["bucket"]: r for r in fs.promotion_progress(trades)}["7DTE"]
+    assert row["met"]
+
+
+def test_a_gross_win_that_is_a_net_loss_counts_as_a_loss_at_the_bar():
+    trades = [_t(trade_id=str(i), book="candidate", dte_bucket="7DTE",
+                 pnl_dollars=2.0, outcome="win", legs=_condor_legs())
+              for i in range(15)]
+    row = {r["bucket"]: r for r in fs.promotion_progress(trades)}["7DTE"]
+    assert row["win_pct"] == 0.0

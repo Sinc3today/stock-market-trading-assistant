@@ -27,8 +27,8 @@ from learning import forward_scorecard as fs
 
 PASS, FAIL, WARN, INFO = "PASS", "FAIL", "WARN", "INFO"
 
-# A 4-leg condor round trip at a typical retail options rate.
-COMMISSION_PER_LEG = 0.65
+# Sourced from config so the audit and the recorder can never disagree.
+COMMISSION_PER_LEG = config.COMMISSION_PER_CONTRACT_LEG
 MIN_CLOSED_FOR_A_CLAIM = 10
 
 
@@ -180,7 +180,8 @@ def v_a4_commissions(trades):
                   f"win {wins_net/n*100:.0f}%")
         if gross > 0 and net <= 0:
             broken.append(book)
-    # promotion bars under fees
+    # Promotion bars. fs.promotion_progress already reports NET, so compare it
+    # against the gross average computed here — re-deducting would double-count.
     ev.append("")
     for r in fs.promotion_progress(trades):
         if not r["closed"]:
@@ -188,19 +189,21 @@ def v_a4_commissions(trades):
         bucket_trades = [t for t in scored if t.get("dte_bucket") == r["bucket"]]
         if not bucket_trades:
             continue
-        fees = [COMMISSION_PER_LEG * _n_legs(t) * 2 * float(t.get("size") or 1)
-                for t in bucket_trades]
-        net_avg = (sum(float(t["pnl_dollars"]) for t in bucket_trades) - sum(fees)) / len(bucket_trades)
+        gross_avg = (sum(float(t["pnl_dollars"]) for t in bucket_trades)
+                     / len(bucket_trades))
+        net_avg = r["avg"]
         status = "still clears $20 bar" if net_avg > 20 else "FAILS the $20 avg bar"
-        ev.append(f"{r['label']:20} avg ${r['avg']:+7.2f} -> net ${net_avg:+7.2f}   {status}")
-        if r["avg"] > 20 >= net_avg:
+        ev.append(f"{r['label']:20} gross ${gross_avg:+7.2f} -> net ${net_avg:+7.2f}"
+                  f"   {status}")
+        if gross_avg > 20 >= net_avg:
             broken.append(r["label"])
     if broken:
         return _result("A4", "Edge survives commissions", "P2", FAIL,
                        f"Commissions flip or break: {', '.join(broken)}.", ev)
-    return _result("A4", "Edge survives commissions", "P2", WARN,
-                   f"No book flips sign, but fees are unmodeled "
-                   f"(${COMMISSION_PER_LEG}/leg assumed here).", ev)
+    return _result("A4", "Edge survives commissions", "P2", PASS,
+                   f"Every positive book stays positive net of fees "
+                   f"(${config.COMMISSION_PER_CONTRACT_LEG}/contract/leg/side, "
+                   "now recorded per trade).", ev)
 
 
 # ── B1: exits that could not have happened ───────────────────────

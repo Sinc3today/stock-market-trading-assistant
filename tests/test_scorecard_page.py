@@ -155,3 +155,23 @@ def test_theme_tokens_only_no_hardcoded_hex_in_page_css():
     from alerts.web_app import _SCORECARD_CSS
     import re
     assert not re.search(r"#[0-9a-fA-F]{3,6}\b", _SCORECARD_CSS)
+
+
+def test_books_table_shows_gross_fees_and_net():
+    books = {"disciplined": {"n": 21, "wins": 13, "win_pct": 61.9, "total": 1129.0,
+                             "avg": 53.8, "worst": -136.0, "excluded": 4,
+                             "ci_low": 41.0, "ci_high": 79.0, "beats_chance": False,
+                             "net_total": 1048.4, "net_avg": 49.9, "fees": 80.6}}
+    html = _render_scorecard(_card(books=books))
+    assert "1,129" in html and "1,048" in html      # gross and net both shown
+    assert "&minus;$81" in html                      # fees called out
+    assert "<th>Net</th>" in html
+
+
+def test_promotion_note_states_that_the_bar_is_net_of_fees():
+    assert "net of commissions" in _render_scorecard(_card())
+
+
+def test_wide_table_scrolls_inside_its_card():
+    """Design rule: the page body must never scroll horizontally."""
+    assert "sc-scroll" in _render_scorecard(_card())

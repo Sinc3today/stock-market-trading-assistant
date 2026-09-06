@@ -181,3 +181,74 @@ def test_dry_run_changes_nothing_on_disk(tmp_path, monkeypatch):
     assert plan, "dry run should still report what it would do"
     assert json.loads(path.read_text())[0]["pnl_dollars"] == 0
     assert not list(tmp_path.glob("trades.json.bak-*"))
+
+
+# ── normalisation: entry_value units + commissions (A3 / A4) ──────
+
+def test_per_share_entry_value_is_rescaled_to_dollars():
+    t = _t(strategy="put_debit_spread", entry_price=0.78, entry_value=0.78)
+    plan = jr.plan_normalisations([t])
+    assert plan[0]["after"]["entry_value"] == pytest.approx(78.0)
+
+
+def test_credit_structure_entry_value_stays_negative():
+    t = _t(strategy="iron_condor", entry_price=1.60, entry_value=1.60)
+    assert jr.plan_normalisations([t])[0]["after"]["entry_value"] == pytest.approx(-160.0)
+
+
+def test_correct_entry_value_is_left_alone():
+    t = _t(strategy="iron_condor", entry_price=1.60, entry_value=-160.0,
+           pnl_dollars=100.0, commission=5.2, pnl_net=94.8)
+    assert jr.plan_normalisations([t]) == []
+
+
+def test_commission_is_backfilled_on_closed_scored_trades():
+    legs = [{"action": "SELL", "option_type": "call", "strike": 780},
+            {"action": "BUY", "option_type": "call", "strike": 785}]
+    t = _t(entry_value=-160.0, pnl_dollars=100.0, legs=legs)
+    after = jr.plan_normalisations([t])[0]["after"]
+    assert after["commission"] == pytest.approx(2 * 2 * 0.65)
+    assert after["pnl_net"] == pytest.approx(100.0 - 2.6)
+
+
+def test_unscored_record_gets_no_fake_net():
+    """No gross means nothing to net off — don't invent one."""
+    t = _t(entry_value=-160.0, pnl_dollars=None, outcome="unscored")
+    plan = jr.plan_normalisations([t])
+    assert all("pnl_net" not in p["after"] for p in plan)
+
+
+def test_open_trade_gets_no_commission_yet():
+    t = _t(entry_value=-160.0, outcome="open", pnl_dollars=None)
+    plan = jr.plan_normalisations([t])
+    assert all("commission" not in p["after"] for p in plan)
+
+
+def test_normalisation_is_idempotent():
+    t = _t(strategy="put_debit_spread", entry_price=0.78, entry_value=0.78,
+           pnl_dollars=50.0)
+    once = jr.apply_repairs([t], jr.plan_normalisations([t]))
+    assert jr.plan_normalisations(once) == []
+
+
+def test_normalisation_does_not_change_any_verdict():
+    t = _t(strategy="put_debit_spread", entry_price=0.78, entry_value=0.78,
+           pnl_dollars=50.0, outcome="win")
+    out = jr.apply_repairs([t], jr.plan_normalisations([t]))
+    assert out[0]["outcome"] == "win"
+    assert out[0]["pnl_dollars"] == pytest.approx(50.0)   # gross untouched
+
+
+def test_run_applies_repairs_and_normalisations_together(tmp_path, monkeypatch):
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    path = tmp_path / "trades.json"
+    path.write_text(json.dumps([_legacy_zero(entry_value=0.73)]))
+
+    jr.run(apply=True)
+
+    t = json.loads(path.read_text())[0]
+    assert t["pnl_dollars"] == pytest.approx(116.0)     # rescored
+    assert t["entry_value"] == pytest.approx(73.0)      # normalised
+    assert t["commission"] is not None                  # backfilled
+    assert jr.run(apply=False) == []                    # and now clean

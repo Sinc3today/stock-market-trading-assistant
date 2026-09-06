@@ -152,10 +152,35 @@ def wilson(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
             round(min(100.0, (centre + half) * 100), 1))
 
 
+def net_pnl(trade: dict) -> float | None:
+    """P&L after round-trip commissions (audit A4).
+
+    Prefers the stored `pnl_net`; computes it for records written before
+    commissions were modelled, so old and new trades are comparable.
+    """
+    stored = trade.get("pnl_net")
+    if stored is not None:
+        try:
+            return float(stored)
+        except (TypeError, ValueError):
+            pass
+    gross = trade.get("pnl_dollars")
+    if gross is None:
+        return None
+    from journal.trade_recorder import round_trip_commission
+    try:
+        fee = round_trip_commission(trade.get("strategy"), trade.get("legs"),
+                                    trade.get("size"))
+        return round(float(gross) - fee, 2)
+    except (TypeError, ValueError):
+        return None
+
+
 def _blank_stats() -> dict:
     return {"n": 0, "wins": 0, "win_pct": 0.0, "total": 0.0,
             "avg": 0.0, "worst": 0.0, "excluded": 0,
-            "ci_low": 0.0, "ci_high": 0.0, "beats_chance": False}
+            "ci_low": 0.0, "ci_high": 0.0, "beats_chance": False,
+            "net_total": 0.0, "net_avg": 0.0, "fees": 0.0}
 
 
 def book_stats(trades: list[dict]) -> dict[str, dict]:
@@ -178,15 +203,22 @@ def book_stats(trades: list[dict]) -> dict[str, dict]:
             st["excluded"] += 1
             continue
         pnl = float(pnl)
+        net = net_pnl(t)
         st["n"] += 1
         st["wins"] += 1 if pnl > 0 else 0
         st["total"] += pnl
         st["worst"] = min(st["worst"], pnl)
+        if net is not None:
+            st["net_total"] += net
+            st["fees"] += pnl - net
     for st in out.values():
         if st["n"]:
             st["win_pct"] = round(st["wins"] / st["n"] * 100, 1)
             st["avg"] = round(st["total"] / st["n"], 2)
             st["total"] = round(st["total"], 2)
+            st["net_total"] = round(st["net_total"], 2)
+            st["net_avg"] = round(st["net_total"] / st["n"], 2)
+            st["fees"] = round(st["fees"], 2)
             st["ci_low"], st["ci_high"] = wilson(st["wins"], st["n"])
             st["beats_chance"] = st["ci_low"] > 50.0
     return out
@@ -249,7 +281,9 @@ def promotion_progress(trades: list[dict]) -> list[dict]:
                   and integrity(t) == SCORED and t.get("pnl_dollars") is not None]
         open_n = sum(1 for t in trades
                      if t.get("dte_bucket") == bucket and not is_closed(t))
-        pnls = [float(t["pnl_dollars"]) for t in closed]
+        # The bar decides real money, so it is judged NET of commissions: a
+        # trade that wins gross and loses net is a loss (audit A4).
+        pnls = [p for p in (net_pnl(t) for t in closed) if p is not None]
         n = len(pnls)
         wins = sum(1 for p in pnls if p > 0)
         win_pct = round(wins / n * 100, 1) if n else 0.0

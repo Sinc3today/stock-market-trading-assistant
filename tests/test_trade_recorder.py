@@ -352,3 +352,75 @@ def test_log_exit_scores_a_put_debit_spread_end_to_end(recorder):
     t = recorder.get_trade_by_id(tid)
     assert t["outcome"] == "win"
     assert t["pnl_dollars"] == pytest.approx(116.0)
+
+
+# ── entry_value units (audit A3) ──────────────────────────────────
+# _calculate_entry_value matched exact names only, so put_debit_spread /
+# call_debit_spread / broken_wing fell through to `entry_price * size`,
+# missing the x100 contract multiplier. 51 records stored per-share dollars.
+# Nothing reads entry_value today, which is exactly why it went unnoticed.
+
+def test_entry_value_applies_the_contract_multiplier_to_variant_names(recorder):
+    v = recorder._calculate_entry_value("put_debit_spread", 0.78, 1)
+    assert v == pytest.approx(78.0)
+
+
+def test_entry_value_is_negative_for_credit_structures(recorder):
+    """A credit received is a negative cost."""
+    assert recorder._calculate_entry_value("iron_condor", 1.60, 1) == pytest.approx(-160.0)
+    assert recorder._calculate_entry_value("broken_wing", 2.00, 1) == pytest.approx(-200.0)
+
+
+def test_entry_value_scales_with_size(recorder):
+    assert recorder._calculate_entry_value("call_debit_spread", 1.25, 4) == pytest.approx(500.0)
+
+
+def test_entry_value_for_stock_has_no_multiplier(recorder):
+    assert recorder._calculate_entry_value("stock", 450.0, 5) == pytest.approx(2250.0)
+
+
+def test_entry_value_written_on_entry_is_in_dollars(recorder):
+    tid = recorder.log_entry("SPY", 0.78, 1, strategy="put_debit_spread",
+                             book="disciplined")
+    assert recorder.get_trade_by_id(tid)["entry_value"] == pytest.approx(78.0)
+
+
+# ── commissions (audit A4) ────────────────────────────────────────
+
+def test_exit_records_a_commission(recorder):
+    legs = [{"action": "SELL", "option_type": "call", "strike": 780},
+            {"action": "BUY", "option_type": "call", "strike": 785},
+            {"action": "SELL", "option_type": "put", "strike": 750},
+            {"action": "BUY", "option_type": "put", "strike": 745}]
+    tid = recorder.log_entry("SPY", 1.60, 1, strategy="iron_condor",
+                             book="disciplined", legs=legs)
+    recorder.log_exit(tid, 0.60)
+    t = recorder.get_trade_by_id(tid)
+    # 4 legs, round trip, 1 contract
+    assert t["commission"] == pytest.approx(4 * 2 * 0.65)
+
+
+def test_net_pnl_is_gross_minus_commission(recorder):
+    legs = [{"action": "SELL", "option_type": "call", "strike": 780},
+            {"action": "BUY", "option_type": "call", "strike": 785}]
+    tid = recorder.log_entry("SPY", 2.00, 1, strategy="credit_spread",
+                             book="disciplined", legs=legs)
+    recorder.log_exit(tid, 1.00)
+    t = recorder.get_trade_by_id(tid)
+    assert t["pnl_dollars"] == pytest.approx(100.0)      # gross unchanged
+    assert t["pnl_net"] == pytest.approx(100.0 - 2 * 2 * 0.65)
+
+
+def test_commission_scales_with_contracts(recorder):
+    legs = [{"action": "SELL", "option_type": "call", "strike": 780},
+            {"action": "BUY", "option_type": "call", "strike": 785}]
+    tid = recorder.log_entry("SPY", 2.00, 3, strategy="credit_spread",
+                             book="disciplined", legs=legs)
+    recorder.log_exit(tid, 1.00)
+    assert recorder.get_trade_by_id(tid)["commission"] == pytest.approx(2 * 2 * 0.65 * 3)
+
+
+def test_stock_trades_pay_no_per_contract_commission(recorder):
+    tid = recorder.log_entry("SPY", 450.0, 5, strategy="stock", book="disciplined")
+    recorder.log_exit(tid, 460.0)
+    assert recorder.get_trade_by_id(tid)["commission"] == pytest.approx(0.0)

@@ -3616,6 +3616,9 @@ _SCORECARD_CSS = """
 .sc-mark{font-size:.8rem;font-weight:600;margin:-.2rem 0 .7rem;
          font-variant-numeric:tabular-nums}
 .sc-mark-unknown{color:var(--warn);font-weight:500}
+/* wide tables scroll inside the card; the page never scrolls sideways */
+.sc-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.sc-fee{color:var(--fg-subtle);font-size:.8rem}
 .sc-prom{display:flex;flex-direction:column;gap:.9rem}
 .sc-prom-row{display:grid;grid-template-columns:1fr auto;gap:.2rem .8rem;align-items:baseline}
 .sc-prom-name{font-size:.85rem;font-weight:600}
@@ -3785,22 +3788,27 @@ def _render_scorecard(card: dict) -> str:
             tag = '<span class="sc-tag">real</span>'
         ci = (f'<span class="sc-ci-inline">[{st.get("ci_low",0):.0f}&ndash;'
               f'{st.get("ci_high",0):.0f}]</span>' if st["n"] else "")
+        fees = st.get("fees", 0.0)
         rows.append(
             f'<tr><td><div class="sc-book">{_esc(name)}{tag}</div></td>'
             f'<td>{st["n"]}</td><td>{st["win_pct"]:.0f}% {ci}</td>'
-            f'<td>{_money(st["total"])}</td><td>{_money(st["avg"])}</td>'
+            f'<td>{_money(st["total"])}</td>'
+            f'<td class="sc-fee">&minus;${fees:,.0f}</td>'
+            f'<td><b>{_money(st.get("net_total"))}</b></td>'
             f'<td>{_money(st["worst"])}</td><td>{excl}</td></tr>'
         )
     books_card = (
         '<div class="card span-7">'
         '<div class="kicker"><span class="dot"></span>Books &middot; scored trades only</div>'
-        '<table class="sc-table"><tr class="is-head"><th>Book</th><th>n</th>'
+        '<div class="sc-scroll"><table class="sc-table">'
+        '<tr class="is-head"><th>Book</th><th>n</th>'
         '<th>Win &middot; 95% CI</th>'
-        '<th>Total</th><th>Avg</th><th>Worst</th><th>Excl</th></tr>'
-        f'{"".join(rows) or "<tr><td colspan=7 class=muted>No closed trades yet.</td></tr>"}'
-        '</table>'
+        '<th>Gross</th><th>Fees</th><th>Net</th><th>Worst</th><th>Excl</th></tr>'
+        f'{"".join(rows) or "<tr><td colspan=8 class=muted>No closed trades yet.</td></tr>"}'
+        '</table></div>'
         '<div class="cp-note" style="margin-top:.7rem">The bracket is the 95% Wilson '
         'interval. Where it spans 50%, the win rate does not yet exclude chance. '
+        'Fees assume $0.65 per contract per leg per side. '
         '"Excl" = closed trades dropped for untrustworthy P&amp;L. <b>disciplined</b> is '
         'the real-money proxy; <b>live</b> is actual broker fills; <b>learning</b> is the '
         'no-edge sandbox.</div></div>'
@@ -3845,8 +3853,10 @@ def _render_scorecard(card: dict) -> str:
         '<div class="card span-7">'
         '<div class="kicker"><span class="dot"></span>Candidates &middot; progress to promotion</div>'
         f'<div class="sc-prom">{"".join(prom) or "<div class=muted>No candidates running.</div>"}</div>'
-        '<div class="cp-note" style="margin-top:.8rem">Bar: 15 closed, &ge;70% win, avg &gt;$20. '
-        'Nothing is promoted to the disciplined book until it clears all three.</div></div>'
+        '<div class="cp-note" style="margin-top:.8rem">Bar: 15 closed, &ge;70% win, avg &gt;$20 '
+        '&mdash; all judged <b>net of commissions</b>, because a bar that only clears '
+        'before fees has not cleared. Nothing is promoted to the disciplined book until '
+        'it passes all three.</div></div>'
     )
 
     # ── open roster ─────────────────────────────────────────────────

@@ -39,6 +39,24 @@ _CREDIT_STRATEGIES = frozenset({"credit_spread", "iron_condor", "broken_wing"})
 _DEBIT_STRATEGIES  = frozenset({"debit_spread", "single_leg"})
 
 
+def round_trip_commission(strategy: str | None, legs: list | None,
+                          size: float | None) -> float:
+    """Total commission to open AND close this position, in dollars.
+
+    Per contract, per leg, per side. Stock pays no per-contract fee. A trade
+    with no recorded legs is assumed single-leg rather than free — the honest
+    default for a missing field is a cost, not a discount.
+    """
+    if (strategy or "").lower() == "stock":
+        return 0.0
+    n_legs = len(legs) if legs else 1
+    try:
+        size = float(size or 1)
+    except (TypeError, ValueError):
+        size = 1.0
+    return round(config.COMMISSION_PER_CONTRACT_LEG * n_legs * 2 * size, 2)
+
+
 def _pnl_convention(strategy: str | None) -> str | None:
     """'credit' | 'debit' | None for an unrecognised structure."""
     s = (strategy or "").strip().lower()
@@ -275,7 +293,13 @@ class TradeRecorder:
             trade["exit_price"]       = round(exit_price, 2)
             trade["exit_date"]        = now_est
             trade["exit_value"]       = round(exit_price * size * (1 if strategy == "stock" else 100), 2)
+            # pnl_dollars stays GROSS so history remains comparable; the net
+            # figure sits beside it. Promotion bars and the scorecard use net —
+            # a $20 average that only clears before fees does not clear.
+            commission = round_trip_commission(strategy, trade.get("legs"), size)
             trade["pnl_dollars"]      = round(pnl_dollars, 2)
+            trade["commission"]       = commission
+            trade["pnl_net"]          = round(pnl_dollars - commission, 2)
             trade["pnl_pct"]          = pnl_pct
             trade["pnl_per_contract"] = round(pnl_per_share * 100, 2) \
                                         if strategy != "stock" else None
@@ -378,16 +402,22 @@ class TradeRecorder:
         self, strategy: str, entry_price: float,
         size: float, max_loss: float = None
     ) -> float:
-        """What did this trade cost to enter?"""
+        """What did this trade cost to enter, in DOLLARS?
+
+        Options are always × 100 per contract. This used to match exact
+        strategy names and fall through to `entry_price * size` — so
+        put_debit_spread / call_debit_spread / broken_wing stored per-share
+        dollars, off by 100× (docs/FORWARD_TEST_AUDIT.md A3). Nothing reads
+        this field today, which is precisely why it went unnoticed for months.
+        """
         if strategy == "stock":
             return round(entry_price * size, 2)
-        elif strategy in ("debit_spread", "single_leg"):
-            # Debit paid × contracts × 100 shares
-            return round(entry_price * size * 100, 2)
-        elif strategy in ("credit_spread", "iron_condor"):
-            # Credit received (negative cost)
-            return round(-entry_price * size * 100, 2)
-        return round(entry_price * size, 2)
+        gross = entry_price * size * 100
+        # A credit received is a negative cost. Unknown structures are assumed
+        # bought (positive) — only the SIGN is ambiguous, never the multiplier.
+        if _pnl_convention(strategy) == "credit":
+            return round(-gross, 2)
+        return round(gross, 2)
 
     def _calculate_pnl(
         self,
