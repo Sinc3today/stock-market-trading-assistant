@@ -196,6 +196,61 @@ def job_outcome_resolver(polygon_client, post_fn=None):
         logger.exception(f"learning.outcome_resolver failed: {e}")
 
 
+def job_calm_calibration(polygon_client, vix_client=None):
+    """Score the classifier's daily CALM claim (docs/CALM_CALIBRATION.md).
+
+    Logs today's implied band on a calm-labelled day and resolves any day whose
+    5-session horizon has elapsed. Costs nothing, needs no counterfactual
+    trade, and runs at ~100% event rate — so the label stays honest even when
+    nobody is watching.
+    """
+    from datetime import timedelta
+    from journal.plan_logger import PlanLogger
+    from learning import calm_calibration as cc
+    eastern = pytz.timezone("US/Eastern")
+    now = datetime.now(eastern)
+    if not config.is_trading_day(now):
+        logger.info("calm_calibration: non-trading day, skipping")
+        return
+    try:
+        df = polygon_client.get_bars("SPY", config.SWING_PRIMARY_TIMEFRAME,
+                                     limit=60, days_back=120)
+        spot = float(df["close"].iloc[-1])
+        vix = float((vix_client.get_current() if vix_client else None) or 0)
+    except Exception as e:
+        logger.warning(f"calm_calibration: data fetch failed: {e}")
+        return
+
+    # Resolve anything whose horizon has elapsed, using the closes we just got.
+    try:
+        closes = {str(idx.date()): float(v)
+                  for idx, v in zip(df.index, df["close"])}
+        for row in cc.unresolved():
+            d = datetime.fromisoformat(row["date"]).date()
+            horizon = d + timedelta(days=int(row.get("horizon_days", 5)) * 7 // 5)
+            if now.date() < horizon:
+                continue
+            future = [c for k, c in sorted(closes.items()) if k > row["date"]]
+            if len(future) >= int(row.get("horizon_days", 5)):
+                cc.resolve_day(row["date"], future[int(row["horizon_days"]) - 1])
+    except Exception as e:
+        logger.warning(f"calm_calibration: resolve pass failed: {e}")
+
+    # Log today if the regime is the condor's home turf.
+    try:
+        plan = PlanLogger().get_plan(now.date().isoformat()) or {}
+        regime = plan.get("regime")
+        m = plan.get("regime_metrics") or {}
+        adx = m.get("adx")
+        if regime in ("choppy_low_vol", "choppy_transition") and vix:
+            cc.log_calm_day(now.date().isoformat(), regime=regime, vix=vix,
+                            adx=float(adx or 0), spot=spot)
+        else:
+            logger.info(f"calm_calibration: regime={regime} — not a calm claim")
+    except Exception as e:
+        logger.warning(f"calm_calibration: log pass failed: {e}")
+
+
 def job_exit_manager(polygon_client, vix_client=None, post_fn=None,
                      play_fn=None, dte_buckets=None):
     if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
@@ -456,6 +511,15 @@ def register_learning_jobs(
                 "post_fn": post_fn, "play_fn": play_fn, "dte_buckets": ["0DTE", "1-3DTE"]},
         id="learning_exit_manager_intraday",
         name="Learning: exit manager (intraday 0DTE / 1-3DTE)",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        job_calm_calibration,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=12, timezone=eastern),
+        kwargs={"polygon_client": polygon_client, "vix_client": vix_client},
+        id="learning_calm_calibration",
+        name="Learning: calm-label calibration",
         replace_existing=True,
     )
 
