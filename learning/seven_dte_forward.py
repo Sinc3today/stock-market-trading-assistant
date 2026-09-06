@@ -40,14 +40,14 @@ TARGET_PCT = 0.70
 #
 # Sweep (calm regime, OOS era-split, 10% haircut + commissions —
 # docs/SEVEN_DTE_STRUCTURE_STUDY.md):
-#     hold to expiry  79% win  +$32.39  PASS
-#     close at 1 DTE  74% win  +$22.24  PASS
-#     close at 2 DTE  70% win   +$9.90  fail-OOS
-#     close at 3 DTE  68% win   +$2.27  fail-OOS   <- what we were doing
-#     close at 4 DTE  65% win   -$2.44  fail-OOS
+#     hold to expiry  86% win  +$59.11  PASS
+#     close at 1 DTE  80% win  +$39.43  PASS
+#     close at 2 DTE  78% win  +$25.31  PASS
+#     close at 3 DTE  71% win  +$11.16  PASS      <- what we were doing
+#     close at 4 DTE  62% win   -$0.42  fail-OOS
 #
 # 1 rather than 0: holding into expiry risks assignment on an ITM short, and
-# 1 DTE keeps most of the edge (+$22 of the +$32) while still passing OOS.
+# 1 DTE keeps most of the edge (+$39 of the +$59) while still passing OOS.
 CLOSE_DTE = 1
 DTE = 7
 BUCKET = "7DTE"

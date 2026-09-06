@@ -67,16 +67,26 @@ def simulate(df, i, delta, wing, hurt, stop_at_touch, close_dte=0):
     sc = max(k for o, k, q in legs if o == "call" and q < 0)
     sp = min(k for o, k, q in legs if o == "put" and q < 0)
 
-    hold = DTE - close_dte                      # sessions actually held
-    exit_i = min(i + max(hold, 1), len(df) - 1)
-    for j in range(i + 1, exit_i + 1):
+    # DTE is CALENDAR days, the index is TRADING days. Walking `DTE - close_dte`
+    # ROWS forward overshoots by ~40% and can run past expiry, so resolve the
+    # exit against real dates. (This bug inflated the first run of this study.)
+    expiry = df.index[i] + pd.Timedelta(days=DTE)
+    stop_at = expiry - pd.Timedelta(days=close_dte)
+    exit_i = None
+    for j in range(i + 1, len(df)):
+        if df.index[j] > stop_at:
+            break
+        exit_i = j
         px = float(df["close"].iloc[j])
         if stop_at_touch and (px >= sc or px <= sp):
             # Close at the touch: the short is ~ATM, so the spread is worth
             # roughly half the wing. Deliberately pessimistic.
             return credit * 100 - (wing / 2) * 100 - COMMISSION
+    if exit_i is None:
+        return None
 
     final = float(df["close"].iloc[exit_i])
+    close_dte = max(0, (expiry - df.index[exit_i]).days)
     if close_dte > 0:
         # Closing EARLY means buying the spread back at its mark, not settling
         # intrinsic — there is still time value in the shorts we must pay for.
