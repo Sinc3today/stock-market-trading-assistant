@@ -445,6 +445,7 @@ _NAV_ICONS = {
     "regime":   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 13l3.5-3.5"/><path d="M12 5V3M9 3h6"/></svg>',
     "trades":   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 4 3 6-8"/><path d="M18 6h3v3"/></svg>',
     "learning": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+    "scorecard": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6" rx="1"/><rect x="13" y="8" width="3" height="10" rx="1"/><path d="M18 5h3v3"/></svg>',
 }
 # "Today" retired from the nav (2026-07-14) — its content lives on the copilot
 # home (Today's play card + why panel); the route stays alive for old links.
@@ -452,6 +453,7 @@ _NAV_ITEMS = [
     ("copilot",  "/copilot",  "Copilot"),
     ("regime",   "/regime",   "Regime"),
     ("trades",   "/trades",   "Trades"),
+    ("scorecard", "/scorecard", "Scorecard"),
     ("learning", "/learning", "Learning"),
     ("assistant", "/assistant", "Assistant"),
     ("rh",       "/rh-reauth", "Robinhood"),
@@ -3573,6 +3575,62 @@ def copilot_page():
                                         plan=plan, walls=walls))
 
 
+# Integrity-class keys, mirrored from learning.forward_scorecard so the
+# renderer never hardcodes the strings.
+from learning.forward_scorecard import (            # noqa: E402
+    SCORED as SC_SCORED, UNSCORED as SC_UNSCORED,
+    SUSPECT_FILL as SC_SUSPECT, VOID as SC_VOID,
+)
+
+_SCORECARD_CSS = """
+/* ── Forward-test scorecard ─────────────────────────────────── */
+.sc-hero{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem;margin-bottom:1.1rem}
+.sc-verdict{font-size:.82rem;color:var(--fg-muted);margin-top:.5rem;line-height:1.45}
+.sc-trust{margin-top:.6rem}
+.sc-bar{height:7px;border-radius:999px;background:var(--surface-2);overflow:hidden;display:flex}
+.sc-bar i{display:block;height:100%}
+.sc-bar .b-ok{background:var(--ok)}
+.sc-bar .b-bad{background:var(--err)}
+.sc-bar .b-warn{background:var(--warn)}
+.sc-legend{display:flex;flex-wrap:wrap;gap:.35rem .8rem;margin-top:.45rem;font-size:.72rem;
+           color:var(--fg-muted);font-variant-numeric:tabular-nums}
+.sc-legend span{display:inline-flex;align-items:center;gap:.3rem}
+.sc-legend i{width:8px;height:8px;border-radius:2px;flex:0 0 auto}
+.sc-warn{border-left:3px solid var(--warn);background:var(--warn-weak)}
+.sc-table{width:100%;border-collapse:collapse;font-size:.85rem;
+          font-variant-numeric:tabular-nums}
+.sc-table th{text-align:right;font-size:.64rem;text-transform:uppercase;letter-spacing:.08em;
+             color:var(--fg-subtle);font-weight:600;padding:0 0 .5rem;white-space:nowrap}
+.sc-table th:first-child,.sc-table td:first-child{text-align:left}
+.sc-table td{text-align:right;padding:.5rem 0;border-top:1px solid var(--border);white-space:nowrap}
+.sc-table td:first-child{font-weight:600}
+.sc-table tr.is-head td{border-top:none}
+.sc-book{display:flex;align-items:center;gap:.45rem}
+.sc-tag{font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-subtle);
+        border:1px solid var(--border);border-radius:999px;padding:.1rem .4rem;font-weight:600}
+.sc-excl{color:var(--warn);font-size:.74rem}
+.sc-prom{display:flex;flex-direction:column;gap:.9rem}
+.sc-prom-row{display:grid;grid-template-columns:1fr auto;gap:.2rem .8rem;align-items:baseline}
+.sc-prom-name{font-size:.85rem;font-weight:600}
+.sc-prom-meta{font-size:.75rem;color:var(--fg-muted);font-variant-numeric:tabular-nums}
+.sc-prom-track{grid-column:1/-1;height:6px;border-radius:999px;background:var(--surface-2);
+               overflow:hidden;margin-top:.15rem}
+.sc-prom-track i{display:block;height:100%;background:var(--accent);border-radius:999px}
+.sc-prom-track.is-met i{background:var(--ok)}
+.sc-prom-track.is-neg i{background:var(--err)}
+.sc-open{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:.6rem}
+.sc-open-item{border:1px solid var(--border);border-radius:var(--r-md);padding:.6rem .7rem;
+              background:var(--bg)}
+.sc-open-top{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem}
+.sc-open-tk{font-weight:600;font-size:.88rem}
+.sc-open-sub{font-size:.72rem;color:var(--fg-muted);margin-top:.2rem;
+             font-variant-numeric:tabular-nums}
+@media(max-width:900px){
+  .sc-hero{grid-template-columns:1fr}
+  .sc-table{font-size:.8rem}
+}
+"""
+
 _REGIME_CSS = """
 .regime-map{display:grid;grid-template-columns:repeat(3,1fr);gap:.45rem;margin:.5rem 0}
 .regime-cell{border:1px solid var(--border,#e4e4e7);border-radius:8px;padding:.5rem .55rem;
@@ -3604,6 +3662,202 @@ _REGIME_CSS = """
 .pb-REJECTED{background:rgba(220,38,38,.10);color:var(--err,#dc2626)}
 .pb-NEVER{background:rgba(220,38,38,.18);color:var(--err,#dc2626)}
 """
+
+
+def _money(v: float | None, plus: bool = True) -> str:
+    """$-formatted with sign + the right P&L colour class."""
+    if v is None:
+        return '<span class="pnl-zero">&mdash;</span>'
+    cls = "pnl-pos" if v > 0 else ("pnl-neg" if v < 0 else "pnl-zero")
+    sign = "+" if (plus and v > 0) else ("-" if v < 0 else "")
+    return f'<span class="{cls}">{sign}${abs(v):,.0f}</span>'
+
+
+def _render_scorecard(card: dict) -> str:
+    """The one-glance forward-test report card.
+
+    Ordered by what decides the money question: (1) is the real-money-proxy
+    book making money, (2) can the numbers be trusted at all, (3) is the
+    direction call better than a coin flip — then the supporting detail.
+    """
+    integ = card.get("integrity") or {}
+    head  = card.get("headline") or {}
+    preds = card.get("predictions") or {}
+    books = card.get("books") or {}
+
+    # ── hero 1: the real-money proxy ────────────────────────────────
+    h_n     = head.get("n", 0)
+    h_total = head.get("total", 0.0)
+    h_win   = head.get("win_pct", 0.0)
+    worst_txt = f' &middot; worst {_money(head.get("worst"))}' if h_n else ""
+    win_chip = "delta-up" if h_win >= 60 else "delta-flat"
+    hero_pnl = (
+        '<div class="card">'
+        '<div class="kicker"><span class="dot"></span>Disciplined book &middot; real-money proxy</div>'
+        f'<div class="stat"><div class="stat-value">{_money(h_total)}</div>'
+        f'<span class="delta-chip {win_chip}">{h_win:.0f}% win</span></div>'
+        f'<div class="stat-sub">{h_n} closed trades with trustworthy P&amp;L{worst_txt}</div>'
+        '</div>'
+    )
+
+    # ── hero 2: can we trust the sample? ────────────────────────────
+    trust = integ.get("trust_pct", 0.0)
+    closed = integ.get("closed", 0) or 1
+    seg = lambda k, c: (f'<i class="{c}" style="width:{integ.get(k,0)/closed*100:.1f}%"></i>'
+                        if integ.get(k) else "")
+    bar = (f'<div class="sc-bar">{seg(SC_SCORED,"b-ok")}{seg(SC_UNSCORED,"b-bad")}'
+           f'{seg(SC_SUSPECT,"b-warn")}{seg(SC_VOID,"b-warn")}</div>')
+    legend = (
+        '<div class="sc-legend">'
+        f'<span><i style="background:var(--ok)"></i>{integ.get(SC_SCORED,0)} scored</span>'
+        f'<span><i style="background:var(--err)"></i>{integ.get(SC_UNSCORED,0)} unscored</span>'
+        f'<span><i style="background:var(--warn)"></i>'
+        f'{integ.get(SC_SUSPECT,0)+integ.get(SC_VOID,0)} suspect / void</span>'
+        '</div>'
+    )
+    trust_cls = "delta-up" if trust >= 90 else ("delta-flat" if trust >= 70 else "delta-down")
+    hero_trust = (
+        '<div class="card">'
+        '<div class="kicker"><span class="dot"></span>Data trust</div>'
+        f'<div class="stat"><div class="stat-value">{trust:.0f}<span class="unit">%</span></div>'
+        f'<span class="delta-chip {trust_cls}">{integ.get(SC_SCORED,0)}/{integ.get("closed",0)}</span></div>'
+        f'<div class="sc-trust">{bar}{legend}</div>'
+        '</div>'
+    )
+
+    # ── hero 3: direction call ──────────────────────────────────────
+    acc = preds.get("accuracy", 0.0)
+    acc_chip = "delta-up" if acc >= 55 else "delta-down"
+    hero_pred = (
+        '<div class="card">'
+        '<div class="kicker"><span class="dot"></span>Direction calls</div>'
+        f'<div class="stat"><div class="stat-value">{acc:.0f}<span class="unit">%</span></div>'
+        f'<span class="delta-chip {acc_chip}">n={preds.get("sample",0)}</span></div>'
+        f'<div class="stat-sub">{preds.get("correct",0)} right &middot; '
+        f'{preds.get("wrong",0)} wrong &middot; {preds.get("skips",0)} stand-downs</div>'
+        '</div>'
+    )
+    hero = f'<div class="sc-hero">{hero_pnl}{hero_trust}{hero_pred}</div>'
+
+    # ── integrity warning (only when the sample is dirty) ───────────
+    warn = ""
+    if trust < 90:
+        hidden = integ.get("unscored_hidden_pnl")
+        warn = (
+            '<div class="card sc-warn span-12" style="margin-bottom:1.1rem">'
+            '<div class="kicker"><span class="dot" style="background:var(--warn)"></span>'
+            'Sample integrity warning</div>'
+            f'<div class="cp-note" style="margin:0">'
+            f'{integ.get(SC_UNSCORED,0)} closed trades recorded a P&amp;L of exactly $0 because '
+            'their strategy name matched no branch in the P&amp;L engine '
+            '(<code>put_debit_spread</code> / <code>call_debit_spread</code> vs the handled '
+            '<code>debit_spread</code>). They are excluded from every number above. '
+            f'Recomputed from entry/exit they actually carry {_money(hidden)} '
+            'of real, unrecorded P&amp;L.</div></div>'
+        )
+
+    # ── books table ─────────────────────────────────────────────────
+    rows = []
+    for name in sorted(books, key=lambda b: -abs(books[b].get("total", 0))):
+        st = books[name]
+        excl = (f'<span class="sc-excl">{st["excluded"]}</span>'
+                if st.get("excluded") else '<span class="muted">&mdash;</span>')
+        tag = ""
+        if name == "disciplined":
+            tag = '<span class="sc-tag">proxy</span>'
+        elif name == "live":
+            tag = '<span class="sc-tag">real</span>'
+        rows.append(
+            f'<tr><td><div class="sc-book">{_esc(name)}{tag}</div></td>'
+            f'<td>{st["n"]}</td><td>{st["win_pct"]:.0f}%</td>'
+            f'<td>{_money(st["total"])}</td><td>{_money(st["avg"])}</td>'
+            f'<td>{_money(st["worst"])}</td><td>{excl}</td></tr>'
+        )
+    books_card = (
+        '<div class="card span-7">'
+        '<div class="kicker"><span class="dot"></span>Books &middot; scored trades only</div>'
+        '<table class="sc-table"><tr class="is-head"><th>Book</th><th>n</th><th>Win</th>'
+        '<th>Total</th><th>Avg</th><th>Worst</th><th>Excl</th></tr>'
+        f'{"".join(rows) or "<tr><td colspan=7 class=muted>No closed trades yet.</td></tr>"}'
+        '</table>'
+        '<div class="cp-note" style="margin-top:.7rem">"Excl" = closed trades dropped for '
+        'untrustworthy P&amp;L. <b>disciplined</b> is the real-money proxy; <b>live</b> is '
+        'actual broker fills; <b>learning</b> is the no-edge sandbox.</div></div>'
+    )
+
+    # ── strategy breakdown ──────────────────────────────────────────
+    srows = []
+    for r in (card.get("strategies") or [])[:9]:
+        srows.append(
+            f'<tr><td>{_esc(r["strategy"].replace("_"," "))}</td>'
+            f'<td><span class="muted">{_esc(r["book"])}</span></td>'
+            f'<td>{r["n"]}</td><td>{r["win_pct"]:.0f}%</td>'
+            f'<td>{_money(r["total"])}</td></tr>'
+        )
+    strat_card = (
+        '<div class="card span-5">'
+        '<div class="kicker"><span class="dot"></span>Where the edge lives</div>'
+        '<table class="sc-table"><tr class="is-head"><th>Structure</th><th>Book</th>'
+        '<th>n</th><th>Win</th><th>Total</th></tr>'
+        f'{"".join(srows) or "<tr><td colspan=5 class=muted>Nothing scored yet.</td></tr>"}'
+        '</table></div>'
+    )
+
+    # ── promotion bars ──────────────────────────────────────────────
+    prom = []
+    for r in (card.get("promotion") or []):
+        if not (r["closed"] or r["open"]):
+            continue
+        pct = r["pct_of_bar"]
+        cls = "is-met" if r["met"] else ("is-neg" if r["closed"] and r["avg"] < 0 else "")
+        status = ("<span class='badge status-win'>bar met</span>" if r["met"]
+                  else f'{r["open"]} open')
+        prom.append(
+            '<div class="sc-prom-row">'
+            f'<div class="sc-prom-name">{_esc(r["label"])}</div>'
+            f'<div class="sc-prom-meta">{r["closed"]}/{r["target_n"]} closed &middot; '
+            f'{r["win_pct"]:.0f}% &middot; avg {_money(r["avg"])} &middot; {status}</div>'
+            f'<div class="sc-prom-track {cls}"><i style="width:{pct:.0f}%"></i></div>'
+            '</div>'
+        )
+    prom_card = (
+        '<div class="card span-7">'
+        '<div class="kicker"><span class="dot"></span>Candidates &middot; progress to promotion</div>'
+        f'<div class="sc-prom">{"".join(prom) or "<div class=muted>No candidates running.</div>"}</div>'
+        '<div class="cp-note" style="margin-top:.8rem">Bar: 15 closed, &ge;70% win, avg &gt;$20. '
+        'Nothing is promoted to the disciplined book until it clears all three.</div></div>'
+    )
+
+    # ── open roster ─────────────────────────────────────────────────
+    opens = card.get("open_positions") or []
+    items = []
+    for p in opens[:12]:
+        bucket_txt = f' &middot; {_esc(p["bucket"])}' if p.get("bucket") else ""
+        strat_txt = _esc(str(p["strategy"] or "").replace("_", " "))
+        items.append(
+            '<div class="sc-open-item"><div class="sc-open-top">'
+            f'<span class="sc-open-tk">{_esc(p["ticker"])} {strat_txt}</span>'
+            f'<span class="pill pill-open"><span class="dot"></span>{_esc(p["book"])}</span></div>'
+            f'<div class="sc-open-sub">{_esc(str(p["entry_date"] or "")[:10])}'
+            f'{bucket_txt}</div></div>'
+        )
+    more = (f'<div class="cp-note" style="margin-top:.7rem">+{len(opens)-12} more open.</div>'
+            if len(opens) > 12 else "")
+    open_card = (
+        '<div class="card span-5">'
+        f'<div class="kicker"><span class="dot"></span>Open &middot; {len(opens)} positions</div>'
+        f'<div class="sc-open">{"".join(items) or "<div class=muted>Nothing open.</div>"}</div>'
+        f'{more}'
+        '<div class="cp-note" style="margin-top:.7rem">Unrealized. These are not in any '
+        'number above &mdash; a forward test is only honest once positions close.</div></div>'
+    )
+
+    body = (f'{hero}{warn}<div class="dash">{books_card}{strat_card}</div>'
+            f'<div class="dash">{prom_card}{open_card}</div>')
+    return _render_page(
+        title="Trading Assistant - Scorecard", heading="Forward-Test Scorecard",
+        body=body, css=_INDEX_CSS + _SCORECARD_CSS, active_nav="scorecard",
+    )
 
 
 def _fetch_regime_state() -> dict | None:
@@ -3750,6 +4004,13 @@ def _render_regime_page(state: dict | None) -> str:
     return _render_page(title="Trading Assistant - Regime", heading="Regime Detector",
                         body=body, css=_INDEX_CSS + _COPILOT_CSS + _REGIME_CSS,
                         active_nav="regime")
+
+
+@app.get("/scorecard", response_class=HTMLResponse)
+def scorecard_page():
+    """Live forward-test report card — the honest answer to 'is the edge real?'"""
+    from learning.forward_scorecard import scorecard
+    return HTMLResponse(_render_scorecard(scorecard()))
 
 
 @app.get("/regime", response_class=HTMLResponse)
