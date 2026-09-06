@@ -550,3 +550,10 @@ SHADOW_MIN_WINRATE  = 0.55
 # candidate averaged +$18/trade gross, and $5.20 of fees is 29% of that.
 # Typical retail options rate; override in .env when the broker is known.
 COMMISSION_PER_CONTRACT_LEG = float(os.getenv("COMMISSION_PER_CONTRACT_LEG", "0.65"))
+
+# ── DTE ladder forward-test (14 / 21 DTE condor candidates) ───────
+# docs/DTE_LADDER_EXIT_STUDY.md: both rungs test better than anything live
+# (14DTE +$49.47 @ mean/sigma 0.413; 21DTE +$42.06 @ 0.339), PASS both eras.
+# Paper only, zero capital, promotion bar pre-registered in ladder_forward.
+LADDER_FORWARD_ENABLED = os.getenv("LADDER_FORWARD_ENABLED", "true").lower() == "true"
+LADDER_FORWARD_DTES = (14, 21)

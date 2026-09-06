@@ -48,6 +48,8 @@ PROMOTION_BARS = {
     "BWB-30DTE": ("Broken-wing 30DTE", 15, 70.0, 20.0),
     "BWB-45DTE": ("Broken-wing 45DTE", 15, 70.0, 20.0),
     "7DTE":      ("7DTE condor",       15, 70.0, 20.0),
+    "14DTE":     ("14DTE condor",      15, 70.0, 20.0),
+    "21DTE":     ("21DTE condor",      15, 70.0, 20.0),
     "qqq_condor": ("QQQ condor",       15, 70.0, 20.0),
     "dipbuy":    ("Dip-buy",           15, 70.0, 20.0),
 }

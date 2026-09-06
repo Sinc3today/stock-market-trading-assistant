@@ -226,6 +226,7 @@ def job_spy_entry(polygon_client, ivr_client):
     _run_daily_dipbuy(polygon_client, ivr=ivr)
     _run_qqq_condor_forward(polygon_client)
     _run_seven_dte_forward(polygon_client)
+    _run_ladder_forward(polygon_client)
     _run_broken_wing_forward(polygon_client)
 
 
@@ -250,6 +251,34 @@ def _run_seven_dte_forward(polygon_client) -> None:
         maybe_open_seven_dte(TradeRecorder(), spy_spot=spy_spot, vix=vix)
     except Exception as e:
         logger.warning(f"7DTE condor forward-test failed (ignored): {e}")
+
+
+def _run_ladder_forward(polygon_client) -> None:
+    """14DTE + 21DTE SPY condor PAPER candidates on condor-regime days
+    (Standing Rule #10 — isolated).
+
+    docs/DTE_LADDER_EXIT_STUDY.md found these two rungs test better than
+    anything live — 14DTE +$49.47 (mean/sigma 0.413), 21DTE +$42.06 (0.339),
+    both PASS the OOS era split with haircut and commissions, against the
+    disciplined 45DTE's -$1.41. Exits derived per rung, never scaled. Must
+    earn promotion on the paper record (bar in the module docstring)."""
+    try:
+        from journal.plan_logger import PlanLogger
+        from learning.ladder_forward import _today_et, maybe_open_ladder
+        plan = PlanLogger().get_plan(_today_et().isoformat()) or {}
+        if plan.get("strategy") != "iron_condor":
+            return
+        df = polygon_client.get_bars(
+            "SPY", timeframe=config.SWING_PRIMARY_TIMEFRAME, limit=3, days_back=5)
+        if df is None or not len(df):
+            return
+        spy_spot = float(df["close"].iloc[-1])
+        from alerts.stop_watchdog import yf_spot
+        vix = yf_spot("^VIX") or 16.0
+        from journal.trade_recorder import TradeRecorder
+        maybe_open_ladder(TradeRecorder(), spy_spot=spy_spot, vix=vix)
+    except Exception as e:
+        logger.warning(f"DTE-ladder forward-test failed (ignored): {e}")
 
 
 def _run_broken_wing_forward(polygon_client) -> None:
