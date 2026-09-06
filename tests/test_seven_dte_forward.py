@@ -101,3 +101,51 @@ def test_paper_record_tracks_promotion_bar(iso):
     r = paper_record(rec)
     assert r["n"] == 1 and "win" in str(r).lower() or r["n"] == 1
     assert r["meets_bar"] is False        # 1 trade is nowhere near n>=15
+
+
+# ── exit-rule epoch (2026-09-06) ──────────────────────────────────
+# CLOSE_DTE was 3, derived as round(7 * 21/45) — the 45DTE time-stop scaled
+# proportionally. Theta is not linear in DTE, so that surrendered the most
+# valuable days: the sweep showed hold-to-expiry +$32.39 (PASS) vs close-at-3
+# +$2.27 (fail-OOS). See docs/SEVEN_DTE_STRUCTURE_STUDY.md.
+
+def test_close_dte_is_no_longer_the_proportional_scaling():
+    from learning import seven_dte_forward as sdf
+    assert sdf.CLOSE_DTE == 1, "3 was the disproved proportional heuristic"
+
+
+def test_paper_record_counts_only_the_current_rule(tmp_path, monkeypatch):
+    """Pooling across a rule change describes a strategy nobody runs (E2)."""
+    from learning import seven_dte_forward as sdf
+
+    class _Rec:
+        def get_all_trades(self):
+            return [
+                {"dte_bucket": "7DTE", "entry_date": "2026-08-01 09:45 AM EST",
+                 "pnl_dollars": -300.0},
+                {"dte_bucket": "7DTE", "entry_date": "2026-08-02 09:45 AM EST",
+                 "pnl_dollars": -200.0},
+                {"dte_bucket": "7DTE", "entry_date": "2026-09-10 09:45 AM EST",
+                 "pnl_dollars": 40.0},
+            ]
+
+    rec = sdf.paper_record(_Rec())
+    assert rec["n"] == 1                      # only the post-epoch trade
+    assert rec["avg"] == 40.0
+    assert rec["legacy"]["n"] == 2
+    assert rec["legacy"]["avg"] == -250.0
+    assert rec["legacy"]["rule"] == "CLOSE_DTE=3"
+
+
+def test_paper_record_with_no_current_trades_is_safe(tmp_path):
+    from learning import seven_dte_forward as sdf
+
+    class _Rec:
+        def get_all_trades(self):
+            return [{"dte_bucket": "7DTE", "entry_date": "2026-08-01 09:45 AM EST",
+                     "pnl_dollars": -300.0}]
+
+    rec = sdf.paper_record(_Rec())
+    assert rec["n"] == 0 and rec["win_pct"] == 0.0
+    assert not rec["meets_bar"]
+    assert rec["legacy"]["n"] == 1

@@ -32,10 +32,30 @@ import config
 from learning.dipbuy_forward import _mark_spread
 
 TARGET_PCT = 0.70
-CLOSE_DTE = 3          # round(7 * 21/45) — live-parity fraction from the study
+# 2026-09-06: was 3, derived as round(7 * 21/45) — the 45DTE time-stop scaled
+# proportionally. That heuristic is wrong, because theta is NOT linear in DTE:
+# it accelerates into expiry, so the last days hold most of the decay. Closing
+# a 7DTE condor at 3 DTE surrenders the best part of the trade while having
+# already borne the risk of the first four days.
+#
+# Sweep (calm regime, OOS era-split, 10% haircut + commissions —
+# docs/SEVEN_DTE_STRUCTURE_STUDY.md):
+#     hold to expiry  79% win  +$32.39  PASS
+#     close at 1 DTE  74% win  +$22.24  PASS
+#     close at 2 DTE  70% win   +$9.90  fail-OOS
+#     close at 3 DTE  68% win   +$2.27  fail-OOS   <- what we were doing
+#     close at 4 DTE  65% win   -$2.44  fail-OOS
+#
+# 1 rather than 0: holding into expiry risks assignment on an ITM short, and
+# 1 DTE keeps most of the edge (+$22 of the +$32) while still passing OOS.
+CLOSE_DTE = 1
 DTE = 7
 BUCKET = "7DTE"
 PROMOTION_BAR = "n>=15 closed, win>=70%, avg>$20, no loss>max_loss"
+# The 8 trades closed before 2026-09-06 ran the CLOSE_DTE=3 rule and are a
+# DIFFERENT strategy. Pooling across a rule change is exactly the error the
+# audit flagged as E2, so the promotion count starts again here.
+RULE_EPOCH = "2026-09-06"
 
 
 def _today_et() -> _date:
@@ -115,13 +135,31 @@ def resolve_seven_dte(recorder, *, spy_spot, vix, today=None):
 
 
 def paper_record(recorder) -> dict:
-    """Progress vs the promotion bar — surfaced by loop_health / the playbook."""
-    closed = [t for t in recorder.get_all_trades()
-              if t.get("dte_bucket") == BUCKET
-              and t.get("pnl_dollars") is not None]
-    n = len(closed)
-    wins = sum(1 for t in closed if (t.get("pnl_dollars") or 0) > 0)
-    avg = (sum(float(t.get("pnl_dollars") or 0) for t in closed) / n) if n else 0.0
+    """Progress vs the promotion bar — surfaced by loop_health / the playbook.
+
+    Counts only trades opened under the CURRENT exit rule. The pre-epoch
+    trades ran CLOSE_DTE=3 and are reported separately as `legacy`: a record
+    pooled across a rule change describes a strategy nobody is running
+    (docs/FORWARD_TEST_AUDIT.md E2).
+    """
+    all_closed = [t for t in recorder.get_all_trades()
+                  if t.get("dte_bucket") == BUCKET
+                  and t.get("pnl_dollars") is not None]
+    closed = [t for t in all_closed
+              if str(t.get("entry_date", ""))[:10] >= RULE_EPOCH]
+    legacy = [t for t in all_closed
+              if str(t.get("entry_date", ""))[:10] < RULE_EPOCH]
+
+    def _agg(rows):
+        n = len(rows)
+        wins = sum(1 for t in rows if (t.get("pnl_dollars") or 0) > 0)
+        avg = (sum(float(t.get("pnl_dollars") or 0) for t in rows) / n) if n else 0.0
+        return n, wins, avg
+
+    n, wins, avg = _agg(closed)
+    ln, lwins, lavg = _agg(legacy)
     return {"n": n, "win_pct": (wins / n * 100) if n else 0.0, "avg": avg,
-            "bar": PROMOTION_BAR,
-            "meets_bar": n >= 15 and (wins / n) >= 0.70 and avg > 20.0}
+            "bar": PROMOTION_BAR, "rule_epoch": RULE_EPOCH,
+            "legacy": {"n": ln, "win_pct": (lwins / ln * 100) if ln else 0.0,
+                       "avg": lavg, "rule": "CLOSE_DTE=3"},
+            "meets_bar": n >= 15 and (wins / n if n else 0) >= 0.70 and avg > 20.0}
