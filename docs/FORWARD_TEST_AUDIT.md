@@ -260,14 +260,63 @@ a broken instrument is still a broken number.
   than an implied $0.
 - A regime-coverage table naming what has **never** been traded live.
 
+---
+
+## SECOND PASS — 2026-09-06, later the same day
+
+**5 FAIL · 3 WARN · 5 PASS** (from 9/2/2). Trust **54.2% → 69.9%**.
+
+### B1 — my first diagnosis was wrong
+
+I recorded B1 as *"the price lookup failed and returned 0"*. It was not.
+
+`_mark_exit_price` computed `t_years` from **whole-day DTE**, so on expiry day
+`t_years == 0`, `bs_price` fell back to **pure intrinsic**, and every 0DTE
+spread marked at its intrinsic value — discarding hours of remaining time
+value. That instantly showed max loss, tripped the stop, and closed the
+position minutes after entry.
+
+The record that proves it: a **758/761 call debit spread bought for $0.78**
+with SPY at 757.82 and ~5.5h left. Its real value was **~$0.89 — a small
+profit**. It marked **$0.00** and booked **−$78**. Entered 10:15, "stopped"
+10:20.
+
+Fixed by measuring time to the 16:00 ET close (`_years_to_expiry`), on both
+the legs-expiry path and the `today+dte` fallback, which carried the identical
+bug. Defense in depth: **a stop may no longer fire at a $0.00 mark** — a stop
+is by definition a partial loss, so a worthless position belongs to the expiry
+resolver. That is the layer that stops a marking failure from ever again
+disguising itself as a trade.
+
+This does **not** reopen the 0DTE-has-no-edge conclusion, which rests on a
+separate full-year backtest against real option aggregates. It does mean the
+**live** 0DTE paper record never corroborated it — it was measuring the bug.
+
+### A1 — repaired
+
+`learning/journal_repair.py`, idempotent, backs up before writing:
+
+- **13 rescored** from their real prices: net **+$315** (7 wins, 6 losses) that
+  the journal had been carrying as "breakeven".
+- **19 marked unrecoverable** — the phantom-fill records. Rescoring them would
+  launder a modelling bug into a plausible number.
+
+A1 and B1 now recognise the quarantine tag, so they PASS on acknowledged
+records but still FAIL on a **new** occurrence. They work as regression
+detectors rather than crying wolf.
+
+### What the repair did NOT do
+
+Disciplined book went n=13 → **21**, +$1,129, 61.9% win. Its 95% CI is
+**[41, 79]** — **still spans 50%**. Nearly doubling the sample did not
+manufacture confidence, and D2 still correctly fails. That is the point.
+
 ### Next actions
 
-1. **V-A1 repair** the 14 legacy records (backup `trades.json` first).
-2. **B1**: stop writing a `$0.00` fill when the price lookup fails — record the
-   exit as unscored instead, so a failure never masquerades as a trade.
-3. **A3**: normalise `entry_value` to dollars; audit readers first.
-4. Keep accumulating. D1/D2/E2 are not bugs — they are *"the sample is too
-   young and too calm"*, and only time and a regime change fix them.
+Tracked in `docs/VALIDATION_AGENDA.md` Part 4. Open: A3 (entry_value units),
+A4 (fold commissions into paper P&L), C4 (one duplicate pair). Items C1, D1,
+D2, E2 are not bugs — they are *"the sample is too young and too calm"*, and
+only time and a regime change close them.
 
 ---
 
