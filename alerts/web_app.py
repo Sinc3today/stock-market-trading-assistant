@@ -866,14 +866,25 @@ details.fold>.fold-body{padding:.15rem .75rem .7rem;border-top:1px solid var(--b
 """
 
 
-def _spy_spot():
-    """Latest SPY price for stop-status, or None. Best-effort (no page-load blocking)."""
+def _ticker_spot(symbol: str):
+    """Latest price for `symbol`, or None. Best-effort (never blocks a page load)."""
     try:
         from data.polygon_client import PolygonClient
-        df = PolygonClient().get_bars("SPY", config.SWING_PRIMARY_TIMEFRAME, limit=1, days_back=3)
+        df = PolygonClient().get_bars(symbol, config.SWING_PRIMARY_TIMEFRAME,
+                                      limit=1, days_back=3)
         return float(df["close"].iloc[-1]) if df is not None and len(df) else None
     except Exception:
         return None
+
+
+def _spy_spot():
+    """Latest SPY price for stop-status, or None."""
+    return _ticker_spot("SPY")
+
+
+def _qqq_spot():
+    """Latest QQQ price — the QQQ condor candidate trades off this."""
+    return _ticker_spot("QQQ")
 
 
 def _spy_vix():
@@ -1143,6 +1154,78 @@ def _stat_card(kicker_html: str, value_html: str, sub: str = "",
             f'<div style="text-align:right">{right_html}</div></div></div>')
 
 
+def _render_candidates_card(candidates: list[dict],
+                            promotion: list[dict] | None = None) -> str:
+    """Today's PAPER candidate opens (QQQ condor, 7DTE, broken-wing) with their
+    legs.
+
+    Deliberately a separate card from Today's play, and every row carries a
+    PAPER badge plus its distance from the promotion bar. A candidate that
+    looked like a live instruction has already caused one real mix-up
+    (2026-08, a paper 7DTE condor read as a placed trade), and these
+    structures have NOT earned real money — showing legs without showing
+    "unproven, n/15" would be the same mistake in a nicer font.
+    """
+    from alerts.stop_watchdog import rh_leg_lines
+
+    if not candidates:
+        return (
+            '<div class="card span-12">'
+            '<div class="kicker"><span class="dot"></span>Paper candidates '
+            '<span class="sep">&middot;</span> today</div>'
+            '<div class="cp-note" style="margin:0">No candidate opened today. '
+            'These run themselves on qualifying days &mdash; nothing to do.</div>'
+            '</div>')
+
+    bar = {r["bucket"]: r for r in (promotion or [])}
+    rows = []
+    for t in candidates:
+        bucket = t.get("dte_bucket") or ""
+        b = bar.get(bucket) or {}
+        progress = (f'{b.get("closed", 0)}/{b.get("target_n", 15)} to bar'
+                    if b else "candidate")
+        legs = rh_leg_lines(t.get("legs") or [])
+        legs_html = ("<div class='legs'>" +
+                     "".join(f"<div class='leg'>{_esc(l)}</div>" for l in legs) +
+                     "</div>") if legs else ""
+        entry = t.get("entry_price")
+        mp, ml = t.get("max_profit"), t.get("max_loss")
+        exp = ""
+        for leg in (t.get("legs") or []):
+            e = leg.get("expiration") or leg.get("expiry")
+            if e:
+                exp = _fdate(str(e)[:10])
+                break
+        nums = " &middot; ".join(x for x in (
+            f"credit ${float(entry):g}" if isinstance(entry, (int, float)) else "",
+            f"Exp {_esc(exp)}" if exp else "",
+            f"max profit ${mp:,.0f}" if isinstance(mp, (int, float)) else "",
+            f"max loss ${ml:,.0f}" if isinstance(ml, (int, float)) else "",
+        ) if x)
+        rows.append(
+            '<div class="cand-row">'
+            '<div class="cand-head">'
+            f'<span class="cand-tk">{_esc(t.get("ticker", "?"))}</span> '
+            f'<span class="muted">{_esc(str(t.get("strategy") or "").replace("_", " "))}</span>'
+            '<span class="badge status-be">paper</span>'
+            f'<span class="badge">{_esc(progress)}</span>'
+            '</div>'
+            f'{legs_html}'
+            f'<div class="cand-nums">{nums}</div>'
+            '</div>')
+
+    return (
+        '<div class="card span-12">'
+        '<div class="kicker"><span class="dot"></span>Paper candidates '
+        f'<span class="sep">&middot;</span> {len(candidates)} opened today</div>'
+        f'{"".join(rows)}'
+        '<div class="cp-note" style="margin-top:.7rem">Zero capital &mdash; the '
+        'market referees these until they clear their promotion bar (15 closed, '
+        '&ge;70% win, avg &gt;$20 net of fees). Legs are shown so you can follow '
+        'the reasoning, <b>not</b> as an instruction to place them.</div>'
+        '</div>')
+
+
 def _render_todays_play_card(plan: dict | None, walls: dict | None = None,
                              todays_trades: list[dict] | None = None) -> str:
     """Today's play, right under the price row: the actionable headline + legs
@@ -1278,7 +1361,9 @@ def _render_todays_play_card(plan: dict | None, walls: dict | None = None,
 
 
 def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
-                    plan: dict | None = None, walls: dict | None = None) -> str:
+                    plan: dict | None = None, walls: dict | None = None,
+                    candidates: list[dict] | None = None,
+                    promotion: list[dict] | None = None, qqq=None) -> str:
     """Trade copilot: your live (watchdog-tracked) positions + today's plays to
     mirror on Robinhood — copy-ready RH-shaped legs + smart-stop status."""
     from alerts.stop_watchdog import rh_leg_lines, position_status
@@ -1371,12 +1456,17 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
     # bundle into one "Positions & risk" card at the very bottom.
     price_refresh = ('<button id="spy-refresh" class="price-refresh" type="button" '
                      'title="Refresh price" aria-label="Refresh price">&#8635;</button>')
+    qqq_val = f"${qqq:,.2f}" if isinstance(qqq, (int, float)) else "—"
     stat_row = (
         '<div class="dash">'
         + _stat_card('Market <span class="sep">·</span> SPY ' + price_refresh,
                      f'<span id="spy-price">{spy_val}</span>',
                      sub='<span id="spy-price-ts">live underlying</span>',
-                     right_html=spark + day_delta, span="span-12")
+                     right_html=spark + day_delta, span="span-8")
+        + _stat_card('QQQ <span class="sep">·</span> candidate underlying',
+                     f'<span id="qqq-price">{qqq_val}</span>',
+                     sub='<span class="muted">paper condor book</span>',
+                     span="span-4")
         + '</div>'
     )
     risk_card = (
@@ -1423,12 +1513,14 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
         'pr.classList.add("spin");'
         'try{var r=await fetch("/copilot/spot");var d=await r.json();'
         'if(d.price)document.getElementById("spy-price").textContent=d.price;'
+        'var q=document.getElementById("qqq-price");if(q&&d.qqq)q.textContent=d.qqq;'
         'if(d.ts)document.getElementById("spy-price-ts").innerHTML=d.ts;}'
         'catch(err){}finally{pr.classList.remove("spin");}});</script>'
     )
     todays_card = _render_todays_play_card(plan, walls, todays_trades=plays)
+    cand_card = _render_candidates_card(candidates or [], promotion)
     body = stat_row + (f'<div class="dash">{todays_card}{positions_card}'
-                       f'{condor_card}{risk_card}</div>') + calc_js
+                       f'{condor_card}{cand_card}{risk_card}</div>') + calc_js
     return _render_page(
         title      = "Trading Assistant - Copilot",
         heading    = "Trade Copilot",
@@ -3564,6 +3656,17 @@ def copilot_page():
     plays = [t for t in opens
              if (t.get("book") or "disciplined") == "disciplined"
              and str(t.get("entry_date", "")).startswith(et_today)]
+    # Paper candidates opened today (QQQ condor, 7DTE, broken-wing). Shown in
+    # their own card so their legs are visible without ever reading as a play.
+    candidates = [t for t in opens
+                  if t.get("book") == "candidate"
+                  and str(t.get("entry_date", "")).startswith(et_today)]
+    promotion = []
+    try:
+        from learning.forward_scorecard import promotion_progress
+        promotion = promotion_progress(TradeRecorder().get_all_trades())
+    except Exception as e:
+        logger.warning(f"/copilot promotion progress failed: {e}")
     spot  = _spy_spot()
     plan  = None
     try:
@@ -3572,7 +3675,10 @@ def copilot_page():
         logger.warning(f"/copilot plan fetch failed: {e}")
     walls = _copilot_walls(spot) if (plan and spot) else {}
     return HTMLResponse(_render_copilot(live, plays, spot, _spy_vix(),
-                                        plan=plan, walls=walls))
+                                        plan=plan, walls=walls,
+                                        candidates=candidates,
+                                        promotion=promotion,
+                                        qqq=_qqq_spot()))
 
 
 # Integrity-class keys, mirrored from learning.forward_scorecard so the
@@ -3618,6 +3724,13 @@ _SCORECARD_CSS = """
 .sc-mark-unknown{color:var(--warn);font-weight:500}
 /* wide tables scroll inside the card; the page never scrolls sideways */
 .sc-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* paper-candidate rows on the copilot */
+.cand-row{padding:.7rem 0;border-bottom:1px solid var(--border)}
+.cand-row:last-of-type{border-bottom:none;padding-bottom:0}
+.cand-head{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin-bottom:.35rem}
+.cand-tk{font-weight:700;font-size:.95rem}
+.cand-nums{font-size:.78rem;color:var(--fg-muted);margin-top:.35rem;
+           font-variant-numeric:tabular-nums}
 .sc-fee{color:var(--fg-subtle);font-size:.8rem}
 .sc-prom{display:flex;flex-direction:column;gap:.9rem}
 .sc-prom-row{display:grid;grid-template-columns:1fr auto;gap:.2rem .8rem;align-items:baseline}
@@ -4103,11 +4216,12 @@ def copilot_calc_fragment(kind: str, dte: int = 45):
 
 @app.get("/copilot/spot")
 def copilot_spot():
-    """Fresh SPY price + a 'priced …' timestamp for the manual price-refresh
-    button on the copilot (no full page reload)."""
-    spot = _spy_spot()
+    """Fresh SPY + QQQ prices and a 'priced …' timestamp for the manual
+    price-refresh button on the copilot (no full page reload)."""
+    spot, qqq = _spy_spot(), _qqq_spot()
     price = f"${spot:,.2f}" if isinstance(spot, (int, float)) else "—"
-    return JSONResponse({"price": price, "ts": _priced_stamp()})
+    qqq_price = f"${qqq:,.2f}" if isinstance(qqq, (int, float)) else "—"
+    return JSONResponse({"price": price, "qqq": qqq_price, "ts": _priced_stamp()})
 
 
 @app.get("/rh-reauth", response_class=HTMLResponse)
