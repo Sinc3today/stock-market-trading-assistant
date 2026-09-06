@@ -67,8 +67,8 @@ Each gate has entry criteria (what must be true to start) and exit criteria
 | | |
 |---|---|
 | Exit criteria | `forward_audit` shows **zero P1 FAIL**; trust ratio **>95%**; every headline carries a CI |
-| Status | 5 FAIL / 3 WARN / 5 PASS · trust **69.9%** |
-| Remaining | A3 (entry_value units), C1 (thin buckets), D1/D2/E2 (sample, not bugs) |
+| Status | **4 FAIL / 2 WARN / 7 PASS** · trust **69.9%** |
+| Remaining | **All engineering defects closed.** The 4 failures are C1/D1/D2/E2 — sample age and regime coverage, which only time resolves. Trust stays at 69.9% permanently: the 32 quarantined records can never become trustworthy. |
 
 ### Gate 1 — Candidate promotion
 *Has any structure earned a place in the disciplined book?*
@@ -139,8 +139,8 @@ Ordered by what unblocks the most. Status as of 2026-09-06.
 | 1 | A1 unscored records | 0 | P1 | **DONE** — engine fixed, 13 rescored (+$315), 19 quarantined |
 | 2 | A2 sign-convention drift | 0 | P1 | **DONE** — one source of truth, BWB flip closed |
 | 3 | B1 phantom $0.00 fills | 0 | P1 | **DONE** — root cause was 0DTE intrinsic marking, not lookup failure |
-| 4 | A3 `entry_value` unit mismatch | 0 | P2 | **TODO** — 51 records; audit readers first |
-| 5 | A4 commissions unmodeled | 1 | P2 | **TODO** — fold per-leg fees into paper P&L, not just the audit |
+| 4 | A3 `entry_value` unit mismatch | 0 | P2 | **DONE** — third instance of exact-name matching; 51 records rescaled |
+| 5 | A4 commissions unmodeled | 1 | P2 | **DONE** — `pnl_net` recorded per trade; promotion bars judged net |
 | 6 | C4 duplicate entry signature | 0 | P3 | **TODO** — 1 pair from 2026-05-27 |
 | 7 | B2 open tail marked by model only | 0 | P1 | **ACCEPTED RISK** — no live option quotes exist; disclosed on `/scorecard` |
 | 8 | C1 thin candidate buckets | 1 | P1 | **TIME** — needs closed trades |
