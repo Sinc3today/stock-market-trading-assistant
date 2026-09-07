@@ -65,7 +65,46 @@ Each verified by execution against the live tree or the live journal.
 | # | Defect | Evidence |
 |---|---|---|
 | 1 | **`rh_sync:376` books real-money exits at the ENTRY price** when any leg lacks a mid (routine for a condor's long wings). Produces a fabricated `$0 / breakeven`. | 3 of 4 `[RH-SYNC]` exits; **2 live condors exposed** |
-| 2 | **`paper_broker:521` returns a hardcoded `$1.00`** when it cannot read the spread premium — and that becomes the recorded entry price. | **18 of 109 trades** at exactly `$1.00`; **11 disciplined**; 14 with booked P&L. `F1A205B7` shows `max_profit=200` (true credit ~$2.00) booked at $1.00 |
+| 2 | **`paper_broker:521` returns a hardcoded `$1.00`** when it cannot read the spread premium — and that becomes the recorded entry price. The real price sits on the leg under `mark`, which `intraday_structure_builder` reads and this path does not. | **18 of 109 trades** at exactly `$1.00`. **34 of 109 records violate the invariant** `entry_price×100 == max_profit` (credit) / `max_loss` (debit) — see below |
+
+### 2a. The candidate book's headline is not trustworthy, and plausibly negative
+
+Reconstructing entry from the (real) `max_profit`/`max_loss` fields on the 34
+violating records:
+
+| book | recorded | reconstructed |
+|---|---|---|
+| **candidate** | **83% win · +$1,503** | **72% win · −$186** |
+| **shadow** | 75% win · −$10 | **0% win · −$349** |
+| disciplined | 62% win · +$1,129 | **76% win · +$1,441** |
+| learning | 75% · +$587 | unchanged |
+| live | 33% · +$216 | unchanged |
+
+**The candidate book flips sign.** That book is where the promotion bars live —
+7DTE, QQQ, BWB and dip-buy are all accumulating evidence there toward
+real-money mirroring. Three dip-buy records alone carry a recorded `+$400` each
+against a true `−$789` combined, and they are ~80% of that book's recorded
+profit.
+
+Two honest caveats: the reconstruction is an *estimate* (deriving entry from
+the risk fields), so the correct claim is **"the candidate book's P&L is
+unknown and plausibly negative"**, not that it is exactly −$186. And the
+**disciplined book — the real-money proxy — survives and improves**, which is
+the single most reassuring number in this document.
+
+### 2b. Nominal DTE is not the contract's real tenor
+
+`condor_calc` prices at `t = dte/365` but stamps
+`expiry = _nearest_friday(today + dte)`, which adds 0–6 days and never
+subtracts. Two clocks on one position. Measured in the live journal: the book
+labelled **7DTE has a mean true tenor of 8.7 days** (range 7–11); BWB-45DTE
+runs 48.1; qqq_condor 49.3. A Monday 7DTE entry books a $1.54 credit against a
+true $2.08 — opening **35% of max profit in the hole before SPY moves** — and
+`max_profit` is built from the understated credit, so the 70% target is
+measured off the wrong base too.
+
+Fix is one edit in three builders: resolve `expiry` first, then derive `t` from
+it. It corrects entry pricing, marking, and the copilot display together.
 | 3 | **Unscored trades counted as losses.** The A1 fix correctly stopped fabricating `$0`, but no aggregator was updated — so the corruption changed sign instead of going away. | headline win rate **49.4%** vs honest **70.7%**; 25 unscorable trades sitting in the denominator |
 | 4 | **`ivr_client` and `_fetch_spot` are reading a stale price today.** `limit=N` returns the **oldest** N bars, not the newest. | Sep 1 (765.16) instead of Sep 3 (770.19) — 0.65% stale. **IVR feeds the regime classifier** |
 | 5 | **`trades.json` lost-update race.** Four jobs read-modify-write with no lock, one in a separate process (uvicorn), every trading day at 09:45. | **29 same-minute multi-writes** in the journal; survived on interleaving luck |
