@@ -41,6 +41,13 @@ logger.add(
     level="DEBUG",
 )
 
+# Route stdlib logging (APScheduler above all) into loguru, so uncaught job
+# exceptions and dropped fires land in app.log where loop_health can see them.
+# Without this they went to stderr only, and a silently skipped trading day was
+# invisible to every monitor we have.
+from runtime.logging_bridge import install_stdlib_bridge  # noqa: E402
+install_stdlib_bridge()
+
 # ── Shared state ─────────────────────────────────────────────
 from alerts.pushover_client     import PushoverClient
 from alerts.notifier            import Notifier
@@ -465,6 +472,11 @@ def start_scheduler():
         id="watchdog_ping",
         name="Liveness watchdog",
     )
+
+    # Explicit, greppable ERROR per job failure or dropped fire. A missed 09:45
+    # means no trade that day; APScheduler calls that a WARNING, we do not.
+    from runtime.logging_bridge import attach_scheduler_listeners
+    attach_scheduler_listeners(scheduler)
 
     scheduler.start()
     logger.info("✅ Scheduler started")

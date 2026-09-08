@@ -64,6 +64,17 @@ MEMORY_ALERT_MB = 1500   # bot RSS above this = trending toward the 06-15 freeze
 # error signature repeating past these thresholds in the last 24h of app logs.
 ERRORSCAN_ERROR_MIN   = 3    # same ERROR signature this many times -> flag
 ERRORSCAN_WARNING_MIN = 10   # warnings are noisier; higher bar
+
+# Signatures that must surface on the FIRST occurrence. The repeat thresholds
+# above assume a failure recurs, but a once-daily job produces exactly one
+# occurrence per 24h window — so the 09:15 brief, the 09:45 paper broker or the
+# 16:05 resolver could fail every single day, forever, and never be reported.
+# A dropped fire means no trade that day; once is already too many.
+ALWAYS_REPORT = (
+    "MISSED its scheduled fire",
+    "job raised an uncaught exception",
+    "was missed",
+)
 ERRORSCAN_MAX_ISSUES  = 5    # cap the push size
 
 _LOG_LINE = None  # compiled lazily
@@ -100,12 +111,17 @@ def summarize_error_lines(lines, *, error_min: int = ERRORSCAN_ERROR_MIN,
         key = (level, _signature(module, msg))
         rec = counts.setdefault(key, {"n": 0, "sample": msg.strip()[:120]})
         rec["n"] += 1
-    issues = []
+    issues, urgent = [], []
     for (level, sig), rec in sorted(counts.items(), key=lambda kv: -kv[1]["n"]):
+        always = any(m.lower() in (sig + " " + rec["sample"]).lower()
+                     for m in ALWAYS_REPORT)
         floor = error_min if level == "ERROR" else warning_min
-        if rec["n"] >= floor:
+        if always:
+            urgent.append(f"{rec['n']}× {level}: {sig}")
+        elif rec["n"] >= floor:
             issues.append(f"{rec['n']}× {level}: {sig}")
-    return issues[:ERRORSCAN_MAX_ISSUES]
+    # Never let a routine repeated warning crowd out a dropped job.
+    return (urgent + issues)[:ERRORSCAN_MAX_ISSUES]
 
 
 def scan_recent_log_errors(hours: int = 24) -> list[str]:
