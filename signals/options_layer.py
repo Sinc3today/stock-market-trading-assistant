@@ -124,6 +124,11 @@ class OptionsLayer:
         risk_reward = real_rr or self._calculate_risk_reward(strategy, legs)
         if real_legs:
             legs = real_legs
+        else:
+            # No chain structure (a leg had no price, so find_* refused). The
+            # play still gets published, so it still needs a date — flagged as
+            # a target, never mistakable for a listed contract.
+            legs = self._date_theoretical_legs(legs, dte_rec["dte"])
 
         # ── Premium-quality gate (credit spreads + iron condors) ─
         # See MIN_CREDIT_SPREAD_RR comment near module top.
@@ -732,14 +737,63 @@ class OptionsLayer:
         return f"    {action} {typ} ${strike:g}{price}"
 
     @staticmethod
-    def _expiration_line(legs: list, dte) -> str:
-        """`  Expiration: 2026-07-17 (45 days)` — the real expiry date (so the
-        play can be copied to a live broker), falling back to DTE days only."""
-        exp = next((l.get("expiration") for l in legs
-                    if l and l.get("expiration")), None)
-        if exp:
-            return f"  Expiration: {str(exp)[:10]} ({dte} days)"
-        return f"  Expiration: ~{dte} days from now"
+    def _date_theoretical_legs(legs: list, dte, today=None) -> list:
+        """Stamp a TARGET expiry onto legs that have none, so an unpriced play
+        is still a dated play.
+
+        When the chain refuses to build a structure (a leg with no price —
+        Phase 0 discipline), the fallback legs previously carried no expiry at
+        all. The brief then said "~45 days from now" and the dashboard's Exp
+        line rendered nothing, which is what surfaced this.
+
+        Two rules keep the cure from becoming the next disease:
+          * The date comes from condor_calc._nearest_friday, which already owns
+            "which Friday does this DTE land on". The 2026-09-07 audit counted
+            six competing time-to-expiry conventions; this does not add a
+            seventh.
+          * It is flagged `expiration_estimated`, because a modelled date is
+            not a listed contract. A real chain expiry is never overwritten.
+        """
+        from datetime import date as _date, timedelta as _td
+        from signals.condor_calc import _nearest_friday
+        try:
+            target = _nearest_friday((today or _date.today()) + _td(days=int(dte)))
+        except (TypeError, ValueError):
+            return legs
+        out = []
+        for leg in legs:
+            leg = dict(leg or {})
+            if not leg.get("expiration"):
+                leg["expiration"] = target.isoformat()
+                leg["expiration_estimated"] = True
+            out.append(leg)
+        return out
+
+    @staticmethod
+    def _expiration_line(legs: list, dte, today=None) -> str:
+        """`  Expiration: 2026-10-16 (38 days)` — the expiry date and how far
+        out it ACTUALLY is.
+
+        This printed the *requested* dte next to the *chosen* expiry. Across
+        six briefs in late Aug/Sep 2026 those disagreed by −7 to +5 days: the
+        card said "45 days" while holding a 38-day contract. Same family as
+        the 7DTE-that-is-really-8.7-days finding — a label describing the
+        intention while the position follows the date.
+        """
+        from datetime import date as _date
+        leg = next((l for l in legs if l and l.get("expiration")), None)
+        if not leg:
+            return f"  Expiration: ~{dte} days from now (no contract selected)"
+        exp = str(leg.get("expiration"))[:10]
+        suffix = ""
+        try:
+            actual = (_date.fromisoformat(exp) - (today or _date.today())).days
+            suffix = f" ({actual} days)"
+        except ValueError:
+            pass
+        if leg.get("expiration_estimated"):
+            return f"  Expiration: {exp}{suffix} — TARGET, not a priced contract"
+        return f"  Expiration: {exp}{suffix}"
 
     # ─────────────────────────────────────────
     # HELPERS

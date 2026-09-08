@@ -866,15 +866,84 @@ details.fold>.fold-body{padding:.15rem .75rem .7rem;border-top:1px solid var(--b
 """
 
 
+# A market closure longer than this has not happened in living memory (the
+# 2001 and 2012 closures both ran under a week). Anything shorter risks an
+# empty window: days_back=3 blanked the whole price row on the Tuesday after
+# Labor Day, because the last trading day was 4 calendar days back.
+_SPOT_LOOKBACK_DAYS = 10
+# Beyond this, an intraday bar is not "now" — it is just an oddly-shaped
+# historical print, and the daily close is the more honest number.
+_INTRADAY_FRESH_HOURS = 12
+
+
+def _spot_quote(symbol: str) -> dict:
+    """Latest price for `symbol` WITH its as-of time and a staleness flag.
+
+    Returns {"price": float|None, "as_of": datetime|None, "stale": bool,
+             "source": "intraday"|"close"|None}.
+
+    Prefers a recent intraday bar (which includes pre-market, so the row is
+    live before the bell) and falls back to the last daily close. The as-of
+    time is not decoration: Friday's close displayed on Tuesday is useful,
+    but displayed as if it were a live quote it is how a stale strike gets
+    mirrored onto a broker.
+
+    Timestamps from PolygonClient are naive host-local (it builds them with
+    datetime.fromtimestamp), so they are compared against a naive local now().
+    """
+    from datetime import datetime, timedelta
+
+    def _last_row(timeframe, days_back):
+        try:
+            from data.polygon_client import PolygonClient
+            df = PolygonClient().get_bars(symbol, timeframe,
+                                          limit=1, days_back=days_back)
+            if df is None or not len(df):
+                return None, None
+            return float(df["close"].iloc[-1]), df.index[-1].to_pydatetime()
+        except Exception:
+            return None, None
+
+    now = datetime.now()
+    price, as_of = _last_row("1min", 3)
+    if price is not None and as_of is not None:
+        if now - as_of <= timedelta(hours=_INTRADAY_FRESH_HOURS):
+            return {"price": price, "as_of": as_of, "stale": False,
+                    "source": "intraday"}
+
+    price, as_of = _last_row(config.SWING_PRIMARY_TIMEFRAME, _SPOT_LOOKBACK_DAYS)
+    if price is None:
+        return {"price": None, "as_of": None, "stale": True, "source": None}
+    stale = as_of is None or (now - as_of) > timedelta(hours=_INTRADAY_FRESH_HOURS)
+    return {"price": price, "as_of": as_of, "stale": stale, "source": "close"}
+
+
 def _ticker_spot(symbol: str):
     """Latest price for `symbol`, or None. Best-effort (never blocks a page load)."""
-    try:
-        from data.polygon_client import PolygonClient
-        df = PolygonClient().get_bars(symbol, config.SWING_PRIMARY_TIMEFRAME,
-                                      limit=1, days_back=3)
-        return float(df["close"].iloc[-1]) if df is not None and len(df) else None
-    except Exception:
-        return None
+    return _spot_quote(symbol)["price"]
+
+
+def _price_sub(quote: dict) -> str:
+    """The one-line subtitle under a price, saying what that price actually is.
+
+    The card used to read 'live underlying' unconditionally. On a day when the
+    feed returns Friday's close, that label asserts something the data does not
+    support — the UI equivalent of writing a guess into the journal. Say which
+    it is and when it is from, and let the number be judged.
+    """
+    price, as_of, src = quote.get("price"), quote.get("as_of"), quote.get("source")
+    if price is None:
+        return ('<span class="muted">price unavailable &middot; '
+                'feed returned nothing</span>')
+    if as_of is None:
+        return '<span class="muted">underlying &middot; as-of unknown</span>'
+    # PolygonClient timestamps are naive host-local; render them as-is rather
+    # than pretending to a timezone we did not actually resolve.
+    when = as_of.strftime("%b %d, %I:%M %p").replace(" 0", " ").lstrip("0")
+    if src == "intraday" and not quote.get("stale"):
+        return f'<span class="muted">underlying &middot; {when} (delayed feed)</span>'
+    return (f'<span class="muted" style="color:var(--warn)">last close '
+            f'&middot; {when} &middot; not live</span>')
 
 
 def _spy_spot():
@@ -1279,19 +1348,33 @@ def _render_todays_play_card(plan: dict | None, walls: dict | None = None,
     legs_html = ("<div class='legs'>" +
                  "".join(f"<div class='leg'>{_esc(l)}</div>" for l in legs) +
                  "</div>") if legs else ""
-    exp = ""
+    # An unpriced play is still worth showing — it is the regime's call — but
+    # every number on it came from a model, not from a quote. Rendering those
+    # identically to measured ones is the $1.00-placeholder mistake with nicer
+    # styling. See test_unpriced_play_visible.
+    unpriced = plan.get("source") == "theoretical"
+    exp, exp_est = "", False
     for leg in (plan.get("legs") or []):
         e = leg.get("expiration") or leg.get("expiry")
         if e:
             exp = _fdate(str(e)[:10])
+            exp_est = bool(leg.get("expiration_estimated"))
             break
+    exp_label = f"Exp {_esc(exp)}" + (" (target)" if exp_est else "") if exp else ""
+    est = " (est)" if unpriced else ""
     mp, ml = plan.get("max_profit"), plan.get("max_loss")
     nums = " &middot; ".join(x for x in (
-        f"Exp {_esc(exp)}" if exp else "",
-        f"max profit ${mp:,.0f}" if isinstance(mp, (int, float)) else "",
-        f"max loss ${ml:,.0f}" if isinstance(ml, (int, float)) else "",
+        exp_label,
+        f"max profit ${mp:,.0f}{est}" if isinstance(mp, (int, float)) else "",
+        f"max loss ${ml:,.0f}{est}" if isinstance(ml, (int, float)) else "",
         _esc(plan.get("exit_rule") or ""),
     ) if x)
+    unpriced_banner = (
+        '<div class="cp-note" style="color:var(--warn);margin-top:.4rem">'
+        '<b>Not priced.</b> The options chain had no usable quote for at least '
+        'one leg, so these strikes, the credit and the max profit/loss are '
+        'model estimates &mdash; not quotes. Check the real chain before '
+        'mirroring; the strikes may not even be listed.</div>') if unpriced else ""
 
     # ── the expandable WHY panel ─────────────────────────────────
     m = plan.get("regime_metrics") or {}
@@ -1357,18 +1440,25 @@ def _render_todays_play_card(plan: dict | None, walls: dict | None = None,
             f'{conf_str}</div>'
             f'{legs_html}'
             + (f'<div class="muted" style="margin-top:.25rem">{nums}</div>' if nums else "")
-            + why_html + placed + '</div>')
+            + unpriced_banner + why_html + placed + '</div>')
 
 
 def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
                     plan: dict | None = None, walls: dict | None = None,
                     candidates: list[dict] | None = None,
-                    promotion: list[dict] | None = None, qqq=None) -> str:
+                    promotion: list[dict] | None = None, qqq=None,
+                    spot_q: dict | None = None, qqq_q: dict | None = None) -> str:
     """Trade copilot: your live (watchdog-tracked) positions + today's plays to
     mirror on Robinhood — copy-ready RH-shaped legs + smart-stop status."""
     from alerts.stop_watchdog import rh_leg_lines, position_status
     from journal.slippage import trade_slippage
     spot_str = f"${spot:,.2f}" if isinstance(spot, (int, float)) else "—"
+    # Callers that only have a bare float still render; they just cannot say
+    # how old it is, and _price_sub says exactly that rather than guessing.
+    spot_q = spot_q or {"price": spot, "as_of": None, "stale": False,
+                        "source": None}
+    qqq_q = qqq_q or {"price": qqq, "as_of": None, "stale": False,
+                      "source": None}
 
     def _slip(t):
         s = trade_slippage(t)
@@ -1461,11 +1551,11 @@ def _render_copilot(live: list[dict], plays: list[dict], spot, vix=None,
         '<div class="dash">'
         + _stat_card('Market <span class="sep">·</span> SPY ' + price_refresh,
                      f'<span id="spy-price">{spy_val}</span>',
-                     sub='<span id="spy-price-ts">live underlying</span>',
+                     sub=f'<span id="spy-price-ts">{_price_sub(spot_q)}</span>',
                      right_html=spark + day_delta, span="span-8")
         + _stat_card('QQQ <span class="sep">·</span> candidate underlying',
                      f'<span id="qqq-price">{qqq_val}</span>',
-                     sub='<span class="muted">paper condor book</span>',
+                     sub=f'<span id="qqq-price-ts">{_price_sub(qqq_q)}</span>',
                      span="span-4")
         + '</div>'
     )
@@ -3668,7 +3758,11 @@ def copilot_page():
         promotion = promotion_progress(TradeRecorder().get_all_trades())
     except Exception as e:
         logger.warning(f"/copilot promotion progress failed: {e}")
-    spot  = _spy_spot()
+    # Fetch the quotes once, with their as-of times, so the card can say what
+    # the number is instead of asserting "live underlying" unconditionally.
+    spot_q = _spot_quote("SPY")
+    qqq_q  = _spot_quote("QQQ")
+    spot   = spot_q["price"]
     plan  = None
     try:
         plan = PlanLogger().get_plan(_et_today_iso())
@@ -3679,7 +3773,8 @@ def copilot_page():
                                         plan=plan, walls=walls,
                                         candidates=candidates,
                                         promotion=promotion,
-                                        qqq=_qqq_spot()))
+                                        qqq=qqq_q["price"],
+                                        spot_q=spot_q, qqq_q=qqq_q))
 
 
 # Integrity-class keys, mirrored from learning.forward_scorecard so the

@@ -145,6 +145,18 @@ class OptionsChain:
         if not calls or not puts:
             return None
 
+        # Only contracts we can actually price are candidates. Selecting on
+        # delta alone and THEN refusing the structure for being unpriced threw
+        # away a whole trading day on 2026-09-08, when 49 of 60 calls were
+        # priceable but the blind wing pick landed on one of the 11 that were
+        # not. Choosing among priced contracts is not the same as inventing a
+        # price — the refusal below still stands if nothing is priceable.
+        calls = [c for c in calls if self._safe_mid(c) is not None]
+        puts = [p for p in puts if self._safe_mid(p) is not None]
+        if not calls or not puts:
+            logger.warning("options_chain: no priceable contracts — no structure")
+            return None
+
         # Pick the call with delta closest to target_short_delta
         short_call = min(
             calls,
@@ -160,18 +172,25 @@ class OptionsChain:
         long_put = self._strike_below(puts, short_put["strike"] - wing_width)
 
         if not all([short_call, long_call, short_put, long_put]):
+            logger.warning("options_chain: no priceable wing beyond the short "
+                           "strike — no structure")
             return None
 
-        mids = [self._safe_mid(l) for l in
-                (short_call, short_put, long_call, long_put)]
-        if any(m is None for m in mids):
-            # A partly-priced condor reports a credit inflated by the wing we
-            # could not price. Refuse the whole structure.
-            logger.warning("options_chain: condor has an unpriced leg — no structure")
-            return None
-        sc_m, sp_m, lc_m, lp_m = mids
+        sc_m, sp_m, lc_m, lp_m = (self._safe_mid(l) for l in
+                                  (short_call, short_put, long_call, long_put))
         net_credit = sc_m + sp_m - lc_m - lp_m
-        max_loss = max((wing_width - max(net_credit, 0)) * 100, 0)
+
+        # Risk comes from the strikes we actually got, not the width we asked
+        # for. SPY's grid is 1-wide near the money and 5-wide far out, so the
+        # wing rarely lands exactly at `wing_width` — and a substituted wing
+        # moves it further still. A condor can only be breached on one side,
+        # so the honest max loss is the WIDER wing minus the credit.
+        call_width = short_call and long_call and (
+            long_call["strike"] - short_call["strike"])
+        put_width = short_put and long_put and (
+            short_put["strike"] - long_put["strike"])
+        risk_width = max(call_width, put_width)
+        max_loss = max((risk_width - max(net_credit, 0)) * 100, 0)
 
         return {
             "short_call": short_call,
@@ -181,6 +200,8 @@ class OptionsChain:
             "net_credit": round(net_credit, 3),
             "max_profit": round(net_credit * 100, 2),
             "max_loss":   round(max_loss, 2),
+            "call_width": call_width,
+            "put_width":  put_width,
             "dte":        short_call["dte"],
             "expiration": short_call["expiration"],
         }

@@ -42,11 +42,24 @@ def test_leg_line_falls_back_to_note_without_strike():
 
 
 def test_expiration_line_shows_real_date():
-    legs = [{"expiration": "2026-07-17", "strike": 739},
-            {"expiration": "2026-07-17", "strike": 734}]
-    line = OptionsLayer._expiration_line(legs, dte=45)
-    assert "2026-07-17" in line
-    assert "45" in line
+    """This test used to assert that the REQUESTED dte (45) appeared next to
+    the chosen expiry. That is the defect, not the spec: across six briefs in
+    Aug/Sep 2026 the line read "(45 days)" while holding contracts 38 to 50
+    days out. The date is measured; the requested dte is an intention. Assert
+    the measured distance.
+
+    Uses a relative date so the expected number stays meaningful over time —
+    the old hardcoded 2026-07-17 silently became a date in the past.
+    """
+    from datetime import date, timedelta
+    today = date(2026, 9, 8)
+    exp = today + timedelta(days=38)
+    legs = [{"expiration": exp.isoformat(), "strike": 739},
+            {"expiration": exp.isoformat(), "strike": 734}]
+    line = OptionsLayer._expiration_line(legs, dte=45, today=today)
+    assert exp.isoformat() in line
+    assert "38 days" in line
+    assert "(45 days)" not in line
 
 
 def test_expiration_line_falls_back_to_dte_when_no_date():

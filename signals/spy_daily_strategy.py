@@ -353,6 +353,11 @@ class SPYDailyStrategy:
             "rr_ratio":         opts.get("rr_ratio"),
             "recommended_dte":  opts.get("recommended_dte"),
             "exit_rule":        opts.get("exit_rule"),
+            # "polygon_chain" (real mids) vs "theoretical" (model). OptionsLayer
+            # has always known this; the plan dropped it, so downstream a
+            # modelled $300 max-profit rendered identically to a measured one.
+            # See test_unpriced_play_visible.
+            "source":           opts.get("source"),
             "regime_metrics":   rr.metrics,
             "thesis":           " | ".join(rr.reasons),
             # Independent next-day directional forecast — MUST persist here so the

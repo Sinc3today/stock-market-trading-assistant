@@ -126,12 +126,35 @@ ALLOWED_LISTS = {
                                 "opened, not a credit/debit classification",
     "alerts/pushover_client.py": "display formatting only",
     "alerts/regime_view.py": "display formatting only",
-    "signals/options_layer.py:279": "routing: is this a vertical? the credit/"
-                                    "debit call itself uses _pnl_convention",
+    "signals/options_layer.py::_try_real_chain":
+        "routing: is this a vertical? the credit/debit call itself uses "
+        "_pnl_convention. Pinned to the function, not a line — see "
+        "_enclosing_funcs for why.",
     "learning/journal_repair.py": "_RISK_EQUALS_PREMIUM — which structures have "
                                   "max_profit == the premium; a BWB's does not. "
                                   "Not a credit/debit classification.",
 }
+
+
+def _enclosing_funcs(tree) -> dict[int, str]:
+    """Map every line to the innermost function that contains it.
+
+    Allowances used to be pinned as `file:lineno`, which broke whenever anyone
+    edited anything ABOVE the allowed code — a five-line insert elsewhere in
+    options_layer.py turned :279 into :284 and failed the suite. A guard that
+    cries wolf on unrelated edits teaches people to bump the pin without
+    reading it, which is exactly the reflex this enumerator exists to prevent.
+    Pinning to the enclosing function survives line drift while still catching
+    a new private list anywhere else in the same file.
+    """
+    out: dict[int, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            end = getattr(node, "end_lineno", node.lineno)
+            for ln in range(node.lineno, end + 1):
+                # innermost wins: nested defs are walked after their parent
+                out[ln] = node.name
+    return out
 
 
 def private_strategy_lists(include_allowed: bool = False
@@ -146,13 +169,17 @@ def private_strategy_lists(include_allowed: bool = False
         tree = _parse(p)
         if tree is None:
             continue
+        funcs = _enclosing_funcs(tree)
         for node in ast.walk(tree):
             if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
                 names = [e.value for e in node.elts
                          if isinstance(e, ast.Constant) and e.value in STRATEGY_TOKENS]
                 if len(names) >= 2:
-                    if not include_allowed and \
-                            f"{_rel(p)}:{node.lineno}" in ALLOWED_LISTS:
+                    keys = {f"{_rel(p)}:{node.lineno}"}
+                    fn = funcs.get(node.lineno)
+                    if fn:
+                        keys.add(f"{_rel(p)}::{fn}")
+                    if not include_allowed and (keys & set(ALLOWED_LISTS)):
                         continue
                     found.append((_rel(p), node.lineno, names))
     return sorted(found)
