@@ -10,6 +10,9 @@ Usage:
     tr.log_exit(trade_id, exit_price=182.0)
 """
 
+import fcntl
+import functools
+from contextlib import contextmanager
 import json
 import os
 import uuid
@@ -57,6 +60,26 @@ def round_trip_commission(strategy: str | None, legs: list | None,
     return round(config.COMMISSION_PER_CONTRACT_LEG * n_legs * 2 * size, 2)
 
 
+def _with_journal_lock(fn):
+    """Hold an exclusive cross-process lock for the whole read-modify-write.
+
+    Four independently-scheduled jobs mutate trades.json at 09:45 ET, and one
+    of them runs in the separate uvicorn process, so a threading.Lock cannot
+    help. _save is atomic, which prevents a TORN file but not a LOST UPDATE:
+    two writers both load, both save, and the second snapshot erases the
+    first's trade. 29 same-minute multi-writes already exist in the journal.
+
+    The lock lives on a sidecar file, not on trades.json — an atomic replace
+    swaps the inode, so a lock held on the journal itself would be released by
+    the very write it is guarding.
+    """
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        with self._locked():
+            return fn(self, *args, **kwargs)
+    return wrapper
+
+
 def _pnl_convention(strategy: str | None) -> str | None:
     """'credit' | 'debit' | None for an unrecognised structure.
 
@@ -96,6 +119,7 @@ class TradeRecorder:
     # ENTRY LOGGING
     # ─────────────────────────────────────────
 
+    @_with_journal_lock
     def log_entry(
         self,
         ticker:          str,
@@ -224,6 +248,7 @@ class TradeRecorder:
     # EXIT LOGGING
     # ─────────────────────────────────────────
 
+    @_with_journal_lock
     def log_exit(
         self,
         trade_id:   str,
@@ -332,6 +357,7 @@ class TradeRecorder:
 
         return updated
 
+    @_with_journal_lock
     def mark_unscored(self, trade_id: str, reason: str) -> bool:
         """Close a position we genuinely cannot price, WITHOUT inventing a fill.
 
@@ -367,6 +393,7 @@ class TradeRecorder:
             logger.warning(f"mark_unscored: trade not found: {trade_id}")
         return updated
 
+    @_with_journal_lock
     def void_trade(self, trade_id: str, reason: str) -> bool:
         """Void a trade that was never a real fill (e.g. a synthetic stub).
 
@@ -397,6 +424,7 @@ class TradeRecorder:
             logger.warning(f"Trade not found to void: {trade_id}")
         return updated
 
+    @_with_journal_lock
     def update_open_position(self, trade_id: str, *, legs: list,
                              strategy: str | None = None,
                              size: float | None = None,
@@ -627,15 +655,33 @@ class TradeRecorder:
     # HELPERS
     # ─────────────────────────────────────────
 
+    @contextmanager
+    def _locked(self):
+        """Exclusive cross-process lock around a read-modify-write."""
+        lock_path = self.trades_path + ".lock"
+        os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+        fh = open(lock_path, "a+")
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            finally:
+                fh.close()
+
     def _load(self) -> list:
+        """Current journal contents.
+
+        A MISSING file is genuinely empty. An UNREADABLE one is not — this used
+        to return [] for both, so one transient OSError plus the next write
+        durably replaced 109 real trades with a single row, behind a warning.
+        A read failure must stop the write, not license it.
+        """
         if not os.path.exists(self.trades_path):
             return []
-        try:
-            with open(self.trades_path, "r") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"TradeRecorder: failed to load {self.trades_path}: {e}")
-            return []
+        with open(self.trades_path, "r") as f:
+            return json.load(f)
 
     def _load_simulated(self) -> list:
         """Load synthetic trades from simulated_trades.json. Returns [] if missing.
