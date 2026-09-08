@@ -504,11 +504,73 @@ def v_f1_push_band():
                    "Accuracy holds up when tiny moves are excluded.", ev)
 
 
+def v_b3_structural_bounds(trades):
+    """A defined-risk position cannot win more than max_profit or lose more
+    than max_loss. Any booked P&L outside that envelope is a marking bug, not
+    a trade result.
+
+    This validator exists because nothing caught a $1,490-per-lot marking
+    error: _mark_spread matched leg direction case-sensitively ("BUY"), and
+    the journal holds both casings, so a lowercase condor had every leg priced
+    as a short. One open disciplined position was carrying a mark that implied
+    a -$978 loss on a structure that can only lose $320 — 3.1x its own floor.
+    An impossible number sat in the book and no test, validator, or dashboard
+    said a word.
+
+    The invariant is cheap and convention-free: it needs no live prices and no
+    opinion about credit-vs-debit, only the structural envelope the strategy
+    recorded at entry. It generalises past the specific bug — any future
+    marking, sign, or scaling defect that produces a number the position could
+    not physically reach lands here.
+    """
+    TOL = 1.02  # 2% slack for commissions and rounding at the boundary
+    breaches, quarantined, checked, ev = [], [], 0, []
+    for t in trades:
+        if not fs.is_closed(t):
+            continue
+        pnl = fs.net_pnl(t)
+        ml, mp = t.get("max_loss"), t.get("max_profit")
+        if pnl is None or ml in (None, "") or mp in (None, ""):
+            continue
+        size = int(t.get("size") or 1)
+        floor, ceil = -abs(float(ml)) * size * TOL, abs(float(mp)) * size * TOL
+        if pnl >= floor and pnl <= ceil:
+            checked += 1
+            continue
+        line = (f"{t.get('trade_id')} {t.get('strategy')} "
+                f"P&L ${pnl:+,.0f} outside [${floor:,.0f}, ${ceil:,.0f}]")
+        # A record integrity() has already quarantined is excluded from every
+        # headline, so an impossible number there is a known-bad row, not a
+        # contaminated result. Report it, don't fail on it — otherwise this
+        # validator re-reports the same legacy rows forever and its FAIL stops
+        # meaning "something reached the books".
+        if fs.integrity(t) != "scored":
+            quarantined.append(line)
+        else:
+            checked += 1
+            breaches.append(t)
+            ev.append(line)
+
+    if not checked:
+        return _result("B3", "Marks respect structural bounds", "P1", WARN,
+                       "No scored record carries both max_loss and max_profit.")
+    if breaches:
+        return _result("B3", "Marks respect structural bounds", "P1", FAIL,
+                       f"{len(breaches)} of {checked} SCORED records book a P&L "
+                       "the position could not physically reach.", ev[:10])
+    note = (f"All {checked} scored records sit inside their own risk envelope."
+            + (f" ({len(quarantined)} quarantined rows breach it and are "
+               "correctly excluded from the books.)" if quarantined else ""))
+    return _result("B3", "Marks respect structural bounds", "P1", PASS, note,
+                   quarantined[:5])
+
+
 # ── runner ───────────────────────────────────────────────────────
 
 VALIDATORS = [
     v_a1_unscored, v_a2_sign_conventions, v_a3_entry_value_scaling,
     v_a4_commissions, v_b1_impossible_fills, v_b2_open_marks,
+    v_b3_structural_bounds,
     v_c1_survivorship, v_c2_voids, v_c4_duplicates,
     v_d1_regime_coverage, v_d2_confidence, v_e2_rule_change,
 ]

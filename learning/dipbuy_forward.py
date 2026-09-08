@@ -137,14 +137,44 @@ from learning.exit_manager import bs_price
 
 def _mark_spread(legs, spot, vix, dte_days) -> float:
     """Net per-share value of the spread (long legs − short legs), BS off spot.
-    For a bull-call debit this is positive and rises with spot."""
+    For a bull-call debit this is positive and rises with spot.
+
+    Since the Phase 1 consolidation this is the single marking function behind
+    ALL forward-test generators (forward_test.ForwardTest.resolve calls it), so
+    every leg field it reads is load-bearing. Three rules, all learned the hard
+    way:
+
+      * Leg direction is matched case-INSENSITIVELY. The journal holds both
+        casings — condor_calc writes "BUY"/"SELL", options_layer writes
+        "buy"/"sell" — and the original `== "BUY"` quietly priced every
+        lowercase leg as a short. On a 1-lot condor that was a $1,490 error,
+        and one open disciplined position carried lowercase legs.
+      * An unrecognised action RAISES. Bucketing "OPEN" or "" into the short
+        branch is how a wrong mark becomes a recorded exit.
+      * A missing option type RAISES rather than defaulting to "call". A put
+        marked as a call is not a smaller error than no mark at all.
+    """
     sigma = vix / 100.0
     t = max(dte_days, 0) / 365.0
     val = 0.0
     for leg in legs:
-        otype = (leg.get("type") or leg.get("option_type") or "call").lower()
+        raw_type = leg.get("type") or leg.get("option_type")
+        if not raw_type:
+            raise ValueError(f"leg has no option type, refusing to assume: {leg!r}")
+        otype = str(raw_type).strip().lower()
+        if otype not in ("call", "put"):
+            raise ValueError(f"unrecognised option type {raw_type!r} in leg: {leg!r}")
+
+        raw_action = leg.get("action")
+        action = str(raw_action).strip().upper()
+        if action not in ("BUY", "SELL"):
+            raise ValueError(f"unrecognised leg action {raw_action!r} in leg: {leg!r}")
+
+        if leg.get("strike") in (None, ""):
+            raise ValueError(f"leg has no strike: {leg!r}")
+
         p = bs_price(otype, spot, float(leg["strike"]), t, sigma)
-        val += p if leg.get("action") == "BUY" else -p
+        val += p if action == "BUY" else -p
     return val
 
 
