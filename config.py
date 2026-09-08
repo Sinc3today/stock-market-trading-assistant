@@ -298,8 +298,6 @@ PROFIT_TARGET_PCT_1_3DTE_PUT    = 0.50
 PROFIT_TARGET_PCT_1_3DTE_COND   = 0.50
 STOP_PCT_1_3DTE_CALL            = 0.50
 STOP_PCT_1_3DTE_PUT             = 0.50
-CONDOR_SHORT_STRIKE_TOUCH_EXIT_1_3DTE       = True
-FORCED_CLOSE_MINUTES_BEFORE_EXPIRY_1_3DTE   = 30
 
 # 0 DTE — gamma is everything; never let it expire.
 PROFIT_TARGET_PCT_0DTE_CALL     = 1.00       # 100% (credit doubled) for debits
@@ -307,9 +305,6 @@ PROFIT_TARGET_PCT_0DTE_PUT      = 1.00
 PROFIT_TARGET_PCT_0DTE_COND     = 0.30       # smaller + faster for condors
 STOP_PCT_0DTE_CALL              = 0.75
 STOP_PCT_0DTE_PUT               = 0.75
-CONDOR_SHORT_STRIKE_TOUCH_EXIT_0DTE = True
-FORCED_CLOSE_TIME_0DTE_DEBIT    = "15:30"    # ET, HH:MM
-FORCED_CLOSE_TIME_0DTE_CONDOR   = "15:00"    # ET — gamma into the bell
 
 # ── Intraday time-exit model (2026-06-05) ───────────────────────────────────
 # Global kill-switch: when False the live ExitManager skips ALL scratch/hard-close
@@ -479,7 +474,37 @@ US_MARKET_HOLIDAYS_2026 = {
     _date(2026, 12, 25),  # Christmas (Fri)
 }
 
-US_MARKET_HOLIDAYS = US_MARKET_HOLIDAYS_2026  # alias for future-proofing
+# NYSE holidays 2027-2028. Hand-curated tables are dated fuses: this set ended
+# 2026-12-25, so from 2027-01-01 is_trading_day() returned True on EVERY market
+# holiday and the bot would have tried to trade a closed market, silently,
+# forever. tests/test_calendar_runway.py now fails while runway remains.
+US_MARKET_HOLIDAYS_2027 = {
+    _date(2027, 1, 1),    # New Year's Day (Fri)
+    _date(2027, 1, 18),   # MLK Day (Mon)
+    _date(2027, 2, 15),   # Presidents' Day (Mon)
+    _date(2027, 3, 26),   # Good Friday
+    _date(2027, 5, 31),   # Memorial Day (Mon)
+    _date(2027, 6, 18),   # Juneteenth observed (Jun 19 = Sat) (Fri)
+    _date(2027, 7, 5),    # July 4 observed (Jul 4 = Sun) (Mon)
+    _date(2027, 9, 6),    # Labor Day (Mon)
+    _date(2027, 11, 25),  # Thanksgiving (Thu)
+    _date(2027, 12, 24),  # Christmas observed (Dec 25 = Sat) (Fri)
+}
+
+US_MARKET_HOLIDAYS_2028 = {
+    _date(2028, 1, 17),   # MLK Day (Mon)  — Jan 1 2028 is a Saturday
+    _date(2028, 2, 21),   # Presidents' Day (Mon)
+    _date(2028, 4, 14),   # Good Friday
+    _date(2028, 5, 29),   # Memorial Day (Mon)
+    _date(2028, 6, 19),   # Juneteenth (Mon)
+    _date(2028, 7, 4),    # Independence Day (Tue)
+    _date(2028, 9, 4),    # Labor Day (Mon)
+    _date(2028, 11, 23),  # Thanksgiving (Thu)
+    _date(2028, 12, 25),  # Christmas (Mon)
+}
+
+US_MARKET_HOLIDAYS = (US_MARKET_HOLIDAYS_2026 | US_MARKET_HOLIDAYS_2027
+                      | US_MARKET_HOLIDAYS_2028)
 
 
 def is_trading_day(d) -> bool:

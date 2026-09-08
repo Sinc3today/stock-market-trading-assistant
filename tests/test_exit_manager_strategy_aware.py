@@ -42,14 +42,11 @@ def test_exit_rule_for_0dte_call_uses_aggressive_rules():
     r = _exit_rule_for("call_debit_spread", "0DTE")
     assert r["profit_target_pct"] == config.PROFIT_TARGET_PCT_0DTE_CALL  # 1.00
     assert r["stop_pct"]          == config.STOP_PCT_0DTE_CALL           # 0.75
-    assert r.get("forced_close_time") == config.FORCED_CLOSE_TIME_0DTE_DEBIT  # "15:30"
 
 
 def test_exit_rule_for_0dte_condor_uses_short_strike_touch():
     r = _exit_rule_for("iron_condor", "0DTE")
     assert r["profit_target_pct"]          == config.PROFIT_TARGET_PCT_0DTE_COND  # 0.30
-    assert r["condor_short_strike_touch"]  is True
-    assert r.get("forced_close_time")       == config.FORCED_CLOSE_TIME_0DTE_CONDOR
 
 
 def test_exit_rule_for_1_3dte_uses_50pct_target_and_stop():
@@ -177,3 +174,16 @@ def test_manage_open_default_dte_buckets_none_processes_all(tmp_path, monkeypatc
     # Just verify the call signature accepts no dte_buckets arg.
     closed = mgr.manage_open(today=date(2026, 5, 23), spy_close=730.0, vix=17.0)
     assert isinstance(closed, list)
+
+
+def test_removed_phantom_keys_stay_removed():
+    """condor_short_strike_touch / forced_close_* were published here,
+    configured True, and asserted by THIS FILE — while _evaluate read none of
+    them. The assertions above were verifying config plumbing, not behaviour,
+    and reported a feature that did not exist. Removed 2026-09-07."""
+    from learning.exit_manager import exit_rule_for
+    for bucket in ("0DTE", "1-3DTE", "45DTE"):
+        rule = exit_rule_for("iron_condor", bucket)
+        for gone in ("condor_short_strike_touch", "forced_close_time",
+                     "forced_close_minutes_before_expiry"):
+            assert gone not in rule, f"{gone} is back in the {bucket} rule"

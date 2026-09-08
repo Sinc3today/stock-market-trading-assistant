@@ -91,10 +91,19 @@ def _exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
         "profit_target_pct": float,
         "stop_pct": float | None,
         "dte_close_threshold": int,
-        "condor_short_strike_touch": bool,
-        "forced_close_time": str | None,   # HH:MM ET for 0DTE; None otherwise
-        "forced_close_minutes_before_expiry": int | None,  # for 1-3DTE
+        "scratch_time" / "scratch_theta" / "hard_close_time"  (backtest path)
     }
+
+    condor_short_strike_touch, forced_close_time and
+    forced_close_minutes_before_expiry were REMOVED on 2026-09-07. They were
+    published here, configured True, and asserted by tests — while _evaluate
+    read none of them. A 0DTE condor touching its short strike was not closed,
+    contrary to what config and a green test suite both claimed. A phantom
+    feature is worse than a missing one, because you plan around it.
+
+    The idea has merit and is parked, not discarded: the 7DTE sweep found
+    stop-on-touch costs ~$13/trade but more than HALVES the worst case
+    (-$427 -> -$185). It needs building and validating, not declaring.
     """
     structure = _STRUCTURE_KEY.get(strategy or "", "CALL")
     bucket = dte_bucket or "45DTE"   # legacy untagged → 45DTE
@@ -110,9 +119,6 @@ def _exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
             "profit_target_pct":   pt_pct,
             "stop_pct":            config.STOP_PCT_45DTE,    # None by default
             "dte_close_threshold": config.DTE_CLOSE_THRESHOLD_45DTE,
-            "condor_short_strike_touch":          False,
-            "forced_close_time":                   None,
-            "forced_close_minutes_before_expiry":  None,
             "scratch_time":                        None,
             "scratch_theta":                       0.0,
             "hard_close_time":                     None,
@@ -131,10 +137,6 @@ def _exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
             "profit_target_pct":   pt_pct,
             "stop_pct":            stop_pct,
             "dte_close_threshold": 0,    # 1-3DTE managed by forced-close, not DTE threshold
-            "condor_short_strike_touch":          (structure == "COND"
-                and config.CONDOR_SHORT_STRIKE_TOUCH_EXIT_1_3DTE),
-            "forced_close_time":                   None,
-            "forced_close_minutes_before_expiry":  config.FORCED_CLOSE_MINUTES_BEFORE_EXPIRY_1_3DTE,
             **_time_exit_params(strategy, bucket),
         }
 
@@ -147,16 +149,10 @@ def _exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
         stop_pct = (config.STOP_PCT_0DTE_CALL if structure == "CALL"
                     else config.STOP_PCT_0DTE_PUT if structure == "PUT"
                     else None)
-        forced_time = (config.FORCED_CLOSE_TIME_0DTE_CONDOR if structure == "COND"
-                       else config.FORCED_CLOSE_TIME_0DTE_DEBIT)
         return {
             "profit_target_pct":   pt_pct,
             "stop_pct":            stop_pct,
             "dte_close_threshold": 0,
-            "condor_short_strike_touch":          (structure == "COND"
-                and config.CONDOR_SHORT_STRIKE_TOUCH_EXIT_0DTE),
-            "forced_close_time":                   forced_time,
-            "forced_close_minutes_before_expiry":  None,
             **_time_exit_params(strategy, bucket),
         }
 

@@ -40,13 +40,13 @@ def recalibrate(dataset: pd.DataFrame = None, model_path: str = None) -> dict:
 def _append_live_outcomes(dataset: pd.DataFrame) -> pd.DataFrame:
     """Append resolved paper-trade outcomes as labeled rows. Best-effort: if the
     journal is unavailable or empty, return the dataset unchanged."""
-    try:
-        from journal.trade_recorder import TradeRecorder  # adjust if API differs
-        rows = TradeRecorder().resolved_meta_rows()  # expected: list[feature+win dicts]
-        if rows:
-            return pd.concat([dataset, pd.DataFrame(rows)], ignore_index=True)
-    except Exception as e:
-        logger.debug(f"No live outcomes appended: {e}")
+    # UNBUILT. This called TradeRecorder.resolved_meta_rows(), which has never
+    # existed — the AttributeError was caught and logged at DEBUG, so for the
+    # whole life of this module the "append live outcomes" step silently did
+    # nothing while appearing to work. Saying so plainly beats a try/except
+    # that reads like a working feature.
+    logger.info("meta_recalibrate: live-outcome append is not implemented — "
+                "recalibrating on backtest rows only")
     return dataset
 
 

@@ -379,6 +379,19 @@ class EventCalendar:
             date(2026, 4, 10), date(2026, 5, 12), date(2026, 6, 10),
             date(2026, 7, 14), date(2026, 8, 11), date(2026, 9, 9),
             date(2026, 10, 13), date(2026, 11, 10), date(2026, 12, 8),
+            # 2027 — BLS publishes the year's schedule each January; these
+            # follow the standard pattern (2nd/3rd Wed-Thu). Extended
+            # 2026-09-07 because the list ended 2026-12-08 with 92 days left,
+            # and CPI has NO other source: past the end the bot would trade
+            # into every CPI print with no event-day skip. Same fuse the FOMC
+            # list had (fixed in 8962ec9); this one was left behind.
+            date(2027, 1, 13), date(2027, 2, 10), date(2027, 3, 10),
+            date(2027, 4, 14), date(2027, 5, 12), date(2027, 6, 10),
+            date(2027, 7, 14), date(2027, 8, 11), date(2027, 9, 10),
+            date(2027, 10, 13), date(2027, 11, 10), date(2027, 12, 10),
+            # 2028
+            date(2028, 1, 12), date(2028, 2, 10), date(2028, 3, 10),
+            date(2028, 4, 12), date(2028, 5, 10), date(2028, 6, 13),
         ]
         today  = date.today()
         events = []

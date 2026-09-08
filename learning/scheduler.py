@@ -649,14 +649,25 @@ def register_learning_jobs(
         replace_existing=True,
     )
 
-    from learning.meta_recalibrate import run_meta_recalibration
-    scheduler.add_job(
-        run_meta_recalibration,
-        CronTrigger(day_of_week="sat", hour=12, minute=0, timezone=eastern),
-        id="learning_meta_recalibration",
-        name="Learning: meta-model recalibration",
-        replace_existing=True,
-    )
+    # Meta-model recalibration — only when the feature it serves is ON.
+    # META_LABEL_ENABLED has been False since the meta-labeler was shelved for
+    # no OOS edge, yet this ran every Saturday anyway: a CBOE fetch, a 1040-day
+    # SPYBacktest, a realistic-pricing sim and 4-fold logistic training, for a
+    # model nothing consumes. Its live-outcome path had also never once worked
+    # (it calls TradeRecorder.resolved_meta_rows(), which does not exist —
+    # swallowed at DEBUG, so the failure was invisible).
+    if getattr(config, "META_LABEL_ENABLED", False):
+        from learning.meta_recalibrate import run_meta_recalibration
+        scheduler.add_job(
+            run_meta_recalibration,
+            CronTrigger(day_of_week="sat", hour=12, minute=0, timezone=eastern),
+            id="learning_meta_recalibration",
+            name="Learning: meta-model recalibration",
+            replace_existing=True,
+        )
+    else:
+        logger.info("meta-model recalibration NOT scheduled "
+                    "(META_LABEL_ENABLED is False)")
 
     logger.info("Learning jobs registered:")
     logger.info("   09:45 ET (Mon-Fri) - paper broker (entry window)")

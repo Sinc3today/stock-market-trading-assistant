@@ -1,7 +1,15 @@
-"""Phase 1: per-sub-strategy exit-rule constants are declared in config.py.
+"""Per-sub-strategy exit-rule constants declared in config.py.
 
-Nothing CONSUMES them in Phase 1 — they're foundation. Phase 2's strategy-aware
-ExitManager refactor will read them. We test their presence + sane defaults.
+The original docstring said these were "foundation" that a later refactor would
+read. For the profit-target / stop / DTE-threshold constants that happened. For
+CONDOR_SHORT_STRIKE_TOUCH_EXIT_* and FORCED_CLOSE_* it never did — they sat
+declared and asserted for months while ExitManager._evaluate read none of them,
+so config and this file both reported a feature that did not exist. They were
+removed 2026-09-07; those assertions went with them.
+
+Caution about the tests that remain: asserting a constant equals its own
+declared value cannot fail for a real reason. They are worth keeping only as a
+change-detector on numbers that DO drive behaviour — which is now all of them.
 """
 
 import os, sys
@@ -26,8 +34,6 @@ def test_1_3dte_constants_are_aggressive():
     assert config.STOP_PCT_1_3DTE_CALL           == 0.50
     assert config.STOP_PCT_1_3DTE_PUT            == 0.50
     # condor exits on short-strike touch + force-close before bell
-    assert config.FORCED_CLOSE_MINUTES_BEFORE_EXPIRY_1_3DTE == 30
-    assert config.CONDOR_SHORT_STRIKE_TOUCH_EXIT_1_3DTE     is True
 
 
 def test_0dte_constants_are_most_aggressive():
@@ -38,6 +44,3 @@ def test_0dte_constants_are_most_aggressive():
     assert config.STOP_PCT_0DTE_CALL             == 0.75
     assert config.STOP_PCT_0DTE_PUT              == 0.75
     # Force-close times of day (gamma risk into the bell). HH:MM strings, ET.
-    assert config.FORCED_CLOSE_TIME_0DTE_DEBIT   == "15:30"
-    assert config.FORCED_CLOSE_TIME_0DTE_CONDOR  == "15:00"
-    assert config.CONDOR_SHORT_STRIKE_TOUCH_EXIT_0DTE      is True
