@@ -280,16 +280,39 @@ class OptionsChain:
         if not chain:
             return None
 
-        buy_leg  = self._closest_strike(chain, buy_strike)
-        sell_leg = self._closest_strike(chain, sell_strike)
-        if not buy_leg or not sell_leg or buy_leg["ticker"] == sell_leg["ticker"]:
+        # A vertical is TWO legs in ONE expiration. get_chain returns a date
+        # range, and _closest_strike searches all of it — so the two legs could
+        # land on different expiries, making this a diagonal whose max loss
+        # (computed from the strike distance alone) is fiction. Same defect
+        # class as find_iron_condor's three-expiration condor; see
+        # tests/test_structure_single_expiry.py, which enumerates the builders
+        # so a new one cannot ship without this constraint.
+        priced = [c for c in chain if self._safe_mid(c) is not None]
+        if not priced:
+            logger.warning("options_chain: vertical has no priceable leg — no structure")
+            return None
+
+        by_exp: dict[str, list] = {}
+        for c in priced:
+            by_exp.setdefault(c.get("expiration"), []).append(c)
+
+        buy_leg = sell_leg = None
+        for exp in sorted(by_exp, key=lambda e: abs(by_exp[e][0].get("dte", 0)
+                                                    - dte_target)):
+            legs = by_exp[exp]
+            b = self._closest_strike(legs, buy_strike)
+            s = self._closest_strike(legs, sell_strike)
+            if b and s and b["ticker"] != s["ticker"]:
+                buy_leg, sell_leg = b, s
+                break
+
+        if not buy_leg or not sell_leg:
+            logger.warning("options_chain: no single expiration can form a "
+                           "complete priced vertical — no structure")
             return None
 
         buy_mid  = self._safe_mid(buy_leg)
         sell_mid = self._safe_mid(sell_leg)
-        if buy_mid is None or sell_mid is None:
-            logger.warning("options_chain: vertical has an unpriced leg — no structure")
-            return None
         if kind == "debit":
             net_cost  = buy_mid - sell_mid
             max_loss  = round(net_cost * 100, 2)
