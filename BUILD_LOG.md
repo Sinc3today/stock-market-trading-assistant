@@ -4,6 +4,68 @@
 
 ---
 
+## 2026-09-07 — System audit + Phase 0 hardening: the instrument was lying
+
+**What was worked on (plain language):**
+- Started on strategy work (QQQ on the dashboard, 14/21DTE rungs) and stopped, because the user
+  pushed back on a pattern worth taking seriously: *"just because we have validators doesn't mean
+  we should always have issues."* Eight defects in one day is not a validator success story.
+- Ran a five-way audit (duplication / silent failures / units / test shape / operations). It found
+  one root cause behind all of it: **nothing owns a decision, and nothing can enumerate where a
+  decision is made.** My own "one source of truth" fix that morning had covered **3 of 13**
+  copies. ENFORCE_CONCENTRATION_GUARD is enforced in 1 of 6 opening paths. Six competing
+  time-to-expiry conventions.
+- The costly one: `paper_broker` wrote a hardcoded **$1.00** entry price whenever it could not read
+  the premium — on 18 trades, 11 disciplined. The price was never missing; every leg carries
+  `mark`, and the lookup searched four keys the plan does not publish.
+
+**Decisions and why:**
+- **Enumerate before fixing.** Built `tools/enumerate_conventions` (AST, imports nothing under
+  inspection) rather than working from a findings list. A list tells you where someone already
+  looked; it cannot tell you where else the shape lives. That is why every previous pass was
+  partial. First run: 5 vocabulary gaps, 11 private lists, 10 placeholder prices. Now 3 / 0 / 8,
+  all remaining ones documented, and `tests/test_enumeration.py` fails on a new instance.
+- **A missing price is not a price.** The unifying fix: return None and refuse, never substitute.
+  Applied to `_spread_price`, `_safe_mid`, `VIXClient.get_current`, `rh_sync` exits, and
+  `expiry_resolver`. New `TradeRecorder.mark_unscored` records "this happened and we do not know
+  what it was worth" — which `entry == exit` could never express.
+- **Did NOT change the disciplined book on model evidence.** The DTE ladder study says 45DTE is
+  the worst rung and wants a 7-DTE close, but that is one daily-close model. Strong enough to
+  test, not to deploy.
+
+**What did not work / was caught:**
+- The record-repair dry run shifted every broken-wing by exactly **+$3.00** — BWB_UPPER_WING. A
+  BWB's `max_profit` is the peak at the body, not the premium. It would have corrupted 18 correct
+  records. Caught only because the diff was read before applying.
+- Two of my own studies had a calendar-vs-trading-day bug and published confident wrong numbers.
+  What caught it was a second study producing an impossible result, not review.
+- Three agent claims reversed on verification (RH session "down", stop watchdog "stale", tests
+  "brittle source-scanners" — all wrong). Verifying beat trusting, four times today.
+- Four existing tests **encoded bugs as expected behaviour** — one asserted the $1.00 placeholder
+  path recorded a trade; another asserted VIX's "safe neutral" 20.0 by name.
+
+**Phase 0 shipped:** BWB expiry sign-flip · placeholder entry prices · cross-process `fcntl` lock
+on the journal (4 jobs write it at 09:45, one in another process; tested with real subprocesses) ·
+VIX returns None · Polygon `limit` was returning the OLDEST bars (ivr_client was 2 days stale, and
+IVR feeds the regime classifier) · 11 records repaired, 4 quarantined.
+
+**Corrected numbers:** disciplined n=20, 80% win, +$1,187 net — the real-money proxy survived and
+improved. Candidate is +$225, not the +$1,503 it reported; dip-buy's "+$400 each" was fiction.
+Audit 9 FAIL → 4 FAIL / 2 WARN / 7 PASS, and all four remaining are sample-age, not defects.
+
+**Open questions for next session:**
+- 8 placeholder-price sites remain; the live one is `copilot_log`'s `or 0.0` on a MANUALLY logged
+  real-money fill.
+- APScheduler errors and misfires go to stderr only, so a silently skipped trading day is
+  invisible. `loop_health` cannot see it.
+- Phase 1 (collapse the five near-duplicate forward generators) not started.
+- Parking lot added: xDTE/regime explainer course, full code review, and re-running the futures
+  study on a verified instrument.
+
+**Tests:** 1,686 passing (from 1,417 at session start). Deployed, service healthy, no tracebacks.
+
+---
+
 ## 2026-07-09 — Full audit execution: 17-item health-check/stress-test list, all four tiers
 
 **What was worked on (plain language):**
