@@ -259,6 +259,51 @@ See TRADING_ASSISTANT.md for current project state and decisions.
 
 ## Parking Lot
 
+### [MANUAL] xDTE + Regime explainer course — walk it together
+A guided session, one rung and one regime at a time, where we look at each and
+decide **out loud** whether it earns its place. Not a doc to read — a
+conversation with the data open.
+
+Rungs to cover: 0DTE (shelved), 1-3DTE, 7DTE, 14DTE, 21DTE, 30DTE, 45DTE.
+Regimes: choppy_low_vol, choppy_transition, choppy_high_vol, trending_up_calm,
+trending_high_vol, event_day.
+
+For each, the same four questions:
+1. What is the *mechanical* reason an edge would exist here (theta? mean
+   reversion? skew?) — not "the backtest says so."
+2. What does the live record say, and is that record trustworthy after the
+   2026-09-07 audit?
+3. What would make us abandon it? (pre-registered, before we look)
+4. Is it worth the attention it costs, given everything else running?
+
+**Why it matters:** we currently run four condor rungs and two BWB rungs
+largely because studies said so, and the audit showed several of those studies
+were measured with a contaminated instrument. This is the session where we
+decide what we actually believe.
+
+### [MANUAL] Full code review — functionality, discipline, relevancy
+Module-by-module pass over the whole tree asking three questions each:
+**does it work, does it follow the standing rules, and is it still needed?**
+
+Distinct from the 2026-09-07 audit, which hunted specific defect classes. This
+is the "should this exist at all" pass. Known starting material: 30 of 180
+modules have zero test references; 21 of those are in `backtests/`. Seven
+modules have no production importer at all (`wf_common`, `order_mapper`,
+`regime_lens`, `context_analyst`, `rh_session`, `lessons`, `performance`).
+0DTE is shelved but still fetches option chains and writes journal records.
+
+### [MANUAL] Re-run the futures / overnight study on a verified instrument
+`docs/GAP_CONDITIONAL_STUDY.md` §C (2026-07-11) concluded: Sunday 10 PM ES
+sentinel keeps its place (0.75 corr, 82% of big gaps), weeknight sentinels
+rejected (40–61% catch → false confidence). **That study predates the audit**,
+and the standing rule from 2026-09-07 is that findings from a contaminated
+instrument get re-verified rather than inherited.
+
+Also worth extending while we are in there: the original tested **gap
+prediction only**. Whether overnight / Asia / Europe action is useful as a
+**regime or trend input** has never been tested, and the BoA positioning note
+(2026-09-07) makes the flow angle more interesting than it looked in July.
+
 ### [MANUAL] Tradier auto-execution migration — pre-built, PARKED
 Full transition plan documented in `docs/TRADIER_MIGRATION.md` (2026-07-18):
 account/options-level prereqs, personal-access-token auth (no partner OAuth
