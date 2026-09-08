@@ -127,7 +127,8 @@ class OptionsLayer:
 
         # ── Premium-quality gate (credit spreads + iron condors) ─
         # See MIN_CREDIT_SPREAD_RR comment near module top.
-        if strategy in ("credit_spread", "iron_condor"):
+        from journal.trade_recorder import _pnl_convention
+        if _pnl_convention(strategy) == "credit":
             rr_num = self._extract_rr_float(risk_reward.get("rr_ratio"))
             if rr_num is not None and rr_num < MIN_CREDIT_SPREAD_RR:
                 return self._no_trade(
@@ -276,7 +277,7 @@ class OptionsLayer:
                 return legs, rr, {"expiration": ic["expiration"], "dte": ic["dte"]}
 
             if strategy in ("debit_spread", "credit_spread"):
-                kind = "debit" if strategy == "debit_spread" else "credit"
+                kind = _pnl_convention(strategy) or "debit"
                 sp = self.options_chain.find_vertical_spread(
                     ticker     = "SPY",
                     direction  = direction,

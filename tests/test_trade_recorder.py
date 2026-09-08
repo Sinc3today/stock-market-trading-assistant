@@ -424,3 +424,37 @@ def test_stock_trades_pay_no_per_contract_commission(recorder):
     tid = recorder.log_entry("SPY", 450.0, 5, strategy="stock", book="disciplined")
     recorder.log_exit(tid, 460.0)
     assert recorder.get_trade_by_id(tid)["commission"] == pytest.approx(0.0)
+
+
+# ── mark_unscored (enumeration follow-through, 2026-09-07) ────────
+# A position can close in the real world while we have no quote to mark it.
+# rh_sync used to record it at the ENTRY price, producing a fabricated $0
+# "breakeven" on real money — and because entry == exit, forward_scorecard's
+# legacy-zero heuristic could not even detect it.
+
+def test_mark_unscored_closes_without_inventing_a_price(recorder):
+    tid = recorder.log_entry("SPY", 1.60, 1, strategy="iron_condor", book="live")
+    assert recorder.mark_unscored(tid, reason="no quotes") is True
+    t = recorder.get_trade_by_id(tid)
+    assert t["outcome"] == "unscored"
+    assert t["pnl_dollars"] is None
+    assert t.get("exit_price") is None
+    assert "no quotes" in (t.get("notes_exit") or "")
+
+
+def test_mark_unscored_removes_it_from_open_positions(recorder):
+    tid = recorder.log_entry("SPY", 1.60, 1, strategy="iron_condor", book="live")
+    recorder.mark_unscored(tid, reason="no quotes")
+    assert all(t["trade_id"] != tid for t in recorder.get_open_trades())
+
+
+def test_mark_unscored_is_excluded_from_win_rates(recorder):
+    from learning import forward_scorecard as fs
+    tid = recorder.log_entry("SPY", 1.60, 1, strategy="iron_condor", book="live")
+    recorder.mark_unscored(tid, reason="no quotes")
+    t = recorder.get_trade_by_id(tid)
+    assert fs.integrity(t) == fs.UNSCORED
+
+
+def test_mark_unscored_on_a_missing_trade_is_harmless(recorder):
+    assert recorder.mark_unscored("NOPE", reason="x") is False

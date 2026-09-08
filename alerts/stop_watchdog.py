@@ -125,9 +125,18 @@ def is_stop_watched_strategy(strategy: str | None) -> bool:
     so a stop there is meaningless AND misleading (it tells you to cut a winner).
     single_leg (a long option) and stock have no short-strike stop either.
     Default is to watch (unknown structures could be undefined-risk credit)."""
+    from journal.trade_recorder import _pnl_convention
     s = (strategy or "").lower()
-    if "debit" in s or s in ("single_leg", "stock"):
+    if s == "stock":
         return False
+    # Ask the one owner of the credit/debit convention rather than substring-
+    # matching "debit" — that heuristic silently classified every unrecognised
+    # name as credit (enumeration E2, 2026-09-07).
+    convention = _pnl_convention(s)
+    if convention == "debit":
+        return False
+    if convention is None:
+        return True     # unknown could be undefined-risk credit — watch it
     return True
 
 

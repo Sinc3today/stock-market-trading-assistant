@@ -350,8 +350,20 @@ def _close_estimate(trade: dict):
             return None
         value = sum((l["mid"] if (l.get("action") or "").upper().startswith("B") else -l["mid"])
                     for l in legs)
-        strat = (trade.get("strategy") or "").lower()
-        if strat in ("credit_spread", "iron_condor", "broken_wing"):
+        # Ask the one owner. This held its own exact-name list, so a
+        # put_credit_spread synced from Robinhood was marked with the DEBIT
+        # formula — a $240 sign-flipped error on the live book (enumeration
+        # E2). The docstring above records the -$1,326 phantom the previous
+        # version of this same line produced.
+        from journal.trade_recorder import _pnl_convention
+        convention = _pnl_convention(trade.get("strategy"))
+        if convention is None:
+            logger.warning(
+                f"rh_sync: cannot classify {trade.get('strategy')!r} for "
+                f"{trade.get('trade_id')} — no mark"
+            )
+            return None
+        if convention == "credit":
             return round(-value, 2)       # cost to buy back the short-premium book
         return round(value, 2)            # sale value of a debit/long structure
     except Exception:
@@ -373,11 +385,25 @@ def sync(dry_run: bool = True):
                         f"{t.get('strategy')} — no longer open on Robinhood")
             if not dry_run:
                 est = _close_estimate(t)
-                exit_px = est if est is not None else float(t.get("entry_price") or 0)
-                note = ("[RH-SYNC] detected closed on Robinhood; exit marked at "
-                        + ("current mid" if est is not None else
-                           "entry (scratch — no quotes; correct on /copilot if needed)"))
-                rec.log_exit(step["trade_id"], exit_price=exit_px, notes=note,
+                if est is None:
+                    # Marking at the entry price books a fabricated $0
+                    # "breakeven" on a REAL-MONEY position — and because
+                    # entry == exit, the scorecard's legacy-zero heuristic
+                    # cannot even detect it. A missing quote is not a fill.
+                    # 3 of 4 [RH-SYNC] exits were recorded this way.
+                    logger.error(
+                        f"rh_sync: no quotes to mark {step['trade_id']} "
+                        f"({t.get('strategy')}) — recording UNSCORED rather "
+                        "than inventing a fill. Correct it on /copilot."
+                    )
+                    rec.mark_unscored(
+                        step["trade_id"],
+                        reason="closed on Robinhood; no quotes available to mark",
+                    )
+                    continue
+                note = ("[RH-SYNC] detected closed on Robinhood; "
+                        "exit marked at current mid")
+                rec.log_exit(step["trade_id"], exit_price=est, notes=note,
                              exit_reason="closed_on_rh")
             continue
         pos = step["position"]

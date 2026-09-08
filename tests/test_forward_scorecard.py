@@ -320,3 +320,50 @@ def test_a_gross_win_that_is_a_net_loss_counts_as_a_loss_at_the_bar():
               for i in range(15)]
     row = {r["bucket"]: r for r in fs.promotion_progress(trades)}["7DTE"]
     assert row["win_pct"] == 0.0
+
+
+# ── vocabulary totality (enumeration E1, 2026-09-07) ─────────────
+# tools/enumerate_conventions found 5 strategy names reachable by a producer
+# that the convention owner did not understand. A name the owner cannot
+# classify becomes an unscoreable trade at best, and a sign-flipped one at
+# worst.
+
+def test_debit_suffix_variants_resolve():
+    """bull_debit / bear_debit reach the journal via dipbuy_forward's default."""
+    from journal.trade_recorder import _pnl_convention
+    assert _pnl_convention("bull_debit") == "debit"
+    assert _pnl_convention("bear_debit") == "debit"
+
+
+def test_credit_suffix_variants_resolve():
+    from journal.trade_recorder import _pnl_convention
+    assert _pnl_convention("bull_credit") == "credit"
+    assert _pnl_convention("bear_credit") == "credit"
+
+
+def test_genuinely_unknown_shapes_stay_unknown():
+    """rh_sync emits 'custom' for a 3-leg or 5+-leg position it cannot name.
+    That must stay None — refusing is correct, guessing is not."""
+    from journal.trade_recorder import _pnl_convention
+    assert _pnl_convention("custom") is None
+    assert _pnl_convention("none") is None
+    assert _pnl_convention("") is None
+    assert _pnl_convention(None) is None
+
+
+def test_every_producer_name_is_understood_or_deliberately_unknown():
+    """THE enumeration test. Every strategy name any producer can emit must
+    either resolve to a convention, or be on the explicit unknown list.
+
+    This is what makes a partial fix impossible: it fails when someone adds a
+    producer without teaching the owner about it.
+    """
+    from journal.trade_recorder import _pnl_convention
+    from tools.enumerate_conventions import strategy_vocabulary, journal_vocabulary
+    # Deliberately unclassifiable: an unrecognised broker shape, and a legacy
+    # placeholder that predates the bug fix. Both correctly refuse to score.
+    DELIBERATELY_UNKNOWN = {"custom", "none", "option_spread"}
+    names = set(strategy_vocabulary()) | journal_vocabulary()
+    gaps = sorted(n for n in names
+                  if _pnl_convention(n) is None and n not in DELIBERATELY_UNKNOWN)
+    assert gaps == [], f"producers emit names the convention owner cannot classify: {gaps}"

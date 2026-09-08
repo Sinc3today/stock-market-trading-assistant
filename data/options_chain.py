@@ -162,10 +162,15 @@ class OptionsChain:
         if not all([short_call, long_call, short_put, long_put]):
             return None
 
-        net_credit = (
-            self._safe_mid(short_call) + self._safe_mid(short_put)
-            - self._safe_mid(long_call) - self._safe_mid(long_put)
-        )
+        mids = [self._safe_mid(l) for l in
+                (short_call, short_put, long_call, long_put)]
+        if any(m is None for m in mids):
+            # A partly-priced condor reports a credit inflated by the wing we
+            # could not price. Refuse the whole structure.
+            logger.warning("options_chain: condor has an unpriced leg — no structure")
+            return None
+        sc_m, sp_m, lc_m, lp_m = mids
+        net_credit = sc_m + sp_m - lc_m - lp_m
         max_loss = max((wing_width - max(net_credit, 0)) * 100, 0)
 
         return {
@@ -239,6 +244,9 @@ class OptionsChain:
 
         buy_mid  = self._safe_mid(buy_leg)
         sell_mid = self._safe_mid(sell_leg)
+        if buy_mid is None or sell_mid is None:
+            logger.warning("options_chain: vertical has an unpriced leg — no structure")
+            return None
         if kind == "debit":
             net_cost  = buy_mid - sell_mid
             max_loss  = round(net_cost * 100, 2)
@@ -260,18 +268,24 @@ class OptionsChain:
     # ── INTERNAL HELPERS ──────────────────────────────
 
     @staticmethod
-    def _safe_mid(contract: dict) -> float:
-        """Per-share mark, or 0.0 when no price is available.
+    def _safe_mid(contract: dict) -> float | None:
+        """Per-share mark, or None when no price is available.
 
         Prefers the quote midpoint (`mid`); falls back to `mark` (day close /
         vwap) so real-chain pricing still works on a plan whose snapshot has no
         bid/ask. See memory: reference-polygon-snapshot-no-quotes.
+
+        Returns None rather than 0.0. A zero for an unpriced leg does not make
+        the spread cheaper — it makes the CREDIT bigger by the value of the
+        wing we failed to price, which is how a structurally impossible
+        risk-free trade (max_profit $600 / max_loss $0 on a $5-wide condor)
+        passes the R/R gate and reaches the journal.
         """
         for key in ("mid", "mark"):
             m = contract.get(key)
-            if isinstance(m, (int, float)):
+            if isinstance(m, (int, float)) and not isinstance(m, bool):
                 return float(m)
-        return 0.0
+        return None
 
     @staticmethod
     def _closest_strike(chain: list[dict], target: float) -> Optional[dict]:

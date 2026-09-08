@@ -58,15 +58,25 @@ def round_trip_commission(strategy: str | None, legs: list | None,
 
 
 def _pnl_convention(strategy: str | None) -> str | None:
-    """'credit' | 'debit' | None for an unrecognised structure."""
+    """'credit' | 'debit' | None for an unrecognised structure.
+
+    Suffix matching covers the variant names producers actually emit:
+    put_debit_spread, call_credit_spread, and the router's bull_debit /
+    bear_debit (which reach the journal through dipbuy_forward's default).
+    Enumerated by tools/enumerate_conventions — run it after adding a producer.
+
+    Returning None is a real answer, not a gap: rh_sync emits "custom" for a
+    3-leg or 5+-leg position it cannot name, and refusing to score that is
+    correct. Guessing is what produced the sign-flipped records.
+    """
     s = (strategy or "").strip().lower()
     if s in _CREDIT_STRATEGIES:
         return "credit"
     if s in _DEBIT_STRATEGIES:
         return "debit"
-    if s.endswith("_credit_spread"):
+    if s.endswith("_credit_spread") or s.endswith("_credit"):
         return "credit"
-    if s.endswith("_debit_spread"):
+    if s.endswith("_debit_spread") or s.endswith("_debit"):
         return "debit"
     return None
 
@@ -320,6 +330,41 @@ class TradeRecorder:
         else:
             logger.warning(f"Trade not found: {trade_id}")
 
+        return updated
+
+    def mark_unscored(self, trade_id: str, reason: str) -> bool:
+        """Close a position we genuinely cannot price, WITHOUT inventing a fill.
+
+        Distinct from void_trade: a void means "this was never a real
+        position." Unscored means "this really happened, and we do not know
+        what it was worth." Both book no P&L, but only unscored counts as a
+        real trade we failed to measure — which is information worth keeping.
+
+        Exists because rh_sync marked such closes at the ENTRY price, producing
+        a fabricated $0 "breakeven" on real money that no heuristic could
+        detect, since entry == exit defeats the legacy-zero check.
+        """
+        trades, updated = self._load(), False
+        eastern = pytz.timezone("US/Eastern")
+        stamp = datetime.now(eastern).strftime("%Y-%m-%d %I:%M %p EST")
+        for trade in trades:
+            if trade.get("trade_id") != trade_id:
+                continue
+            trade["outcome"] = "unscored"
+            trade["exit_date"] = stamp
+            trade["exit_price"] = None
+            trade["pnl_dollars"] = None
+            trade["pnl_pct"] = None
+            trade["pnl_per_contract"] = None
+            note = (trade.get("notes_exit") or "").strip()
+            trade["notes_exit"] = f"{note}\n[UNSCORED {stamp}] {reason}".strip()
+            updated = True
+            break
+        if updated:
+            self._save(trades)
+            logger.warning(f"Trade marked UNSCORED: [{trade_id}] — {reason}")
+        else:
+            logger.warning(f"mark_unscored: trade not found: {trade_id}")
         return updated
 
     def void_trade(self, trade_id: str, reason: str) -> bool:
