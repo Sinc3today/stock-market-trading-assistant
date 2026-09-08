@@ -7,6 +7,113 @@ A modular Python trading bot that scans markets, scores stocks using technical
 indicators, recommends SPY options plays based on a regime classifier, and posts
 alerts to Discord. Backtested over 5 years with Sharpe 1.73 and 50.3% win rate.
 
+## Plain-English: what went wrong, and what we're doing about it (2026-09-07)
+
+*Written so a non-engineer can follow it. If you only read one section, read this.*
+
+### The short version
+
+On 2026-09-06 we found 8 bugs in a single day. That sounds like the safety
+checks working. It isn't — **8 bugs in a day means the system is unreliable**,
+and two of those bugs were in code written that same day. So we stopped and
+audited the whole thing.
+
+**The system isn't dangerous — it's untrustworthy as a measuring instrument.**
+Only two real-money positions exist. But nearly every number it reports has
+been suspect, and we make strategy decisions from those numbers.
+
+### The one root cause
+
+> **Nothing in this codebase has a single owner, and nothing can list all the
+> places a decision gets made.**
+
+An analogy. Imagine five people each keeping their own copy of the company
+price list. Someone updates a price — but only on the copies they happen to
+open. Now the copies disagree, and *nobody can tell*, because no one has a
+list of who holds a copy.
+
+That is literally what happened. Proof, all measured the same day:
+
+- I fixed "which strategies are credit vs debit" and announced it solved.
+  **I'd fixed 3 of 13 copies.**
+- `ENFORCE_CONCENTRATION_GUARD = True` sits in the config. It's actually
+  enforced in **1 of 6** places that can open a trade.
+- There are **6 different ways** the code calculates "how long until this
+  option expires."
+
+### The three bug families, with real examples
+
+**1. A guess gets written down as a fact.**
+
+The biggest one. When the code can't find a real price, it substitutes a
+plausible number — and that fake number gets *saved to the trade journal*,
+where it's indistinguishable from a real one.
+
+> **Example:** `paper_broker` couldn't read the price of a spread, so it used a
+> hardcoded **$1.00**. That $1.00 became the recorded entry price on **18
+> trades**. One of them shows `max_profit = $200`, which means the real credit
+> was about **$2.00** — so its recorded profit is off by ~$100.
+>
+> **Why it matters:** correcting for this, the *candidate* book goes from a
+> reported **+$1,503 profit to roughly −$186 — it flips from winning to
+> losing.** That's the book where every strategy is earning its way toward real
+> money.
+
+The fix is a principle: **a missing price is not a price.** If we don't know,
+say "I don't know" and refuse to trade — never invent a number.
+
+**2. The same rule written in several places, which then drift apart.**
+
+> **Example:** a broken-wing butterfly is a "credit" structure. One file knows
+> that. `expiry_resolver.py` doesn't — so at expiry it would record your **best
+> outcome as a $350 loss, and your worst outcome as a $150 win.** Exactly
+> backwards. 17 positions are currently exposed to it.
+
+**3. Two things that look the same but aren't (units).**
+
+> **Example:** `DTE` means *calendar* days, but the price data is in *trading*
+> days. A study walked "7 days" forward through 7 rows of data — which is
+> actually ~10 calendar days, i.e. **past the expiry date**. It produced
+> confident, published, wrong numbers. Twice.
+>
+> **Example:** we label a trade "7DTE" but the actual contract we buy expires
+> **8.7 days out on average** — because the code prices it as 7 days but then
+> picks the nearest Friday. A Monday entry starts **35% of max profit in the
+> hole** before the market moves at all.
+
+### Why the tests didn't catch any of it
+
+We have 1,624 tests and they caught **zero** of the 8 bugs. Not because there
+are too few — because of what they test.
+
+The tests check one function at a time, with its neighbours *faked out*. So
+**two parts of the system disagreeing is not something a test can notice.**
+Every one of the 8 bugs lived exactly there: between two pieces, not inside one.
+
+### What survived (the good news)
+
+- **The iron condor edge is real.** The disciplined book — our real-money proxy
+  — actually got *better* under audit: **76% win rate, +$1,441**.
+- "0DTE has no edge" and the 74% condor win rate both hold up.
+- No mis-scaled volatility, no double-counted contract multipliers, the
+  scheduler is correctly timezone-pinned, every network call has a timeout.
+
+### What we're doing about it — the 4 phases
+
+Full detail in `docs/SYSTEM_HARDENING_PLAN.md`.
+
+| Phase | Plain description |
+|---|---|
+| **0 — Stop the bleeding** | Stop writing guesses into the journal. Refuse to trade when a price is unknown. Put a lock on the trade file (4 jobs write it at once with no lock today). Make failures visible — a whole trading day can currently be skipped silently. |
+| **1 — One owner per decision** | Collapse the 13 copies into 1. One place that knows credit-vs-debit, one that values a spread, one that decides "may I open a trade" so the risk limits apply everywhere automatically. |
+| **2 — Make partial fixes impossible** | Add tests that *enumerate*: "every strategy name anything can produce is understood by everything that consumes it." This is what makes "I fixed 3 of 13" impossible to repeat. |
+| **3 — Subtract** | Delete what isn't earning its keep. 0DTE is shelved but still burns API calls and writes records. A weekly job runs a full backtest for a disabled feature. |
+
+**The rule going forward: we don't get confident by finding bugs faster. We
+get confident by removing the places bugs can hide.**
+
+---
+
 ## Current Architecture
 
 ```
