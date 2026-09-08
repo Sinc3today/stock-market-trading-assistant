@@ -153,7 +153,13 @@ def test_execute_today_reads_plan_logger(isolated_dirs):
         "play":   "BULL CALL DEBIT SPREAD",
         "confidence": 0.8,
         "strategy":   "debit_spread",
-        "legs":       [{"strike": 720}],
+        # A real plan carries `mark` on every leg (mid is None on this Polygon
+        # tier). The old fixture had an unpriced leg and still expected a
+        # recorded trade — that expectation WAS the $1.00 placeholder bug.
+        "legs":       [{"action": "buy",  "option_type": "call", "strike": 720,
+                        "mid": None, "mark": 8.40},
+                       {"action": "sell", "option_type": "call", "strike": 730,
+                        "mid": None, "mark": 4.15}],
         "max_profit": "$700",
         "max_loss":   "$300",
         "rr_ratio":   2.0,
@@ -189,3 +195,49 @@ def test_execute_today_handles_skip_plan(isolated_dirs):
 def test_execute_today_no_plan(isolated_dirs):
     result = PaperBroker().execute_today()
     assert result == {"prediction_date": None, "trade_id": None, "recorded": False}
+
+
+def test_refuses_to_open_when_no_leg_carries_a_price(isolated_dirs):
+    """A missing price is not a price — refuse rather than journal a guess.
+
+    This is the case that used to record entry_price = $1.00 on 18 trades.
+    """
+    plans = PlanLogger()
+    plans.save_plan({
+        "date":   date.today().isoformat(),
+        "ticker": "SPY",
+        "regime": "trending_up_calm",
+        "play":   "BULL CALL DEBIT SPREAD",
+        "confidence": 0.8,
+        "strategy":   "debit_spread",
+        "legs":       [{"action": "buy", "strike": 720, "mid": None}],
+        "max_profit": "$700",
+        "max_loss":   "$300",
+        "rr_ratio":   2.0,
+        "recommended_dte": 21,
+        "regime_metrics": {"spy_close": 720.0, "adx": 28.0, "vix": 14.0},
+        "thesis": "unpriced legs",
+        "executed": False,
+        "trade_id": None,
+    })
+    result = PaperBroker().execute_today()
+    assert result["recorded"] is False
+    assert result.get("skipped_reason") == "no_entry_price"
+    assert TradeRecorder().get_all_trades() == []
+
+
+def test_no_trade_is_ever_journalled_at_the_placeholder_price(isolated_dirs):
+    """Belt and braces: $1.00 must never appear as a recorded entry again."""
+    plans = PlanLogger()
+    plans.save_plan({
+        "date": date.today().isoformat(), "ticker": "SPY",
+        "regime": "choppy_low_vol", "play": "IRON CONDOR", "confidence": 0.85,
+        "strategy": "iron_condor",
+        "legs": [{"action": "sell", "strike": 730, "mid": None}],
+        "max_profit": "$160", "max_loss": "$340", "rr_ratio": 0.47,
+        "recommended_dte": 45,
+        "regime_metrics": {"spy_close": 720.0, "adx": 21.0, "vix": 14.5},
+        "thesis": "t", "executed": False, "trade_id": None,
+    })
+    PaperBroker().execute_today()
+    assert all(t.get("entry_price") != 1.00 for t in TradeRecorder().get_all_trades())

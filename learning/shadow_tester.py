@@ -101,11 +101,18 @@ def run_shadow(
 
     today = today or _date.today()
 
-    from learning.paper_broker import AUTO_SOURCE  # late import avoids circular dep
+    from learning.paper_broker import AUTO_SOURCE, PaperBroker  # late: circular dep
+
+    # Shared resolver; the `or 1.0` it replaces fabricated the entry price on
+    # every shadow record (reconstructed: 75% win -> 0% win).
+    entry_px = PaperBroker._spread_price(opts)
+    if entry_px is None:
+        logger.error("shadow_tester: no usable entry price — refusing to record")
+        return None
 
     tid = trade_recorder.log_entry(
         ticker      = "SPY",
-        entry_price = float(opts.get("net_premium") or opts.get("entry_price") or 1.0),
+        entry_price = entry_px,
         size        = 1,
         trade_type  = opts.get("strategy", "credit_spread"),
         strategy    = opts.get("strategy", "credit_spread"),

@@ -101,10 +101,18 @@ def maybe_open_dipbuy(spy_df, *, spot, ivr, options_layer, recorder, today=None,
         logger.info(f"dipbuy_forward: no priceable bull structure today ({ticker})")
         return None
 
-    from learning.paper_broker import AUTO_SOURCE  # late import avoids circular dep
+    from learning.paper_broker import AUTO_SOURCE, PaperBroker  # late: circular dep
+    # One price resolver, shared. The `or 1.0` this replaces put a fabricated
+    # $1.00 on all three dipbuy records — a recorded "+$400 each" that is
+    # really -$789 combined, and ~80% of the candidate book's reported profit.
+    entry_px = PaperBroker._spread_price(opts)
+    if entry_px is None:
+        logger.error(f"dipbuy_forward: no usable entry price for {ticker} "
+                     "— refusing to open")
+        return None
     tid = recorder.log_entry(
         ticker=ticker,
-        entry_price=float(opts.get("entry_price") or opts.get("net_premium") or 1.0),
+        entry_price=entry_px,
         size=1,
         trade_type=opts.get("strategy", "bull_debit"),
         strategy=opts.get("strategy", "bull_debit"),

@@ -302,6 +302,19 @@ class PaperBroker:
         max_profit = options.get("max_profit")
         max_loss   = options.get("max_loss")
         entry_px   = self._spread_price(options)
+        if entry_px is None:
+            # Refuse rather than journal a guess. A fabricated entry price is
+            # indistinguishable from a real one once written, and it silently
+            # poisons every aggregate the record later feeds.
+            logger.error(
+                f"paper_broker: no usable entry price for {strategy} "
+                f"({len(legs)} legs) — refusing to open. Legs carry no "
+                "mark/mid and no numeric net premium was published."
+            )
+            return {
+                "recorded":       False,
+                "skipped_reason": "no_entry_price",
+            }
 
         notes = (
             f"{AUTO_TAG} regime={regime} confidence={confidence:.2f} "
@@ -498,27 +511,54 @@ class PaperBroker:
         return round(float(spy), 2)
 
     @staticmethod
-    def _spread_price(options: dict) -> float:
+    def _spread_price(options: dict) -> float | None:
+        """Net premium per share as a positive magnitude, or None.
+
+        NEVER returns a placeholder. This used to end in `return 1.00`, and
+        that $1.00 became the RECORDED entry price on 18 of 109 trades — enough
+        to flip the candidate book from a reported +$1,503 to roughly -$186.
+
+        The price was never actually missing. A real plan carries `mark` on
+        every leg (`mid` is None on this Polygon tier), while the old lookup
+        searched four keys the plan does not publish, hit `mid: None`, and fell
+        through to the placeholder.
+
+        A missing price is not a price: return None and let the caller refuse
+        the open.
         """
-        Best-effort entry price for the journal: prefer explicit net_debit /
-        net_credit; fall back to first leg's price; else 1.00 as placeholder.
-        """
-        for key in ("net_debit", "net_credit", "entry_price", "mid"):
+        # 1. An explicit NUMERIC premium. options_layer also publishes
+        #    net_premium as a human display string ("~$3.0 total credit
+        #    (estimated)") on several branches — an estimate rendered for a
+        #    human is not a fill price, so only numerics are accepted.
+        for key in ("net_credit", "net_debit", "net_premium", "entry_price"):
             v = options.get(key)
-            if v is not None:
-                try:
-                    return abs(float(v))
-                except (TypeError, ValueError):
-                    pass
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v:
+                return abs(float(v))
+
+        # 2. Derive it from the legs. Short legs bring premium in, long legs
+        #    pay it out; the sign is the structure's business, not ours.
         legs = options.get("legs") or []
-        if legs and isinstance(legs[0], dict):
-            for key in ("price", "premium", "mid"):
-                if key in legs[0]:
-                    try:
-                        return abs(float(legs[0][key]))
-                    except (TypeError, ValueError):
-                        pass
-        return 1.00
+        if not legs:
+            return None
+        net = 0.0
+        for leg in legs:
+            if not isinstance(leg, dict):
+                return None
+            price = next((leg[k] for k in ("mark", "mid", "price", "premium")
+                          if isinstance(leg.get(k), (int, float))), None)
+            if price is None:
+                # A partly-priced spread yields a credit inflated by the
+                # unpriced wing — that is how a structurally impossible
+                # risk-free trade ends up in the journal.
+                return None
+            action = str(leg.get("action") or "").upper()
+            if action.startswith("S"):
+                net += float(price)
+            elif action.startswith("B"):
+                net -= float(price)
+            else:
+                return None            # unknown action: refuse, don't guess
+        return abs(round(net, 2)) or None
 
     @staticmethod
     def _numeric(v):
