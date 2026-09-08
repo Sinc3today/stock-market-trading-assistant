@@ -557,3 +557,18 @@ COMMISSION_PER_CONTRACT_LEG = float(os.getenv("COMMISSION_PER_CONTRACT_LEG", "0.
 # Paper only, zero capital, promotion bar pre-registered in ladder_forward.
 LADDER_FORWARD_ENABLED = os.getenv("LADDER_FORWARD_ENABLED", "true").lower() == "true"
 LADDER_FORWARD_DTES = (14, 21)
+
+# Cap on simultaneously-open paper candidates (audit, 2026-09-07). Every rung
+# is the same short-vol bet at a different duration, so spreading across
+# durations is NOT diversification — 26 correlated positions accumulated while
+# ENFORCE_CONCENTRATION_GUARD was switched on but enforced in only 1 of 6
+# opening paths. Generous by design: this is a backstop, not a strategy knob.
+MAX_CONCURRENT_CANDIDATES = int(os.getenv("MAX_CONCURRENT_CANDIDATES", "30"))
+
+# ── Forward-test kill switches ────────────────────────────────────
+# SEVEN_DTE and QQQ_CONDOR were read via getattr(config, FLAG, True) against
+# flags that did not exist here, so those two paper tests defaulted ON and
+# could not be turned off at all (audit, 2026-09-07). A test now asserts every
+# generator's declared switch actually resolves.
+SEVEN_DTE_FORWARD_ENABLED = os.getenv("SEVEN_DTE_FORWARD_ENABLED", "true").lower() == "true"
+QQQ_CONDOR_FORWARD_ENABLED = os.getenv("QQQ_CONDOR_FORWARD_ENABLED", "true").lower() == "true"

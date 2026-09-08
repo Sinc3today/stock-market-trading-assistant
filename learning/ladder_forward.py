@@ -48,7 +48,7 @@ import pytz
 from loguru import logger
 
 import config
-from learning.dipbuy_forward import _mark_spread
+from learning.forward_test import ForwardSpec, ForwardTest
 
 TARGET_PCT = 0.70
 
@@ -128,60 +128,25 @@ def maybe_open_ladder(recorder, *, spy_spot, vix, today=None) -> list[dict]:
     return opened
 
 
+SPEC = ForwardSpec(
+    name="ladder_forward",
+    ticker="SPY",
+    buckets={cfg["bucket"]: cfg["close_dte"] for cfg in RUNGS.values()},
+    target_pct=TARGET_PCT,
+    book=config.DIPBUY_FORWARD_BOOK,
+    promotion_bar=PROMOTION_BAR,
+    enabled_flag="LADDER_FORWARD_ENABLED",
+)
+_FT = ForwardTest(SPEC)
+
+
 def resolve_ladder(recorder, *, spy_spot, vix, today=None) -> list[dict]:
-    """Mark + close open ladder candidates at 70% of max profit or the rung's
-    own time stop."""
-    today = today or _today_et()
-    by_bucket = {cfg["bucket"]: cfg for cfg in RUNGS.values()}
-    closed = []
-    for t in recorder.get_all_trades():
-        cfg = by_bucket.get(t.get("dte_bucket"))
-        if cfg is None or t.get("outcome") not in (None, "open"):
-            continue
-        if t.get("book") != config.DIPBUY_FORWARD_BOOK:
-            continue          # a promoted position is the exit manager's job
-        legs = t.get("legs") or []
-        try:
-            expiry = min(_date.fromisoformat(str(l.get("expiry") or l.get("expiration"))[:10])
-                         for l in legs if (l.get("expiry") or l.get("expiration")))
-        except ValueError:
-            continue
-        dte_left = (expiry - today).days
-        cost = max(0.0, -_mark_spread(legs, spy_spot, vix, max(dte_left, 0)))
-        pnl = (float(t.get("entry_price", 0)) - cost) * 100 * int(t.get("size", 1))
-        mp = t.get("max_profit") or 0.0
-        hit_target = mp > 0 and pnl >= TARGET_PCT * mp
-        hit_time = dte_left <= cfg["close_dte"]
-        if hit_target or hit_time:
-            reason = "target" if hit_target else "time_stop"
-            recorder.log_exit(t["trade_id"], round(cost, 2),
-                              notes=f"[CANDIDATE close {today.isoformat()}] {reason} "
-                                    f"(SPY {spy_spot:.2f})",
-                              exit_reason=reason)
-            closed.append({**t, "exit_reason": reason})
-    return closed
+    """Mark + close open ladder candidates at 70% of max profit or each rung's
+    OWN time stop. Delegates to the shared forward-test core."""
+    return _FT.resolve(recorder, spot=spy_spot, vol=vix, today=today)
 
 
 def paper_record(recorder) -> dict:
-    """Per-rung progress vs the promotion bar. Averages are NET of commissions,
-    because the bar is judged net (audit A4)."""
-    from learning.forward_scorecard import net_pnl
-    out = {}
-    trades = recorder.get_all_trades()
-    for dte, cfg in RUNGS.items():
-        rows = [t for t in trades
-                if t.get("dte_bucket") == cfg["bucket"]
-                and t.get("pnl_dollars") is not None]
-        nets = [p for p in (net_pnl(t) for t in rows) if p is not None]
-        n = len(nets)
-        wins = sum(1 for p in nets if p > 0)
-        avg = sum(nets) / n if n else 0.0
-        out[dte] = {
-            "n": n, "wins": wins,
-            "win_pct": (wins / n * 100) if n else 0.0,
-            "avg": round(avg, 2),
-            "close_dte": cfg["close_dte"],
-            "bar": PROMOTION_BAR,
-            "meets_bar": _meets_bar(n, wins, avg),
-        }
-    return out
+    """Per-rung progress vs the promotion bar, NET of commissions."""
+    by_bucket = _FT.paper_record(recorder)
+    return {dte: by_bucket[cfg["bucket"]] for dte, cfg in RUNGS.items()}

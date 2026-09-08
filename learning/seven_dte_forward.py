@@ -29,7 +29,7 @@ import pytz
 from loguru import logger
 
 import config
-from learning.dipbuy_forward import _mark_spread
+from learning.forward_test import ForwardSpec, ForwardTest
 
 TARGET_PCT = 0.70
 # 2026-09-06: was 3, derived as round(7 * 21/45) — the 45DTE time-stop scaled
@@ -103,63 +103,38 @@ def maybe_open_seven_dte(recorder, *, spy_spot, vix, today=None):
     return {"recorded": True, "trade_id": tid}
 
 
+SPEC = ForwardSpec(
+    name="seven_dte_forward",
+    ticker="SPY",
+    buckets={BUCKET: CLOSE_DTE},
+    target_pct=TARGET_PCT,
+    book=config.DIPBUY_FORWARD_BOOK,
+    promotion_bar=PROMOTION_BAR,
+    rule_epoch=RULE_EPOCH,
+    enabled_flag="SEVEN_DTE_FORWARD_ENABLED",
+)
+_FT = ForwardTest(SPEC)
+
+
 def resolve_seven_dte(recorder, *, spy_spot, vix, today=None):
-    """Mark + close open 7DTE candidates: 70%-of-max-profit or 3 DTE."""
-    today = today or _today_et()
-    closed = []
-    for t in recorder.get_all_trades():
-        if t.get("dte_bucket") != BUCKET or t.get("outcome") not in (None, "open"):
-            continue
-        if t.get("book") != config.DIPBUY_FORWARD_BOOK:
-            continue          # promoted/live 7DTE positions are the exit manager's job
-        legs = t.get("legs") or []
-        try:
-            expiry = min(_date.fromisoformat(str(l.get("expiry") or l.get("expiration"))[:10])
-                         for l in legs if (l.get("expiry") or l.get("expiration")))
-        except ValueError:
-            continue
-        dte_left = (expiry - today).days
-        cost = max(0.0, -_mark_spread(legs, spy_spot, vix, max(dte_left, 0)))
-        pnl = (float(t.get("entry_price", 0)) - cost) * 100 * int(t.get("size", 1))
-        mp = t.get("max_profit") or 0.0
-        hit_target = mp > 0 and pnl >= TARGET_PCT * mp
-        hit_time = dte_left <= CLOSE_DTE
-        if hit_target or hit_time:
-            reason = "target" if hit_target else "time_stop"
-            recorder.log_exit(t["trade_id"], round(cost, 2),
-                              notes=f"[CANDIDATE close {today.isoformat()}] {reason} "
-                                    f"(SPY {spy_spot:.2f})",
-                              exit_reason=reason)
-            closed.append(t)
-    return closed
+    """Mark + close open 7DTE candidates at 70% of max profit or CLOSE_DTE.
+
+    Delegates to the shared core so a fix lands on every rung at once — this
+    body used to be a near-copy of three siblings, and every defect the
+    2026-09-07 audit found existed in some but not all of them.
+    """
+    return _FT.resolve(recorder, spot=spy_spot, vol=vix, today=today)
 
 
 def paper_record(recorder) -> dict:
     """Progress vs the promotion bar — surfaced by loop_health / the playbook.
 
-    Counts only trades opened under the CURRENT exit rule. The pre-epoch
-    trades ran CLOSE_DTE=3 and are reported separately as `legacy`: a record
+    NET of commissions (the bar says so; this used to score gross), and counts
+    only trades opened under the CURRENT exit rule. Pre-epoch trades ran
+    CLOSE_DTE=3 and are reported separately as `legacy`, because a record
     pooled across a rule change describes a strategy nobody is running
     (docs/FORWARD_TEST_AUDIT.md E2).
     """
-    all_closed = [t for t in recorder.get_all_trades()
-                  if t.get("dte_bucket") == BUCKET
-                  and t.get("pnl_dollars") is not None]
-    closed = [t for t in all_closed
-              if str(t.get("entry_date", ""))[:10] >= RULE_EPOCH]
-    legacy = [t for t in all_closed
-              if str(t.get("entry_date", ""))[:10] < RULE_EPOCH]
-
-    def _agg(rows):
-        n = len(rows)
-        wins = sum(1 for t in rows if (t.get("pnl_dollars") or 0) > 0)
-        avg = (sum(float(t.get("pnl_dollars") or 0) for t in rows) / n) if n else 0.0
-        return n, wins, avg
-
-    n, wins, avg = _agg(closed)
-    ln, lwins, lavg = _agg(legacy)
-    return {"n": n, "win_pct": (wins / n * 100) if n else 0.0, "avg": avg,
-            "bar": PROMOTION_BAR, "rule_epoch": RULE_EPOCH,
-            "legacy": {"n": ln, "win_pct": (lwins / ln * 100) if ln else 0.0,
-                       "avg": lavg, "rule": "CLOSE_DTE=3"},
-            "meets_bar": n >= 15 and (wins / n if n else 0) >= 0.70 and avg > 20.0}
+    rec = _FT.paper_record(recorder)[BUCKET]
+    rec["legacy"]["rule"] = "CLOSE_DTE=3"
+    return rec

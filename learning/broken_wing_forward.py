@@ -31,7 +31,7 @@ import pytz
 from loguru import logger
 
 import config
-from learning.dipbuy_forward import _mark_spread
+from learning.forward_test import ForwardSpec, ForwardTest
 
 TARGET_PCT = 0.70
 TIME_EXIT_FRAC = 21 / 45          # live parity, same as the DTE ladder
@@ -103,55 +103,52 @@ def maybe_open_broken_wing(recorder, *, spy_spot, vix, today=None):
     return opened
 
 
+# Explicit per-bucket exits. These are the values TIME_EXIT_FRAC produced —
+# round(30 * 21/45) = 14 and round(45 * 21/45) = 21 — written out rather than
+# computed, because proportional scaling of a time rule is invalid (theta is
+# convex in DTE) and it cost the 7DTE book ~$28/trade. Behaviour is unchanged;
+# the number is now a decision you can see and argue with.
+#
+# PENDING (docs/EXIT_TIMING_SWEEP.md): BWB-30DTE fails the OOS era split at
+# EVERY exit point, so retuning cannot rescue it — that rung needs a
+# keep-or-drop call, not a new close-DTE.
+BUCKET_CLOSE_DTE = {"BWB-30DTE": 14, "BWB-45DTE": 21}
+
+SPEC = ForwardSpec(
+    name="broken_wing_forward",
+    ticker="SPY",
+    buckets=BUCKET_CLOSE_DTE,
+    target_pct=TARGET_PCT,
+    book=config.DIPBUY_FORWARD_BOOK,
+    promotion_bar=PROMOTION_BAR,
+    enabled_flag="BROKEN_WING_FORWARD_ENABLED",
+)
+_FT = ForwardTest(SPEC)
+
+
 def resolve_broken_wing(recorder, *, spy_spot, vix, today=None):
-    """Mark + close open BWB candidates: 70% of structural max profit OR the
-    ladder time-exit (round(dte * 21/45))."""
-    today = today or _today_et()
-    closed = []
-    for t in recorder.get_all_trades():
-        bucket = t.get("dte_bucket") or ""
-        if not str(bucket).startswith(BUCKET_PREFIX):
-            continue
-        if t.get("outcome") not in (None, "open"):
-            continue
-        if t.get("book") != config.DIPBUY_FORWARD_BOOK:
-            continue          # promoted/live BWBs are the exit manager's job
-        legs = t.get("legs") or []
-        try:
-            expiry = min(_date.fromisoformat(str(l.get("expiry") or l.get("expiration"))[:10])
-                         for l in legs if (l.get("expiry") or l.get("expiration")))
-        except ValueError:
-            continue
-        dte_left = (expiry - today).days
-        # Signed close cost: a BWB can be worth money to close (long far wing),
-        # so cost may be negative — do NOT clamp it (that would zero real gains).
-        cost = -_mark_spread(legs, spy_spot, vix, max(dte_left, 0))
-        entry_credit = float(t.get("entry_price", 0))
-        pnl = (entry_credit - cost) * 100 * int(t.get("size", 1))
-        mp = t.get("max_profit") or 0.0
-        orig_dte = _dte_from_bucket(bucket) or 45
-        close_dte = max(1, round(orig_dte * TIME_EXIT_FRAC))
-        hit_target = mp > 0 and pnl >= TARGET_PCT * mp
-        hit_time = dte_left <= close_dte
-        if hit_target or hit_time:
-            reason = "target" if hit_target else "time_stop"
-            recorder.log_exit(t["trade_id"], round(cost, 2),
-                              notes=f"[CANDIDATE close {today.isoformat()}] {reason} "
-                                    f"(SPY {spy_spot:.2f})",
-                              exit_reason=reason)
-            closed.append(t)
-    return closed
+    """Mark + close open BWB candidates at 70% of structural max profit or the
+    rung's time stop.
+
+    Delegates to the shared core, which does NOT clamp the close cost — a BWB
+    is long a far wing, so being paid to close is legitimate and clamping
+    booked phantom max-loss (audit A2).
+    """
+    return _FT.resolve(recorder, spot=spy_spot, vol=vix, today=today)
 
 
 def paper_record(recorder) -> dict:
-    """Progress vs the promotion bar — surfaced by loop_health / the playbook.
-    Aggregates every BWB tenor."""
-    closed = [t for t in recorder.get_all_trades()
-              if str(t.get("dte_bucket") or "").startswith(BUCKET_PREFIX)
-              and t.get("pnl_dollars") is not None]
-    n = len(closed)
-    wins = sum(1 for t in closed if (t.get("pnl_dollars") or 0) > 0)
-    avg = (sum(float(t.get("pnl_dollars") or 0) for t in closed) / n) if n else 0.0
-    return {"n": n, "win_pct": (wins / n * 100) if n else 0.0, "avg": avg,
-            "bar": PROMOTION_BAR,
-            "meets_bar": n >= 15 and (wins / n) >= 0.70 and avg > 20.0}
+    """Progress vs the promotion bar, NET of commissions, across every BWB
+    tenor. This used to score gross while its sibling ladder_forward scored
+    net, against a bar that says "net of fees"."""
+    from learning.forward_scorecard import net_pnl
+    rows = [t for t in recorder.get_all_trades()
+            if str(t.get("dte_bucket") or "").startswith(BUCKET_PREFIX)
+            and t.get("pnl_dollars") is not None]
+    vals = [v for v in (net_pnl(t) for t in rows) if v is not None]
+    n = len(vals)
+    wins = sum(1 for v in vals if v > 0)
+    avg = (sum(vals) / n) if n else 0.0
+    return {"n": n, "win_pct": (wins / n * 100) if n else 0.0, "avg": round(avg, 2),
+            "bar": PROMOTION_BAR, "by_bucket": _FT.paper_record(recorder),
+            "meets_bar": ForwardTest._meets_bar(n, wins, avg)}

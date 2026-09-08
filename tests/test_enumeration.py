@@ -67,3 +67,64 @@ def test_the_enumerator_actually_finds_things():
     assert ec.private_strategy_lists(include_allowed=True), \
         "private-list scan found nothing even including allowed"
     assert ec.placeholder_prices(), "placeholder scan found nothing"
+
+
+# ── forward-test consolidation (Phase 1, 2026-09-07) ─────────────
+
+FORWARD_MODULES = ("seven_dte_forward", "qqq_condor_forward",
+                   "broken_wing_forward", "ladder_forward")
+
+
+def test_no_generator_reimplements_the_resolve_loop():
+    """Every defect in the audit existed in SOME BUT NOT ALL of five
+    near-identical resolvers. A new copy reintroduces exactly that."""
+    import importlib
+    import inspect
+    for name in FORWARD_MODULES:
+        mod = importlib.import_module(f"learning.{name}")
+        src = inspect.getsource(mod)
+        assert "_mark_spread" not in src, \
+            f"{name} marks positions itself instead of using the shared core"
+        assert "ForwardTest" in src, f"{name} does not use the shared core"
+
+
+def test_every_generator_declares_a_spec():
+    import importlib
+    from learning.forward_test import ForwardSpec
+    for name in FORWARD_MODULES:
+        mod = importlib.import_module(f"learning.{name}")
+        assert isinstance(getattr(mod, "SPEC", None), ForwardSpec), \
+            f"{name} has no ForwardSpec"
+
+
+def test_every_generator_has_a_working_kill_switch():
+    """Two forward tests used getattr(config, FLAG, True) against flags that do
+    not exist in config.py — they could not be turned off at all."""
+    import importlib
+    import config
+    for name in FORWARD_MODULES:
+        mod = importlib.import_module(f"learning.{name}")
+        flag = mod.SPEC.enabled_flag
+        assert flag, f"{name} has no kill switch"
+        assert hasattr(config, flag), \
+            f"{name}'s kill switch {flag} does not exist in config.py"
+
+
+def test_every_generator_filters_to_its_own_book():
+    """qqq_condor_forward lacked this, so on promotion both its resolver and
+    the ExitManager would have managed the position."""
+    import importlib
+    for name in FORWARD_MODULES:
+        mod = importlib.import_module(f"learning.{name}")
+        assert mod.SPEC.book, f"{name} does not declare a book"
+
+
+def test_no_generator_scales_one_rung_exit_from_another():
+    """Proportional scaling of a time rule is invalid — theta is convex in DTE.
+    Every close-DTE must be an explicit per-bucket number."""
+    import importlib
+    for name in FORWARD_MODULES:
+        mod = importlib.import_module(f"learning.{name}")
+        for bucket, close_dte in mod.SPEC.buckets.items():
+            assert isinstance(close_dte, int), \
+                f"{name}:{bucket} close-DTE is computed, not declared"

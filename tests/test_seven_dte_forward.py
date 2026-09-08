@@ -131,9 +131,12 @@ def test_paper_record_counts_only_the_current_rule(tmp_path, monkeypatch):
 
     rec = sdf.paper_record(_Rec())
     assert rec["n"] == 1                      # only the post-epoch trade
-    assert rec["avg"] == 40.0
+    # NET of commissions now — the bar says "net of fees" and this used to
+    # score gross, while its sibling ladder_forward scored net. Consolidating
+    # onto the shared core made them agree. $40 gross - $1.30 round trip.
+    assert rec["avg"] == pytest.approx(38.70)
     assert rec["legacy"]["n"] == 2
-    assert rec["legacy"]["avg"] == -250.0
+    assert rec["legacy"]["avg"] == pytest.approx(-251.30)
     assert rec["legacy"]["rule"] == "CLOSE_DTE=3"
 
 

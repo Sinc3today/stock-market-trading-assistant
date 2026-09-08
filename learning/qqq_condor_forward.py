@@ -33,7 +33,7 @@ def _today_et() -> _date:
 from loguru import logger
 
 import config
-from learning.dipbuy_forward import _mark_spread
+from learning.forward_test import ForwardSpec, ForwardTest
 
 TARGET_PCT = 0.70
 CLOSE_DTE = 21
@@ -82,32 +82,28 @@ def maybe_open_qqq_condor(recorder, *, qqq_spot, vxn, today=None):
     return {"recorded": True, "trade_id": tid}
 
 
+SPEC = ForwardSpec(
+    name="qqq_condor_forward",
+    ticker="QQQ",
+    buckets={BUCKET: CLOSE_DTE},
+    target_pct=TARGET_PCT,
+    book=config.DIPBUY_FORWARD_BOOK,
+    enabled_flag="QQQ_CONDOR_FORWARD_ENABLED",
+)
+_FT = ForwardTest(SPEC)
+
+
 def resolve_qqq_condors(recorder, *, qqq_spot, vxn, today=None):
-    """Mark + close open QQQ condor candidates: 70%-of-max-profit or 21 DTE.
-    Credit structure: cost to close = shorts − longs = −_mark_spread."""
-    today = today or _today_et()
-    trades = recorder.get_all_trades()
-    closed = []
-    for t in trades:
-        if t.get("dte_bucket") != BUCKET or t.get("outcome") not in (None, "open"):
-            continue
-        legs = t.get("legs") or []
-        try:
-            expiry = min(_date.fromisoformat(str(l.get("expiry") or l.get("expiration"))[:10])
-                         for l in legs if (l.get("expiry") or l.get("expiration")))
-        except ValueError:
-            continue
-        dte_left = (expiry - today).days
-        cost = max(0.0, -_mark_spread(legs, qqq_spot, vxn, max(dte_left, 0)))
-        pnl = (float(t.get("entry_price", 0)) - cost) * 100 * int(t.get("size", 1))
-        mp = t.get("max_profit") or 0.0
-        hit_target = mp > 0 and pnl >= TARGET_PCT * mp
-        hit_time = dte_left <= CLOSE_DTE
-        if hit_target or hit_time:
-            reason = "target" if hit_target else "time_stop"
-            recorder.log_exit(t["trade_id"], round(cost, 2),
-                              notes=f"[CANDIDATE close {today.isoformat()}] {reason} "
-                                    f"(QQQ {qqq_spot:.2f})",
-                              exit_reason=reason)
-            closed.append(t)
-    return closed
+    """Mark + close open QQQ condor candidates at 70% of max profit or 21 DTE.
+
+    Delegates to the shared core. This body was missing the book filter its
+    three siblings had, so on promotion both this resolver AND the ExitManager
+    would have managed the position and both called log_exit — the core
+    supplies it for free.
+    """
+    return _FT.resolve(recorder, spot=qqq_spot, vol=vxn, today=today)
+
+
+def paper_record(recorder) -> dict:
+    """Progress vs the promotion bar, NET of commissions."""
+    return _FT.paper_record(recorder)[BUCKET]
