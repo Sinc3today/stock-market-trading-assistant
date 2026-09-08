@@ -17,6 +17,18 @@ import pytest
 # FIXTURES
 # ─────────────────────────────────────────
 
+def _et_day() -> str:
+    """The date the APP uses (US/Eastern), not the host's local date.
+
+    The host runs America/Chicago, so between CT 23:00 and 23:59 it is already
+    tomorrow in ET. Seeding a plan under date.today() there stores it under a
+    day /today never looks up — four tests failed exactly that way at 00:30 ET.
+    Same naive-date trap the audit flagged across 32 production modules.
+    """
+    from alerts.web_app import _et_today_iso
+    return _et_today_iso()
+
+
 @pytest.fixture()
 def app_modules(monkeypatch, tmp_path):
     """
@@ -671,7 +683,7 @@ def test_today_renders_sparkline_when_spy_data_available(client, app_modules, mo
     from journal.plan_logger import PlanLogger
     from datetime import date
     PlanLogger().save_plan({
-        "date":      date.today().isoformat(),
+        "date":      _et_day(),
         "regime":    "trending_up_calm",
         "action":    "BUY",
         "strategy":  "debit_spread",
@@ -700,7 +712,7 @@ def test_today_renders_without_sparkline_when_polygon_fails(client, app_modules,
     from journal.plan_logger import PlanLogger
     from datetime import date
     PlanLogger().save_plan({
-        "date":      date.today().isoformat(),
+        "date":      _et_day(),
         "regime":    "trending_up_calm",
         "action":    "BUY",
         "strategy":  "debit_spread",
@@ -757,7 +769,7 @@ def _seed_today_plan():
     from journal.plan_logger import PlanLogger
     from datetime import date
     PlanLogger().save_plan({
-        "date":     date.today().isoformat(),
+        "date":     _et_day(),
         "regime":   "trending_up_calm",
         "action":   "BUY",
         "strategy": "debit_spread",
@@ -1082,7 +1094,7 @@ def test_today_page_renders_full_brief(client, app_modules):
     from datetime import date
 
     plan = {
-        "date":             date.today().isoformat(),
+        "date":             _et_day(),
         "ticker":           "SPY",
         "regime":           "choppy_low_vol",
         "play":             "Iron Condor",
@@ -1123,7 +1135,7 @@ def test_today_page_uses_plain_summary_when_present(client, app_modules):
     from journal.plan_logger import PlanLogger
     from datetime import date
     PlanLogger().save_plan({
-        "date":             date.today().isoformat(),
+        "date":             _et_day(),
         "ticker":           "SPY",
         "regime":           "trending_up_calm",
         "play":             "Bull Call Debit Spread",
@@ -1146,7 +1158,7 @@ def test_today_page_no_raw_regime_names(client, app_modules):
     for regime in ("trending_up_calm", "trending_down_calm",
                     "choppy_low_vol", "choppy_high_vol"):
         PlanLogger().save_plan({
-            "date":   date.today().isoformat(),
+            "date":   _et_day(),
             "ticker": "SPY",
             "regime": regime,
             "play":   "test",
