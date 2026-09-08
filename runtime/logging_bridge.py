@@ -67,8 +67,34 @@ def install_stdlib_bridge(level: int = DEFAULT_LEVEL) -> None:
     # has silenced it.
     for name in ("apscheduler", "apscheduler.scheduler", "apscheduler.executors"):
         logging.getLogger(name).setLevel(level)
-    logger.info("stdlib logging bridged into loguru "
-                f"(level {logging.getLevelName(level)})")
+    ok = _self_test()
+    logger.info(f"stdlib logging bridged into loguru "
+                f"(level {logging.getLevelName(level)}) — self-test "
+                f"{'PASSED' if ok else 'FAILED'}")
+    if not ok:
+        logger.error(
+            "logging bridge SELF-TEST FAILED — scheduler failures and missed "
+            "fires will NOT reach app.log, and loop_health cannot see them"
+        )
+
+
+def _self_test() -> bool:
+    """Push a real stdlib record through and confirm loguru received it.
+
+    An installed-but-inert bridge is exactly the failure this whole module
+    exists to prevent — "the config says it's on" was true of the concentration
+    guard, the touch-exit rules and the kill switches too. Proving it at boot
+    costs one log line and makes the guarantee falsifiable at runtime rather
+    than only in tests.
+    """
+    received: list[str] = []
+    sink = logger.add(lambda m: received.append(str(m)), level="WARNING")
+    try:
+        logging.getLogger("runtime.logging_bridge.selftest").warning(
+            "bridge self-test probe")
+    finally:
+        logger.remove(sink)
+    return any("bridge self-test probe" in r for r in received)
 
 
 def attach_scheduler_listeners(scheduler) -> None:

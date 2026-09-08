@@ -187,3 +187,28 @@ def test_main_installs_the_bridge_and_the_listeners():
     assert "attach_scheduler_listeners(scheduler)" in text
     assert text.index("attach_scheduler_listeners") < text.index("scheduler.start()"), \
         "listeners must be attached before the scheduler starts"
+
+
+def test_install_self_verifies(captured):
+    """The bridge proves itself at boot rather than asserting it works."""
+    install_stdlib_bridge()
+    joined = " ".join(str(m) for m in captured)
+    assert "self-test PASSED" in joined
+
+
+def test_self_test_detects_an_inert_bridge(monkeypatch):
+    """An installed-but-inert bridge is the exact failure mode this module
+    exists to prevent — 'the config says it's on' was true of the
+    concentration guard and the kill switches too."""
+    from runtime import logging_bridge as lb
+    monkeypatch.setattr(lb.InterceptHandler, "emit", lambda self, record: None)
+    assert lb._self_test() is False
+
+
+def test_self_test_leaves_no_sink_behind():
+    """A leaked sink would duplicate every subsequent log line."""
+    from loguru import logger
+    from runtime import logging_bridge as lb
+    before = len(logger._core.handlers)
+    lb._self_test()
+    assert len(logger._core.handlers) == before
