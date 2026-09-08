@@ -12,13 +12,44 @@ from __future__ import annotations
 
 
 def _f(form: dict, key: str):
-    v = (form.get(key) or "").strip() if isinstance(form.get(key), str) else form.get(key)
-    if v in (None, ""):
+    """Parse a numeric form field the way a human actually types it.
+
+    This used to be a bare float(), so "$1.55" and "1,55" both returned None —
+    and the callers' `or 0.0` then RECORDED a real-money fill at $0.00. A
+    dollar sign is a completely natural thing to type into a price field.
+    """
+    v = form.get(key)
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return float(v)
+    if not isinstance(v, str):
         return None
+    v = v.strip().replace("$", "").replace(" ", "")
+    if not v:
+        return None
+    # "1,550.25" -> thousands separator; "1,55" -> decimal comma.
+    if "," in v and "." not in v:
+        v = v.replace(",", ".", 1) if len(v.split(",")[-1]) != 3 else v.replace(",", "")
+    else:
+        v = v.replace(",", "")
     try:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _required_price(form: dict, key: str = "entry_price") -> float:
+    """The fill price, or refuse. A real options fill is never free.
+
+    Nothing else stopped a blank: the form has no `required` attribute and
+    there was no server-side check, so `or 0.0` wrote $0 into the live book.
+    """
+    v = _f(form, key)
+    if v is None or v == 0:
+        raise ValueError(
+            "Entry price is required and must be non-zero — enter the actual "
+            "fill (e.g. 1.55). A trade cannot be logged without a real price."
+        )
+    return v
 
 
 def _leg(action: str, otype: str, strike: float, expiry):
@@ -53,7 +84,7 @@ def build_live_trade_kwargs(form: dict) -> dict:
         ]
         contracts = _f(form, "contracts")
         size = int(contracts) if contracts and contracts > 0 else 1
-        debit = _f(form, "entry_price") or 0.0
+        debit = _required_price(form)
         width = fly_mid - fly_lo
         return {
             "ticker": ticker,
@@ -105,7 +136,7 @@ def build_live_trade_kwargs(form: dict) -> dict:
 
     return {
         "ticker": ticker,
-        "entry_price": _f(form, "entry_price") or 0.0,
+        "entry_price": _required_price(form),
         "size": size,
         "trade_type": strategy,
         "strategy": strategy,

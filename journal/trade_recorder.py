@@ -39,7 +39,7 @@ STRATEGY_TYPES = [
 # an exact-only match is what silently zeroed 32 live trades
 # (docs/FORWARD_TEST_AUDIT.md A1).
 _CREDIT_STRATEGIES = frozenset({"credit_spread", "iron_condor", "broken_wing"})
-_DEBIT_STRATEGIES  = frozenset({"debit_spread", "single_leg"})
+_DEBIT_STRATEGIES  = frozenset({"debit_spread", "single_leg", "butterfly"})
 
 
 def round_trip_commission(strategy: str | None, legs: list | None,
