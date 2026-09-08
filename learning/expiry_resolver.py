@@ -109,6 +109,15 @@ class ExpiryResolver:
 
             strategy = t.get("strategy") or t.get("trade_type") or "single_leg"
             exit_px  = self._exit_price(strategy, t.get("legs") or [], spy_close)
+            if exit_px is None:
+                # No convention means no settlement price. Leave the position
+                # open and loud rather than inventing a number — a fabricated
+                # settlement is indistinguishable from a real one once written.
+                logger.error(
+                    f"ExpiryResolver: cannot settle {t.get('trade_id')} "
+                    f"({strategy}) — leaving open for manual review"
+                )
+                continue
 
             note = (
                 f"[AUTO-EXPIRY {today.isoformat()}] "
@@ -166,13 +175,32 @@ class ExpiryResolver:
         return long_val, short_val
 
     @classmethod
-    def _exit_price(cls, strategy: str, legs: list[dict], spy: float) -> float:
+    def _exit_price(cls, strategy: str, legs: list[dict], spy: float) -> float | None:
+        """Settlement cost to close at expiry, or None if we cannot classify it.
+
+        Asks the one owner of the credit/debit convention rather than keeping a
+        private list — a private tuple here exact-matched
+        ("credit_spread", "iron_condor"), so broken_wing took the DEBIT branch
+        and booked its peak profit as a loss and its max loss as a win.
+
+        The result is deliberately NOT clamped at zero. A broken-wing butterfly
+        is long a far wing, so at its body it is worth money to hold: the cost
+        to close is legitimately negative. Clamping booked phantom max-loss —
+        the same defect fixed in exit_manager (audit A2).
+        """
+        from journal.trade_recorder import _pnl_convention
+
         long_val, short_val = cls._intrinsic(legs, spy)
-        s = (strategy or "").lower()
-        if s in ("credit_spread", "iron_condor"):
-            return round(max(0.0, short_val - long_val), 2)
-        # debit_spread, single_leg, stock-like fall back to long - short
-        return round(max(0.0, long_val - short_val), 2)
+        convention = _pnl_convention(strategy)
+        if convention == "credit":
+            return round(short_val - long_val, 2)
+        if convention == "debit":
+            return round(long_val - short_val, 2)
+        logger.error(
+            f"expiry_resolver: no P&L convention for strategy '{strategy}' — "
+            "refusing to settle. Add it to journal.trade_recorder."
+        )
+        return None
 
     @staticmethod
     def _nearest_expiration(legs: list[dict]) -> date | None:

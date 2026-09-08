@@ -269,3 +269,119 @@ def test_format_expiry_message_populated():
     assert "ABC12345" in msg
     assert "credit_spread" in msg
     assert "+150" in msg or "$150" in msg or "+$150" in msg
+
+
+# ── settlement conventions (audit, 2026-09-07) ────────────────────
+# _exit_price exact-name-matched ("credit_spread", "iron_condor"), so
+# broken_wing took the DEBIT branch plus a max(0, ...) clamp. That books the
+# structure's PEAK PROFIT as a loss and its MAX LOSS as the biggest win.
+# Third instance of a defect already fixed in trade_recorder (A1) and
+# exit_manager (A2). 17 open BWB positions were exposed.
+
+from learning.expiry_resolver import ExpiryResolver as _ER
+
+
+def _bwb_legs(k_hi=638, k_mid=635, k_lo=627, exp="2026-10-16"):
+    """Put broken-wing: BUY k_hi, SELL 2x k_mid, BUY k_lo. 3/8 wings."""
+    return [{"action": "BUY",  "option_type": "put", "strike": k_hi, "expiry": exp},
+            {"action": "SELL", "option_type": "put", "strike": k_mid, "expiry": exp},
+            {"action": "SELL", "option_type": "put", "strike": k_mid, "expiry": exp},
+            {"action": "BUY",  "option_type": "put", "strike": k_lo, "expiry": exp}]
+
+
+def _bwb_truth(spy, k_hi=638, k_mid=635, k_lo=627):
+    """Cost to close = -(net intrinsic value held)."""
+    v = max(0.0, k_hi - spy) - 2 * max(0.0, k_mid - spy) + max(0.0, k_lo - spy)
+    return round(-v, 2)
+
+
+def test_bwb_peak_settles_as_a_credit_to_us():
+    """At the body strike the BWB is at MAX PROFIT — we are owed money to
+    close, so the cost is NEGATIVE. The old code returned +3.00."""
+    assert _ER._exit_price("broken_wing", _bwb_legs(), 635.0) == _bwb_truth(635.0)
+    assert _ER._exit_price("broken_wing", _bwb_legs(), 635.0) < 0
+
+
+def test_bwb_max_loss_is_not_clamped_to_zero():
+    """Below the lower wing the BWB is at MAX LOSS. The clamp reported 0.00,
+    i.e. a full-credit win."""
+    assert _ER._exit_price("broken_wing", _bwb_legs(), 620.0) == _bwb_truth(620.0)
+    assert _ER._exit_price("broken_wing", _bwb_legs(), 620.0) > 0
+
+
+def test_bwb_settles_correctly_across_the_whole_payoff():
+    for spy in (645.0, 638.0, 636.0, 635.0, 631.0, 627.0, 620.0):
+        assert _ER._exit_price("broken_wing", _bwb_legs(), spy) == _bwb_truth(spy), spy
+
+
+def test_bwb_far_otm_expires_worthless():
+    assert _ER._exit_price("broken_wing", _bwb_legs(), 700.0) == 0.0
+
+
+def test_condor_still_settles_as_a_credit_structure():
+    """Regression: the fix must not disturb the validated condor path."""
+    legs = [{"action": "SELL", "option_type": "call", "strike": 780},
+            {"action": "BUY",  "option_type": "call", "strike": 785},
+            {"action": "SELL", "option_type": "put",  "strike": 750},
+            {"action": "BUY",  "option_type": "put",  "strike": 745}]
+    assert _ER._exit_price("iron_condor", legs, 765.0) == 0.0      # inside = worthless
+    assert _ER._exit_price("iron_condor", legs, 783.0) == 3.0      # call side breached
+    assert _ER._exit_price("iron_condor", legs, 800.0) == 5.0      # capped at the wing
+
+
+def test_debit_spread_still_settles_as_a_debit_structure():
+    legs = [{"action": "BUY",  "option_type": "call", "strike": 760},
+            {"action": "SELL", "option_type": "call", "strike": 765}]
+    assert _ER._exit_price("debit_spread", legs, 770.0) == 5.0
+    assert _ER._exit_price("debit_spread", legs, 755.0) == 0.0
+
+
+def test_variant_names_resolve_like_their_base_convention():
+    """put_debit_spread must not fall through to a stock-style branch."""
+    legs = [{"action": "BUY",  "option_type": "put", "strike": 760},
+            {"action": "SELL", "option_type": "put", "strike": 755}]
+    assert _ER._exit_price("put_debit_spread", legs, 750.0) == 5.0
+
+
+def test_settlement_uses_the_shared_convention_not_a_private_list():
+    """The defect was a private tuple. Assert this module asks the one owner.
+
+    Checks the CODE, not the docstring — the docstring legitimately names the
+    old tuple to explain what went wrong.
+    """
+    import ast
+    import inspect
+    import textwrap
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_ER._exit_price)))
+    fn = tree.body[0]
+    ast.get_docstring(fn)                      # present, and excluded below
+    body = fn.body[1:] if ast.get_docstring(fn) else fn.body
+    code = "\n".join(ast.dump(n) for n in body)
+    assert "_pnl_convention" in code, "must ask the shared owner"
+    for name in ("iron_condor", "credit_spread", "broken_wing"):
+        assert name not in code, f"private strategy list still here: {name}"
+
+
+def test_unknown_structure_refuses_to_settle():
+    """A missing convention is not a price. Unknown must not silently pick one."""
+    legs = [{"action": "BUY", "option_type": "call", "strike": 760}]
+    assert _ER._exit_price("moon_spread", legs, 770.0) is None
+
+
+def test_unsettleable_position_is_left_open_not_invented(tmp_path, monkeypatch):
+    """A missing convention must not become a recorded settlement."""
+    import config
+    monkeypatch.setattr(config, "LOG_DIR", str(tmp_path) + "/")
+    from journal.trade_recorder import TradeRecorder
+    from datetime import date, timedelta
+    rec = TradeRecorder()
+    exp = (date.today() - timedelta(days=1)).isoformat()
+    tid = rec.log_entry("SPY", 2.00, 1, strategy="moon_spread", book="disciplined",
+                        legs=[{"action": "BUY", "option_type": "call",
+                               "strike": 760, "expiry": exp}],
+                        notes="[AUTO-PAPER] unsettleable")
+    er = _ER(polygon_client=None)
+    er.trades = rec
+    closed = er.resolve_expired(spy_close=770.0)
+    assert closed == [] or all(c.get("trade_id") != tid for c in closed)
+    assert rec.get_trade_by_id(tid)["outcome"] == "open", "must stay open, not settle"
