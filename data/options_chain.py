@@ -157,24 +157,46 @@ class OptionsChain:
             logger.warning("options_chain: no priceable contracts — no structure")
             return None
 
-        # Pick the call with delta closest to target_short_delta
-        short_call = min(
-            calls,
-            key=lambda c: abs((c.get("delta") or 0) - short_delta),
-        )
-        long_call = self._strike_above(calls, short_call["strike"] + wing_width)
+        # An iron condor is FOUR legs in ONE expiration. get_chain returns a
+        # date RANGE (dte_target ± tolerance), and selection by delta or
+        # strike-distance has nothing anchoring the four picks to the same
+        # expiry — so it happily returned structures spanning three of them
+        # (SPY and QQQ both, 2026-09-08). That is not a condor: once the long
+        # put expires a week before the short put, the downside is open, and
+        # the reported max loss is fiction. Choose the expiration FIRST, then
+        # build entirely within it.
+        def _build(exp_calls, exp_puts):
+            sc = min(exp_calls, key=lambda c: abs((c.get("delta") or 0) - short_delta))
+            lc = self._strike_above(exp_calls, sc["strike"] + wing_width)
+            # Puts have negative delta — match magnitudes
+            sp = min(exp_puts, key=lambda c: abs(abs(c.get("delta") or 0) - short_delta))
+            lp = self._strike_below(exp_puts, sp["strike"] - wing_width)
+            return (sc, lc, sp, lp) if all([sc, lc, sp, lp]) else None
 
-        # Puts have negative delta — match magnitudes
-        short_put = min(
-            puts,
-            key=lambda c: abs(abs(c.get("delta") or 0) - short_delta),
-        )
-        long_put = self._strike_below(puts, short_put["strike"] - wing_width)
+        by_exp: dict[str, tuple[list, list]] = {}
+        for c in calls:
+            by_exp.setdefault(c.get("expiration"), ([], []))[0].append(c)
+        for p in puts:
+            by_exp.setdefault(p.get("expiration"), ([], []))[1].append(p)
 
-        if not all([short_call, long_call, short_put, long_put]):
-            logger.warning("options_chain: no priceable wing beyond the short "
-                           "strike — no structure")
+        built = None
+        # Nearest to the requested DTE that can form a COMPLETE condor. An
+        # expiry missing a wing is skipped rather than borrowing one from its
+        # neighbour, which is exactly how the legs drifted apart.
+        for exp in sorted(by_exp, key=lambda e: abs(
+                (by_exp[e][0] or by_exp[e][1])[0].get("dte", 0) - dte_target)):
+            exp_calls, exp_puts = by_exp[exp]
+            if not exp_calls or not exp_puts:
+                continue
+            built = _build(exp_calls, exp_puts)
+            if built:
+                break
+
+        if not built:
+            logger.warning("options_chain: no single expiration can form a "
+                           "complete priced condor — no structure")
             return None
+        short_call, long_call, short_put, long_put = built
 
         sc_m, sp_m, lc_m, lp_m = (self._safe_mid(l) for l in
                                   (short_call, short_put, long_call, long_put))
