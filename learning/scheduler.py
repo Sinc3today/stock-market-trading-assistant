@@ -167,6 +167,42 @@ def job_loop_health(alert_fn=None):
         logger.exception(f"loop_health failed: {e}")
 
 
+def job_forward_audit(alert_fn=None):
+    """Daily: run the falsification validators against the LIVE journal.
+
+    We built 13 validators that catch defects reaching recorded money — and
+    until 2026-09-07 nothing ever ran them except a human typing the command.
+    A validator that only runs when someone remembers is a document, not a
+    control.
+
+    Only P1 failures alert. P2/P3 and the sample-age failures (C1/D1/D2/E2 —
+    "too few trades, untested regimes") are expected and would train the eye to
+    ignore the push.
+    """
+    try:
+        from backtests.forward_audit import FAIL, run_all
+        results = run_all()
+        p1 = [r for r in results if r["verdict"] == FAIL and r["severity"] == "P1"]
+        # These four are sample-age, not defects: no engineering closes them,
+        # only accumulated trades and a regime change do.
+        expected = {"C1", "D1", "D2"}
+        actionable = [r for r in p1 if r["id"] not in expected]
+
+        logger.info(f"forward_audit: {len(results)} checks, {len(p1)} P1 FAIL "
+                    f"({len(actionable)} actionable)")
+        if not actionable:
+            return
+        for r in actionable:
+            logger.error(f"forward_audit {r['id']}: {r['headline']}")
+        if alert_fn:
+            alert_fn(
+                title=f"🔎 Journal integrity: {len(actionable)} P1 issue(s)",
+                body="\n".join(f"• {r['id']} — {r['headline']}" for r in actionable),
+            )
+    except Exception as e:
+        logger.exception(f"forward_audit job failed: {e}")
+
+
 def job_refresh_csv():
     """Weekly: keep backtests/spy_history.csv current so the off-hours replay
     (and backtests) never run on stale data."""
@@ -478,6 +514,19 @@ def register_learning_jobs(
         kwargs={"alert_fn": play_fn},
         id="learning_loop_health",
         name="Learning: loop health monitor",
+        replace_existing=True,
+    )
+
+    # Journal integrity — run the falsification validators against the LIVE
+    # journal. They existed since 2026-09-06 and nothing ever ran them except
+    # a human typing the command; a control nobody runs is a document. 16:25
+    # ET, after the day's exits have settled.
+    scheduler.add_job(
+        job_forward_audit,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=25, timezone=eastern),
+        kwargs={"alert_fn": play_fn},
+        id="learning_forward_audit",
+        name="Learning: journal integrity audit",
         replace_existing=True,
     )
 
