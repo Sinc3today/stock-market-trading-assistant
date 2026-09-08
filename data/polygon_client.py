@@ -68,6 +68,12 @@ class PolygonClient:
             try:
                 logger.debug(f"Fetching {timeframe} bars for {ticker} "
                              f"(attempt {attempt}/{retries})...")
+                # sort="desc" so `limit` truncates the OLDEST bars, not the
+                # newest. Polygon defaults to ascending and cuts from the
+                # front, so limit=1 over a 14-day window returned a bar from
+                # 11 days ago while every caller took .iloc[-1] as "live".
+                # ivr_client and _fetch_spot (limit=1, days_back=5) were
+                # genuinely 2 days stale, and IVR feeds the regime classifier.
                 aggs = self.client.get_aggs(
                     ticker=ticker,
                     multiplier=multiplier,
@@ -76,6 +82,7 @@ class PolygonClient:
                     to=end_date.strftime("%Y-%m-%d"),
                     limit=limit,
                     adjusted=True,
+                    sort="desc",
                 )
 
                 if not aggs:
@@ -92,6 +99,11 @@ class PolygonClient:
                 } for a in aggs])
 
                 df.set_index("timestamp", inplace=True)
+                # We requested newest-first to make `limit` keep the right
+                # end; hand back oldest-first, because every caller does
+                # .iloc[-1] for "latest" and the indicators need ascending
+                # order to compute rolling windows correctly.
+                df.sort_index(inplace=True)
                 df.sort_index(inplace=True)
 
                 logger.info(f"Fetched {len(df)} bars for {ticker} ({timeframe})")

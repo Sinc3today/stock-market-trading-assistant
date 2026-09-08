@@ -94,9 +94,16 @@ class VIXClient:
             self._update_cache(vix)
             return vix
 
-        # ── Last resort: safe default ─────────────────────────
-        logger.warning("VIX unavailable from all sources — using fallback 20.0")
-        return 20.0
+        # ── No source answered ────────────────────────────────
+        # Deliberately None, not a "safe default". A fabricated 20.0 was priced
+        # into every open spread and written back as a real exit price; it also
+        # straddles VIX_CALM_MAX=18.0, so an outage deterministically flipped
+        # the regime out of "calm" and that flip was persisted as a
+        # measurement. Worse, returning a float killed three fallback layers
+        # built for exactly this case — callers' `if vix is None` guards could
+        # never fire. A missing VIX is not a VIX.
+        logger.error("VIX unavailable from all sources — returning None")
+        return None
 
     def get_history(self, days: int = 252) -> Optional[pd.DataFrame]:
         """

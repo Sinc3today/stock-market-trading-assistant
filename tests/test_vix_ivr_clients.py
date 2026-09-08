@@ -71,17 +71,27 @@ class TestVIXClientUnit:
         assert df is None
         print("\n✅ CBOE network error handled gracefully")
 
-    def test_get_current_returns_safe_fallback_when_all_fail(self):
-        """If all data sources fail, get_current returns 20.0 (safe neutral)."""
+    def test_get_current_returns_none_when_all_sources_fail(self):
+        """A missing VIX is not a VIX.
+
+        This test previously asserted a "safe neutral" fallback of 20.0. That
+        fabricated sigma priced every open spread and was written back as a
+        real exit price, and 20.0 sits ABOVE VIX_CALM_MAX so an outage
+        deterministically flipped the regime. The expectation WAS the bug.
+        """
+        import data.vix_client as _vm
+        _vm._cache.update({"vix": None, "fetched_at": None})
         client = VIXClient()
         with patch.object(client, "_fetch_polygon_latest", return_value=None), \
              patch.object(client, "_fetch_cboe_latest",    return_value=None):
             vix = client.get_current()
-        assert vix == 20.0
-        print(f"\n✅ VIX fallback: {vix}")
+        assert vix is None
+        assert vix != 20.0
 
     def test_get_current_uses_cache(self):
         """Second call within TTL should not re-fetch."""
+        import data.vix_client as _vm
+        _vm._cache.update({"vix": None, "fetched_at": None})
         client = VIXClient()
         with patch.object(client, "_fetch_cboe_latest", return_value=15.5) as mock_cboe, \
              patch.object(client, "_fetch_polygon_latest", return_value=None):

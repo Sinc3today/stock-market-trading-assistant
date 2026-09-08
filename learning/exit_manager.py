@@ -512,20 +512,31 @@ class ExitManager:
         return None
 
     def _fetch_vix(self) -> float | None:
+        """Live VIX, or None when no source can supply one.
+
+        The 18.0 default this used to end with was unreachable — VIXClient
+        returned a hardcoded 20.0 rather than None, so neither the yfinance
+        fallback below nor that default could ever run, and manage_open's
+        `if vix is None` guard was dead code.
+
+        Returning None now means: skip today's marks. A stale-but-plausible
+        sigma does not save the day — it prices every open spread and that
+        price is written back as a real exit.
+        """
         if self.vix is not None:
             try:
-                return float(self.vix.get_current())
+                v = self.vix.get_current()
+                if v:
+                    return float(v)
             except Exception as e:
                 logger.warning(f"ExitManager VIX fetch failed: {e}")
-        # Fallback IV: a slightly stale/approx sigma beats skipping every exit
-        # for the day (T4#15). 18 ≈ the long-run VIX median.
         try:
             from alerts.stop_watchdog import yf_spot
             v = yf_spot("^VIX")
             if v:
                 logger.info("ExitManager: using yfinance VIX fallback")
-                return v
+                return float(v)
         except Exception:
             pass
-        logger.warning("ExitManager: all VIX sources down — using 18.0 default sigma")
-        return 18.0
+        logger.error("ExitManager: all VIX sources down — skipping marks today")
+        return None
