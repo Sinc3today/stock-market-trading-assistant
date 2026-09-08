@@ -128,6 +128,9 @@ ALLOWED_LISTS = {
     "alerts/regime_view.py": "display formatting only",
     "signals/options_layer.py:279": "routing: is this a vertical? the credit/"
                                     "debit call itself uses _pnl_convention",
+    "learning/journal_repair.py": "_RISK_EQUALS_PREMIUM — which structures have "
+                                  "max_profit == the premium; a BWB's does not. "
+                                  "Not a credit/debit classification.",
 }
 
 

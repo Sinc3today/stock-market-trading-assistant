@@ -252,3 +252,105 @@ def test_run_applies_repairs_and_normalisations_together(tmp_path, monkeypatch):
     assert t["entry_value"] == pytest.approx(73.0)      # normalised
     assert t["commission"] is not None                  # backfilled
     assert jr.run(apply=False) == []                    # and now clean
+
+
+# ── entry-price repair (2026-09-07) ───────────────────────────────
+# paper_broker wrote a hardcoded $1.00 as the recorded entry price on 18
+# trades. max_profit / max_loss came from the structure builder and are real,
+# so entry can be derived: credit structures store the credit as max_profit,
+# debit structures store the debit as max_loss.
+#
+# But some records have corrupt RISK fields too (max_profit -1437). Those are
+# not recoverable from anything, and must be marked rather than guessed at.
+
+def _placeholder(**kw):
+    base = dict(strategy="iron_condor", entry_price=1.00, exit_price=0.40,
+                max_profit=160.0, max_loss=340.0, size=1,
+                pnl_dollars=60.0, outcome="win")
+    base.update(kw)
+    return _t(**base)
+
+
+def test_credit_entry_is_derived_from_max_profit():
+    plan = jr.plan_entry_repairs([_placeholder()])
+    assert plan[0]["action"] == jr.RESCORE_FROM_RISK
+    assert plan[0]["after"]["entry_price"] == pytest.approx(1.60)
+
+
+def test_debit_entry_is_derived_from_max_loss():
+    t = _placeholder(strategy="put_debit_spread", max_profit=310.0,
+                     max_loss=190.0, entry_price=1.00)
+    assert jr.plan_entry_repairs([t])[0]["after"]["entry_price"] == pytest.approx(1.90)
+
+
+def test_derived_entry_scales_with_size():
+    t = _placeholder(size=4, max_profit=640.0)
+    assert jr.plan_entry_repairs([t])[0]["after"]["entry_price"] == pytest.approx(1.60)
+
+
+def test_pnl_is_recomputed_from_the_derived_entry():
+    """credit 1.60, closed at 0.40 -> +$120, not the recorded +$60."""
+    plan = jr.plan_entry_repairs([_placeholder()])
+    assert plan[0]["after"]["pnl_dollars"] == pytest.approx(120.0)
+    assert plan[0]["after"]["outcome"] == "win"
+
+
+def test_a_rescore_can_flip_a_win_into_a_loss():
+    t = _placeholder(exit_price=2.50, pnl_dollars=-150.0, outcome="loss",
+                     max_profit=160.0)
+    after = jr.plan_entry_repairs([t])[0]["after"]
+    assert after["pnl_dollars"] == pytest.approx(-90.0)
+
+
+def test_corrupt_risk_fields_are_marked_not_guessed():
+    """max_profit -1437 is structurally impossible; nothing can recover it."""
+    for bad in ({"max_profit": -1437.0, "max_loss": 1937.0},
+                {"max_profit": 651.0, "max_loss": -151.0}):
+        plan = jr.plan_entry_repairs([_placeholder(**bad)])
+        assert plan[0]["action"] == jr.MARK_UNSCORED
+        assert plan[0]["after"]["pnl_dollars"] is None
+
+
+def test_a_healthy_record_is_left_alone():
+    assert jr.plan_entry_repairs([_placeholder(entry_price=1.60)]) == []
+
+
+def test_open_positions_are_repaired_too():
+    """An open trade's entry price is still wrong and still feeds MTM."""
+    t = _placeholder(outcome="open", pnl_dollars=None, exit_price=None)
+    plan = jr.plan_entry_repairs([t])
+    assert plan and plan[0]["after"]["entry_price"] == pytest.approx(1.60)
+    assert "pnl_dollars" not in plan[0]["after"], "nothing to recompute while open"
+
+
+def test_repair_is_idempotent():
+    trades = [_placeholder()]
+    once = jr.apply_repairs(trades, jr.plan_entry_repairs(trades))
+    assert jr.plan_entry_repairs(once) == []
+
+
+def test_repair_annotates_what_changed():
+    """Entry repairs carry their own tag, so the two remediation passes stay
+    distinguishable in the journal."""
+    trades = [_placeholder()]
+    out = jr.apply_repairs(trades, jr.plan_entry_repairs(trades))
+    assert jr.ENTRY_REPAIR_TAG in out[0]["notes_exit"]
+    assert "placeholder" in out[0]["notes_exit"].lower()
+    assert "1.6" in out[0]["notes_exit"], "records the derived value"
+
+
+def test_broken_wing_entry_is_never_derived_from_max_profit():
+    """A BWB's max_profit is (upper_wing + credit) x 100 — the peak at the
+    body, not the premium. Deriving from it inflates every BWB by exactly the
+    upper wing. Caught in a dry-run diff before it corrupted 18 records."""
+    bwb = _t(strategy="broken_wing", entry_price=1.52, exit_price=1.00,
+             max_profit=452.0, max_loss=548.0, size=1,
+             pnl_dollars=52.0, outcome="win")
+    assert jr.plan_entry_repairs([bwb]) == [], "BWB entry must be left alone"
+
+
+def test_only_structures_whose_risk_is_the_premium_are_derived():
+    from learning.journal_repair import _RISK_EQUALS_PREMIUM
+    assert "broken_wing" not in _RISK_EQUALS_PREMIUM
+    assert "iron_condor" in _RISK_EQUALS_PREMIUM
+    assert "put_debit_spread" in _RISK_EQUALS_PREMIUM

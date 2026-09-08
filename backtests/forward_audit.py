@@ -66,8 +66,9 @@ def _is_quarantined(t: dict) -> bool:
     These are acknowledged and permanently recorded, not outstanding defects —
     a validator that keeps failing on them cries wolf and stops being read.
     """
-    from learning.journal_repair import REPAIR_TAG
-    return REPAIR_TAG in (t.get("notes_exit") or "")
+    from learning.journal_repair import REPAIR_TAG, ENTRY_REPAIR_TAG
+    notes = t.get("notes_exit") or ""
+    return REPAIR_TAG in notes or ENTRY_REPAIR_TAG in notes
 
 
 def v_a1_unscored(trades):

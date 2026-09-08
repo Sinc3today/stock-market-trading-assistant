@@ -41,7 +41,9 @@ from learning import forward_scorecard as fs
 RESCORE = "rescore"
 MARK_UNSCORED = "mark_unscored"
 NORMALISE = "normalise"          # entry_value units + commission backfill
+RESCORE_FROM_RISK = "rescore_from_risk"   # derive a fabricated entry price
 REPAIR_TAG = "[REPAIRED 2026-09-06]"
+ENTRY_REPAIR_TAG = "[ENTRY REPAIRED 2026-09-07]"
 
 
 def _trades_path() -> str:
@@ -126,6 +128,118 @@ def plan_normalisations(trades: list[dict]) -> list[dict]:
     return plan
 
 
+# Structures where max_profit (credit) / max_loss (debit) IS the premium, so an
+# entry price can be derived from them. Excludes broken_wing, whose max_profit
+# is the peak at the body (upper_wing + credit), and anything whose risk fields
+# encode something other than the premium.
+_RISK_EQUALS_PREMIUM = {
+    "iron_condor", "credit_spread", "debit_spread",
+    "put_debit_spread", "call_debit_spread",
+    "put_credit_spread", "call_credit_spread",
+}
+
+
+def _derived_entry(trade: dict) -> float | None:
+    """Entry price implied by the (real) risk fields, or None if they are
+    themselves corrupt.
+
+    A credit structure stores its credit as max_profit; a debit structure
+    stores its debit as max_loss. Both must be positive — `max_profit: -1437`
+    is structurally impossible and means the record is unrecoverable, not that
+    we should pick the other field.
+    """
+    strategy = (trade.get("strategy") or "").lower()
+    if strategy not in _RISK_EQUALS_PREMIUM:
+        # A broken-wing butterfly's max_profit is (upper_wing + credit) x 100 —
+        # its structural peak at the body, not the premium taken in. Deriving
+        # an entry from it inflates every BWB by exactly the upper wing ($3.00).
+        # Caught in the dry-run diff before it corrupted 18 correct records:
+        # `max_profit` means different things for different structures, which
+        # is the same field-name-shared-meaning-not trap as everything else.
+        return None
+    conv = _pnl_convention(strategy)
+    mp, ml = trade.get("max_profit"), trade.get("max_loss")
+    if conv is None or mp is None or ml is None:
+        return None
+    try:
+        mp, ml, size = float(mp), float(ml), float(trade.get("size") or 1)
+    except (TypeError, ValueError):
+        return None
+    if mp <= 0 or ml <= 0 or size <= 0:
+        return None
+    basis = mp if conv == "credit" else ml
+    entry = basis / 100.0 / size
+    return round(entry, 2) if entry > 0 else None
+
+
+def plan_entry_repairs(trades: list[dict]) -> list[dict]:
+    """Records whose entry_price is the fabricated $1.00 placeholder.
+
+    paper_broker returned a hardcoded 1.00 when it could not read the premium
+    (fixed 2026-09-07). max_profit / max_loss came from the structure builder
+    and are real, so the true entry is recoverable — except where the risk
+    fields are corrupt too, which is marked rather than guessed at.
+    """
+    plan: list[dict] = []
+    for t in trades:
+        if t.get("outcome") == "void" or ENTRY_REPAIR_TAG in (t.get("notes_exit") or ""):
+            continue
+        strategy = (t.get("strategy") or "").lower()
+        conv = _pnl_convention(strategy)
+        ep = t.get("entry_price")
+        if conv is None or ep is None:
+            continue
+        # Only structures whose risk fields ARE the premium can be judged here.
+        # Anything else (broken_wing) is left completely alone — we cannot tell
+        # a good entry from a bad one, so we must not touch it either way.
+        if strategy not in _RISK_EQUALS_PREMIUM:
+            continue
+        mp, ml = t.get("max_profit"), t.get("max_loss")
+        if mp is None or ml is None:
+            continue                              # nothing to judge against
+
+        want = _derived_entry(t)
+        if want is not None and abs(float(ep) - want) <= 0.02:
+            continue                              # already consistent
+
+        tid = t.get("trade_id")
+        if want is None:
+            # Risk fields are present but impossible. Only a record that also
+            # carries the known placeholder is safe to call corrupt.
+            if t.get("pnl_dollars") is None or round(float(ep), 2) != 1.00:
+                continue
+            plan.append({
+                "trade_id": tid, "action": MARK_UNSCORED,
+                "reason": ("entry price was a placeholder AND the risk fields "
+                           f"are impossible (max_profit={t.get('max_profit')}, "
+                           f"max_loss={t.get('max_loss')})"),
+                "before": {"entry_price": ep, "pnl_dollars": t.get("pnl_dollars")},
+                "after": {"pnl_dollars": None, "outcome": "unscored"},
+            })
+            continue
+
+        after = {"entry_price": want}
+        # Only recompute P&L once the trade has actually closed.
+        xp = t.get("exit_price")
+        if is_closed(t := t) and xp is not None and t.get("pnl_dollars") is not None:
+            pps = (want - float(xp)) if conv == "credit" else (float(xp) - want)
+            pnl = round(pps * 100 * float(t.get("size") or 1), 2)
+            after["pnl_dollars"] = pnl
+            after["outcome"] = _outcome_for(pnl)
+        plan.append({
+            "trade_id": tid, "action": RESCORE_FROM_RISK,
+            "reason": (f"entry price {ep} was a placeholder; derived {want} "
+                       f"from {'max_profit' if conv == 'credit' else 'max_loss'}"),
+            "before": {"entry_price": ep, "pnl_dollars": t.get("pnl_dollars")},
+            "after": after,
+        })
+    return plan
+
+
+def is_closed(trade: dict) -> bool:
+    return fs.is_closed(trade)
+
+
 def plan_repairs(trades: list[dict]) -> list[dict]:
     """What we would change, and why. Read-only."""
     plan: list[dict] = []
@@ -180,6 +294,13 @@ def apply_repairs(trades: list[dict], plan: list[dict]) -> list[dict]:
             out.append(dict(t))
             continue
         n = dict(t)
+        if p["action"] == RESCORE_FROM_RISK:
+            n.update(p["after"])
+            note = (t.get("notes_exit") or "").strip()
+            if ENTRY_REPAIR_TAG not in note:
+                n["notes_exit"] = f"{note}\n{ENTRY_REPAIR_TAG} {p['reason']}".strip()
+            out.append(n)
+            continue
         if p["action"] == NORMALISE:
             n.update(p["after"])        # field-level fix; no verdict changes
             out.append(n)
@@ -193,9 +314,11 @@ def apply_repairs(trades: list[dict], plan: list[dict]) -> list[dict]:
         else:
             n["pnl_pct"] = None
             n["pnl_per_contract"] = None
+        tag = (ENTRY_REPAIR_TAG if "placeholder" in p.get("reason", "")
+               else REPAIR_TAG)
         note = (t.get("notes_exit") or "").strip()
-        if REPAIR_TAG not in note:
-            n["notes_exit"] = f"{note}\n{REPAIR_TAG} {p['reason']}".strip()
+        if tag not in note:
+            n["notes_exit"] = f"{note}\n{tag} {p['reason']}".strip()
         out.append(n)
     return out
 
@@ -213,13 +336,16 @@ def run(apply: bool = False) -> list[dict]:
     # Verdict repairs first, then bookkeeping normalisation over the result —
     # a rescored trade needs its commission backfilled from the NEW P&L.
     plan = plan_repairs(trades)
+    entry = plan_entry_repairs(apply_repairs(trades, plan) if plan else trades)
     if not apply:
-        preview = apply_repairs(trades, plan) if plan else trades
-        return plan + plan_normalisations(preview)
+        staged = apply_repairs(trades, plan) if plan else trades
+        staged = apply_repairs(staged, entry) if entry else staged
+        return plan + entry + plan_normalisations(staged)
 
     repaired = apply_repairs(trades, plan) if plan else [dict(t) for t in trades]
+    repaired = apply_repairs(repaired, entry) if entry else repaired
     norm = plan_normalisations(repaired)
-    if not plan and not norm:
+    if not plan and not entry and not norm:
         return []
     repaired = apply_repairs(repaired, norm)
 
@@ -233,8 +359,8 @@ def run(apply: bool = False) -> list[dict]:
         json.dump(repaired, fh, indent=2)
     os.replace(tmp, path)
     logger.info(f"journal_repair: applied {len(plan)} repairs, "
-                f"{len(norm)} normalisations")
-    return plan + norm
+                f"{len(entry)} entry repairs, {len(norm)} normalisations")
+    return plan + entry + norm
 
 
 def main():
@@ -246,6 +372,7 @@ def main():
     rescore = [p for p in plan if p["action"] == RESCORE]
     unscored = [p for p in plan if p["action"] == MARK_UNSCORED]
     norm = [p for p in plan if p["action"] == NORMALISE]
+    entry_fix = [p for p in plan if p["action"] == RESCORE_FROM_RISK]
 
     print("=" * 76)
     print(f"JOURNAL REPAIR — {'APPLIED' if apply else 'DRY RUN'} — {len(plan)} records")
@@ -262,6 +389,19 @@ def main():
     print(f"\nMARK UNSCORED ({len(unscored)}) — exit price is fiction:")
     for p in unscored:
         print(f"  {p['trade_id']}  {p['reason']}")
+
+    if entry_fix:
+        print(f"\nENTRY REPAIR ({len(entry_fix)}) — placeholder $1.00 -> derived from risk fields:")
+        net = 0.0
+        for p in entry_fix:
+            b, a = p["before"], p["after"]
+            dp = ""
+            if "pnl_dollars" in a and b.get("pnl_dollars") is not None:
+                delta = a["pnl_dollars"] - b["pnl_dollars"]
+                net += delta
+                dp = f"   P&L ${b['pnl_dollars']:+8.2f} -> ${a['pnl_dollars']:+8.2f}  ({delta:+.2f})"
+            print(f"  {p['trade_id']}  entry ${b['entry_price']:.2f} -> ${a['entry_price']:.2f}{dp}")
+        print(f"  {'':10} net P&L correction: ${net:+,.2f}")
 
     if norm:
         ev_fixes = [p for p in norm if "entry_value" in p["after"]]
