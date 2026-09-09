@@ -457,7 +457,13 @@ class ExitManager:
             return None
         convention = _pnl_convention(strategy)
         if convention is None:
-            logger.error(f"_pnl_dollars: no P&L convention for '{strategy}'")
+            # "custom"/"none" cannot be classified by name and never will be;
+            # an unrecognised name is a real defect. Same refusal, different
+            # volume — see journal.trade_recorder.convention_status.
+            from journal.trade_recorder import convention_status
+            _log = (logger.info if convention_status(strategy) == "unclassifiable"
+                    else logger.error)
+            _log(f"_pnl_dollars: no P&L convention for '{strategy}'")
             return None
         pps = (entry - exit_price) if convention == "credit" else (exit_price - entry)
         return round(pps * size * 100, 2)

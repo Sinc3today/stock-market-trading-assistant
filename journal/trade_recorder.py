@@ -41,6 +41,20 @@ STRATEGY_TYPES = [
 _CREDIT_STRATEGIES = frozenset({"credit_spread", "iron_condor", "broken_wing"})
 _DEBIT_STRATEGIES  = frozenset({"debit_spread", "single_leg", "butterfly"})
 
+# Names that CANNOT determine the convention, by design — not a gap waiting to
+# be filled. rh_sync emits "custom" for a Robinhood position it cannot name (a
+# 3-leg, 5+-leg, or hand-edited structure), and "none" is the no-trade stub.
+# Whether such a position was opened for a credit or a debit is a property of
+# its legs and their prices, not of the word "custom", so there is no set to
+# add them to.
+#
+# The distinction exists for the LOG, not the outcome: both still refuse to
+# score. But the old message told you to "add it to _CREDIT_STRATEGIES /
+# _DEBIT_STRATEGIES", which is right for a typo and wrong for these, and it
+# fired at ERROR on every audit run for two permanent records. A message that
+# always fires stops meaning anything.
+_UNCLASSIFIABLE_STRATEGIES = frozenset({"custom", "none"})
+
 
 def round_trip_commission(strategy: str | None, legs: list | None,
                           size: float | None) -> float:
@@ -102,6 +116,25 @@ def _pnl_convention(strategy: str | None) -> str | None:
     if s.endswith("_debit_spread") or s.endswith("_debit"):
         return "debit"
     return None
+
+
+def convention_status(strategy: str | None) -> str:
+    """'credit' | 'debit' | 'unclassifiable' | 'unknown'.
+
+    Same answer as _pnl_convention for the first two; splits its None into the
+    two cases that need different responses. 'unclassifiable' is expected and
+    permanent (see _UNCLASSIFIABLE_STRATEGIES); 'unknown' is a defect — a typo
+    or an unwired producer — and is the only one worth an ERROR.
+
+    Callers that must decide "can I score this?" should keep using
+    _pnl_convention. This is for diagnosis.
+    """
+    conv = _pnl_convention(strategy)
+    if conv:
+        return conv
+    if (strategy or "").strip().lower() in _UNCLASSIFIABLE_STRATEGIES:
+        return "unclassifiable"
+    return "unknown"
 
 
 class TradeRecorder:
@@ -305,10 +338,14 @@ class TradeRecorder:
                 trade["notes_exit"]       = notes
                 trade["exit_reason"]      = exit_reason
                 updated = True
-                logger.error(
+                _log = (logger.info
+                        if convention_status(strategy) == "unclassifiable"
+                        else logger.error)
+                _log(
                     f"Trade exit UNSCORED: [{trade_id}] {trade['ticker']} "
-                    f"{strategy} — no P&L convention for this strategy. "
-                    "Add it to _calculate_pnl."
+                    f"{strategy} — no P&L convention for this strategy."
+                    + ("" if convention_status(strategy) == "unclassifiable"
+                       else " Add it to _calculate_pnl.")
                 )
                 break
 
@@ -531,11 +568,21 @@ class TradeRecorder:
             pps = exit_price - entry
             return pps, round(pps * size * 100, 2)
 
-        logger.error(
-            f"_calculate_pnl: no P&L convention for strategy '{strategy}' — "
-            "refusing to fabricate $0. Add it to _CREDIT_STRATEGIES / "
-            "_DEBIT_STRATEGIES in journal/trade_recorder.py."
-        )
+        if convention_status(strategy) == "unclassifiable":
+            # Expected and permanent — the name genuinely cannot determine the
+            # convention. Refuse to score, but do not raise an alarm that has
+            # no action behind it.
+            logger.info(
+                f"_calculate_pnl: '{strategy}' cannot be classified by name — "
+                "leaving this trade unscored (correct; see "
+                "_UNCLASSIFIABLE_STRATEGIES)."
+            )
+        else:
+            logger.error(
+                f"_calculate_pnl: no P&L convention for strategy '{strategy}' — "
+                "refusing to fabricate $0. Add it to _CREDIT_STRATEGIES / "
+                "_DEBIT_STRATEGIES in journal/trade_recorder.py."
+            )
         return None, None
 
     def _get_cost_basis(

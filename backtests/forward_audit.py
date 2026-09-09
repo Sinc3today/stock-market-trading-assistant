@@ -32,9 +32,69 @@ COMMISSION_PER_LEG = config.COMMISSION_PER_CONTRACT_LEG
 MIN_CLOSED_FOR_A_CLAIM = 10
 
 
+# ── which gate does each validator answer for? ───────────────────
+#
+# VALIDATION_AGENDA.md set Gate 0's exit criterion as "zero P1 FAIL", counting
+# every validator here. But the audit spans all the gates: C1 asks whether the
+# SAMPLE has matured, D1 whether it covers more than one market state, D2
+# whether the result beats chance. Those are Gate 1 and Gate 2 questions, and
+# only time and a regime change close them.
+#
+# So Gate 0 -- "can we believe our own journal?" -- required, as a
+# precondition for starting to collect trades, that we had already collected
+# enough trades. It read IN PROGRESS while every engineering defect under it
+# was closed. Scoping lives here, in code, so the criterion cannot drift from
+# the validator set again (tests/test_gate_scope.py enforces it).
+GATE_OF = {
+    "A1": 0,   # was every closed trade actually scored?
+    "A2": 0,   # do P&L sign conventions agree across implementations?
+    "A3": 0,   # is the contract multiplier applied consistently?
+    "A4": 0,   # does the edge survive commissions?
+    "B1": 0,   # are exit prices physically possible?
+    "B2": 0,   # is the open tail marked?
+    "B3": 0,   # do marks respect structural bounds?
+    "C2": 0,   # are voids structural rather than outcome-based?
+    "C4": 0,   # do duplicate records inflate n?
+    "F1": 0,   # does "correct" mean something?
+    "C1": 1,   # has any structure accumulated a mature sample? (promotion)
+    "D1": 2,   # does the sample cover more than one market state?
+    "D2": 2,   # is the result distinguishable from noise?
+    "E2": 2,   # is the disciplined book one consistent strategy?
+}
+
+
 def _result(vid, name, severity, verdict, headline, evidence=None):
     return {"id": vid, "name": name, "severity": severity, "verdict": verdict,
-            "headline": headline, "evidence": evidence or []}
+            "headline": headline, "evidence": evidence or [],
+            "gate": GATE_OF.get(vid)}
+
+
+def gate_status(trades: list[dict] | None = None) -> dict[int, dict]:
+    """Per-gate verdict counts, so a gate is judged on its OWN questions.
+
+    A gate is `clean` when it has no P1 failure of its own. Gate 0's criterion
+    is therefore "the instrument is trustworthy", not "we already have the
+    sample that Gates 1 and 2 exist to accumulate".
+    """
+    out: dict[int, dict] = {}
+    for r in run_all(trades):
+        g = r.get("gate")
+        if g is None:
+            continue
+        d = out.setdefault(g, {"p1_fail": 0, "fail": 0, "warn": 0, "pass": 0,
+                               "clean": True, "open": []})
+        if r["verdict"] == FAIL:
+            d["fail"] += 1
+            if r["severity"] == "P1":
+                d["p1_fail"] += 1
+            d["open"].append(f"{r['id']} [{r['severity']}] {r['headline']}")
+        elif r["verdict"] == WARN:
+            d["warn"] += 1
+        else:
+            d["pass"] += 1
+    for d in out.values():
+        d["clean"] = d["p1_fail"] == 0
+    return out
 
 
 def _load_trades() -> list[dict]:
@@ -348,10 +408,29 @@ def v_c2_voids(trades):
 # ── C4: duplicates ───────────────────────────────────────────────
 
 def v_c4_duplicates(trades):
+    """Is n inflated by the same trade recorded twice?
+
+    The signature omitted the two fields that actually separate two SPY iron
+    condors opened in the same minute — the expiration and the DTE bucket —
+    so the journal's only "duplicate" was a 0DTE and a 1-3DTE stub opened
+    together (F1A205B7 / 200A9567). entry_price was 1.0 on both, the $1.00
+    placeholder, which erased the last field that might have told them apart.
+
+    Quarantined records are also skipped: a void record is excluded from every
+    headline, so it cannot commit the inflation this validator exists to
+    detect. A check that fires on records nothing counts trains you to ignore
+    it — the same reasoning as B3.
+    """
     sig = defaultdict(list)
     for t in trades:
+        if fs.integrity(t) == "void":
+            continue      # excluded from every headline; cannot inflate n
+        expiries = tuple(sorted(
+            str(l.get("expiry") or l.get("expiration") or "")[:10]
+            for l in (t.get("legs") or [])))
         key = (t.get("entry_date"), t.get("ticker"), t.get("strategy"),
-               t.get("entry_price"), t.get("size"))
+               t.get("entry_price"), t.get("size"),
+               t.get("dte_bucket"), expiries)
         sig[key].append(t.get("trade_id"))
     dups = {k: v for k, v in sig.items() if len(v) > 1}
     if not dups:
@@ -393,7 +472,13 @@ def v_d1_regime_coverage(trades):
     thin = [r for r in known if 0 < counts.get(r, 0) < MIN_CLOSED_FOR_A_CLAIM]
     days = sorted(str(t.get("entry_date") or "")[:10] for t in trades if t.get("entry_date"))
     ev.append("")
-    ev.append(f"sample span: {days[0]} -> {days[-1]} ({len(set(days))} entry days)")
+    # An empty journal is a legitimate state (a fresh deployment, or any test
+    # running under an isolated LOG_DIR). Indexing days[0] raised IndexError
+    # there, and run_all's blanket except turned the crash into a WARN whose id
+    # was the function name — so the validator vanished from its own gate
+    # accounting without anyone noticing.
+    ev.append(f"sample span: {days[0]} -> {days[-1]} ({len(set(days))} entry days)"
+              if days else "sample span: no dated entries yet")
     ev.append("A premium-selling book is SUPPOSED to look good in a calm drift. "
               "Regimes with n=0 are untested, not validated.")
     if untested or thin:
@@ -576,6 +661,12 @@ VALIDATORS = [
 ]
 
 
+def validator_id(fn) -> str:
+    """'v_d1_regime_coverage' -> 'D1'. The naming convention IS the id."""
+    parts = fn.__name__.split("_")
+    return parts[1].upper() if len(parts) > 1 else fn.__name__
+
+
 def run_all(trades: list[dict] | None = None) -> list[dict]:
     trades = _load_trades() if trades is None else trades
     out = []
@@ -583,13 +674,18 @@ def run_all(trades: list[dict] | None = None) -> list[dict]:
         try:
             out.append(fn(trades))
         except Exception as e:  # a broken validator must not hide the others
-            out.append(_result(fn.__name__, fn.__name__, "?", WARN,
-                               f"validator raised: {e}"))
+            # A crash used to be reported as a WARN under the FUNCTION name, so
+            # the check vanished from GATE_OF and from its gate's accounting —
+            # a gate could read "clean" because one of its validators died. A
+            # check that did not run is a P1 FAIL, not a warning, and it keeps
+            # its own id so the gate still sees it.
+            out.append(_result(validator_id(fn), fn.__name__, "P1", FAIL,
+                               f"validator CRASHED and did not run: {e}"))
     try:
         out.append(v_f1_push_band())
     except Exception as e:
-        out.append(_result("F1", "'Correct' means something", "P2", WARN,
-                           f"validator raised: {e}"))
+        out.append(_result("F1", "'Correct' means something", "P1", FAIL,
+                           f"validator CRASHED and did not run: {e}"))
     return out
 
 

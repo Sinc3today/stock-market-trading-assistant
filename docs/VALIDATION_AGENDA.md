@@ -61,21 +61,57 @@ falsification test. New recurring risk → add a validator to
 Each gate has entry criteria (what must be true to start) and exit criteria
 (what must be true to pass). **Gates are not skippable and not reorderable.**
 
-### Gate 0 — Instrumentation trust · **IN PROGRESS**
+### Gate 0 — Instrumentation trust · **RE-SCOPED 2026-09-09**
 *Can we believe our own journal?*
 
 | | |
 |---|---|
-| Exit criteria | `forward_audit` shows **zero P1 FAIL**; trust ratio **>95%**; every headline carries a CI |
-| Status | **4 FAIL / 2 WARN / 7 PASS** · trust **69.9%** |
-| Remaining | **All engineering defects closed.** The 4 failures are C1/D1/D2/E2 — sample age and regime coverage, which only time resolves. Trust stays at 69.9% permanently: the 32 quarantined records can never become trustworthy. |
+| Exit criteria | **Zero P1 FAIL among the Gate-0 validators** (A1–A4, B1–B3, C2, C4, F1); every headline carries a CI |
+| Status | **8 PASS / 2 FAIL** — see below |
+| Remaining | **B2** (P1) and **A3** (P2) |
+
+> **Why the criterion changed.** It used to read "zero P1 FAIL" across the whole
+> audit. But the audit spans every gate: C1 asks whether the *sample* has
+> matured, D1 whether it covers more than one market state, D2 whether the
+> result beats chance. Those are Gate 1 and Gate 2 questions, closed only by
+> time and a regime change.
+>
+> So Gate 0 required, as a precondition for *starting to collect trades*, that
+> we had already collected enough trades. It read IN PROGRESS for weeks while
+> every engineering defect under it was being closed.
+>
+> Scoping now lives in `backtests/forward_audit.GATE_OF`, not in this
+> paragraph, and `tests/test_gate_scope.py` fails if a validator has no gate or
+> if a sample-maturity check is assigned to Gate 0. Ask for the per-gate
+> picture with `forward_audit.gate_status()`.
+
+**The two open items:**
+
+- **B2 — open tail marked by model only (P1).** Previously logged as an accepted
+  risk, and it is: this Polygon tier returns no option bid/ask, so the open tail
+  is marked from a Black-Scholes model rather than quotes. It flips between WARN
+  and FAIL with the market — WARN at +$463 unrealized on 2026-09-08, FAIL at
+  −$393 the next morning — because a negative tail means the closed-only
+  headline flatters us. The instrument limitation is accepted and disclosed on
+  `/scorecard`; what is NOT settled is how far the model marks sit from real
+  fills. That is the open question, and only real fills answer it.
+- **A3 — one record stores `entry_value` inconsistently (P2).** `9C475659`, the
+  live RH-synced position expiring 2026-09-18, has `entry_price=1.6`, `size=3`
+  and `entry_value=-640`, where `1.6 × 100 × 3 = 480`. rh_sync updates size and
+  price on re-sync but never recomputes the derived field. **Nothing in
+  production reads `entry_value`** — it is written by `trade_recorder`, repaired
+  by `journal_repair`, validated by A3, and consumed by no decision anywhere.
+  Two options, both defensible, neither taken yet: recompute it on update, or
+  delete the field and the two modules that maintain it. The disagreement still
+  matters as a *signal* — it says the recorded size of a real-money position
+  changed and the record only partly absorbed it.
 
 ### Gate 1 — Candidate promotion
 *Has any structure earned a place in the disciplined book?*
 
 | | |
 |---|---|
-| Entry | Gate 0 clean |
+| Entry | Gate 0 clean (its OWN validators — see the re-scope note) |
 | Exit | ≥15 closed, ≥70% win **with CI lower bound >50%**, avg >$20 **net of commissions**, no loss > max_loss, and ≥2 distinct regimes |
 | Status | 7DTE 8/15 (avg −$54, failing), QQQ 6/15, BWB 1/15, dip-buy 3/15 |
 
@@ -132,7 +168,7 @@ Each gate has entry criteria (what must be true to start) and exit criteria
 
 ## Part 4 — Standing backlog
 
-Ordered by what unblocks the most. Status as of 2026-09-06.
+Ordered by what unblocks the most. Status as of **2026-09-09**.
 
 | # | Item | Gate | Sev | Status |
 |---|---|---|---|---|
@@ -141,13 +177,17 @@ Ordered by what unblocks the most. Status as of 2026-09-06.
 | 3 | B1 phantom $0.00 fills | 0 | P1 | **DONE** — root cause was 0DTE intrinsic marking, not lookup failure |
 | 4 | A3 `entry_value` unit mismatch | 0 | P2 | **DONE** — third instance of exact-name matching; 51 records rescaled |
 | 5 | A4 commissions unmodeled | 1 | P2 | **DONE** — `pnl_net` recorded per trade; promotion bars judged net |
-| 6 | C4 duplicate entry signature | 0 | P3 | **TODO** — 1 pair from 2026-05-27 |
-| 7 | B2 open tail marked by model only | 0 | P1 | **ACCEPTED RISK** — no live option quotes exist; disclosed on `/scorecard` |
+| 6 | C4 duplicate entry signature | 0 | P3 | **DONE 2026-09-09** — not duplicates. Signature omitted expiry + DTE bucket, so a 0DTE and a 1-3DTE stub opened in the same minute collided; both were void anyway. Signature widened, void records skipped. |
+| 7 | B2 open tail marked by model only | 0 | P1 | **OPEN** — limitation accepted and disclosed, but the size of the model-vs-fill error is unmeasured. Needs real fills. |
 | 8 | C1 thin candidate buckets | 1 | P1 | **TIME** — needs closed trades |
 | 9 | D1 untested regimes | 2 | P1 | **TIME** — needs a regime change; consider deliberately paper-trading the missing states |
 | 10 | D2 CI spans 50% | 2 | P1 | **TIME** — needs n |
 | 11 | E2 only 1 trade under current ruleset | 2 | P2 | **TIME** — accumulating since 2026-08-14 |
 | 12 | F2 prediction horizon ≠ trade horizon | — | P3 | **FRAMING** — state it on the dashboard, don't "fix" it |
+
+| 13 | `entry_value` is written, repaired and validated but never read | 0 | P2 | **DECISION NEEDED** — recompute on rh_sync update, or delete the field and its two maintainers |
+| 14 | strategy names that cannot be classified (`custom`/`none`) logged at ERROR | 0 | P3 | **DONE 2026-09-09** — `convention_status()` splits "unclassifiable by design" from "unknown name". Same refusal to score; ERROR now means something again. |
+| 15 | a crashing validator was reported as a WARN under its function name | 0 | P1 | **DONE 2026-09-09** — it dropped out of gate accounting entirely, so a gate could read clean with a dead validator inside it. Now a P1 FAIL that keeps its id. D1 was crashing on an empty journal. |
 
 **Items 8–11 are not bugs.** They are "the sample is too young and too calm."
 No amount of engineering closes them; only time and a regime change do. The
