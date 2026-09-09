@@ -4,6 +4,88 @@
 
 ---
 
+## 2026-09-08 — Two dashboard bugs, five defects, and a condor that wasn't one
+
+**What was worked on (plain language):**
+- Started the day closing out the hardening plan and answering "what's next in the agenda."
+  Found the agenda itself is mis-specified: **Gate 0's exit criterion can never be met**, because
+  it demands "zero P1 FAIL" across all 14 validators, and three of those failures (C1/D1/D2) are
+  sample-maturity questions belonging to Gates 1 and 2. Gate 0 currently requires, as a
+  precondition for collecting trades, that we have already collected enough trades.
+- Before that, while pricing out a menu of small tasks, found a live P1 in `_mark_spread`: it
+  matched leg direction with `action == "BUY"`, case-sensitively, while the journal holds both
+  casings. Every lowercase leg was priced as a SHORT. Since the Phase 1 consolidation this is the
+  single marking function behind all four generators. One open **disciplined** condor carried a
+  mark implying a **-$978 loss on a structure whose floor is -$320**. It would have booked that
+  fabricated loss at the time stop.
+- Added **B3** as the durable catch: a defined-risk position cannot book more than max_profit or
+  lose more than max_loss. Pure arithmetic, no live price, no credit/debit opinion — and nothing
+  had ever run it. It immediately found a second record whose entry_price is the old $1.00
+  placeholder while its max_loss remembers the real $5.03 basis (already quarantined).
+
+**Then the user reported two dashboard bugs, which turned out to be five:**
+1. **Price row blank.** Not pre-market — a long-weekend bug. `_ticker_spot` was a private copy of
+   `get_latest_price` with a 3-day lookback; the Tuesday after Labor Day put the last session 4
+   days back and the window held no trading day. Two copies of one decision, drifted apart.
+2. **The card said "live underlying" unconditionally** — asserting liveness the data did not
+   support. Now states which it is and when it is from.
+3. **No expiry date on today's play.** The chain refused (unpriced leg — Phase 0 working), the
+   system fell back to theoretical legs, and those carry no expiration at all.
+4. **The published DTE was wrong.** Briefs said "(45 days)" beside contracts 38-50 days out —
+   printing the requested DTE next to the chosen expiry. Same family as "7DTE is really 8.7 days."
+5. **One unpriced wing threw away a whole trading day.** 49 of 60 calls were priceable; selection
+   picked by delta with no regard for price, landed on one of the 11 that were not, and refused
+   everything.
+
+**The serious one — "iron condors" spanning three expirations:**
+`find_iron_condor` fetches a date RANGE and nothing anchored the four legs to one expiry. It
+returned short_put Oct 30 / long_put Oct 16 / calls Oct 23 for both SPY and QQQ. That is not a
+condor — once the long put expires a week before the short put, the downside is open, and the
+reported "max loss $96" is fiction. It announced only the short call's expiry, so paper_broker,
+expiry_resolver and exit_manager all believed it was clean.
+
+Caught it by **plausibility, not by a test**: a 5-wide QQQ condor collecting $4.04 is 80% of its
+width, where a 16-delta condor normally collects 20-30%. A nonsense credit is what mixed
+expirations look like from outside. Blast radius was small (1 of 113 records, closed).
+
+**A mistake worth recording:** my own priceability filter, added an hour earlier, changed which
+contracts win the delta match and turned that latent bug into an active one for both tickers.
+Narrowing a candidate set is a behaviour change, not just a filter. It is in the commit message.
+
+`find_vertical_spread` had the identical defect (a "vertical" could be a diagonal). Fixing only
+the condor would have been the "3 of 13" mistake again, so `test_structure_single_expiry.py`
+enumerates the builders and asserts the `find_*` set is exactly those two — a third cannot ship
+without the constraint.
+
+**Also found:** `max_loss` was computed from the REQUESTED wing width, not the actual strikes.
+SPY's grid is 1-wide near the money and 5-wide far out, so the wing rarely lands on target —
+understating risk precisely where the wings live. Now uses the wider actual side.
+
+**Decisions:**
+- Enumerator allowances are now pinned to the enclosing **function**, not a line number. The old
+  `file:lineno` pin broke on any edit above the allowed code, which teaches people to bump the pin
+  without reading it — the exact reflex the guard exists to prevent.
+- Rewrote a test that asserted the DTE-label bug as if it were the spec. Standing rule 6 says fix
+  the code not the assertion; the exception is when the assertion IS the defect, and that is worth
+  saying out loud rather than quietly editing.
+
+**Installed today's play** (regenerated off the fixed chain, not posted to Discord): SPY iron
+condor, single expiry 2026-10-23 (45 days), SELL 732P/BUY 727P, SELL 794C/BUY 799C, credit $1.80,
+max profit $180, max loss $320. Note it was installed at 20:56 ET — after the close — so the bot
+cannot open it today.
+
+**Open questions for next session:**
+- Gate 0 re-scoping needs a decision (see above). It is a judgement call about the risk ladder.
+- Credits still price at 35-48% of width vs a 20-30% norm. The marks come from last prints, not
+  live quotes (the known B2 accepted risk). Worth quantifying how far off they are once we have
+  real fills.
+- CPI is Wed 9/9 (bot will SKIP). Thu 9/10 and Fri 9/11 are clear; 9/15-9/18 is FOMC week and all
+  four are event days.
+
+**Tests:** 1,841 passing (was 1,784). Four commits, all deployed and verified.
+
+---
+
 ## 2026-09-07 — System audit + Phase 0 hardening: the instrument was lying
 
 **What was worked on (plain language):**
