@@ -1311,8 +1311,21 @@ def _seed_live_condor_trade(tmp_log_dir):
 
 
 def _quiet_copilot_net(monkeypatch, web_app, plan=None, walls=None):
-    """Kill every network fetch the copilot page makes."""
+    """Kill every network fetch the copilot page makes.
+
+    Patch _spot_quote, not _spy_spot: since 2026-09-08 it is the single price
+    lookup and _spy_spot/_qqq_spot/_ticker_spot all delegate to it. Stubbing
+    only the wrapper left /copilot fetching live prices during the suite —
+    tests that render whatever the market happened to be doing, which is how
+    test_copilot_stale_plays_get_no_placed_button started failing on a real
+    724 strike appearing in the live condor calculator.
+    """
+    monkeypatch.setattr(web_app, "_spot_quote",
+                        lambda sym: {"price": 750.0 if sym == "SPY" else 700.0,
+                                     "as_of": None, "stale": False,
+                                     "source": "close"})
     monkeypatch.setattr(web_app, "_spy_spot", lambda: 750.0)
+    monkeypatch.setattr(web_app, "_qqq_spot", lambda: 700.0)
     monkeypatch.setattr(web_app, "_spy_vix", lambda: 15.0)
     monkeypatch.setattr(web_app, "_position_mtm_cached", lambda t: None)
     monkeypatch.setattr(web_app, "_fetch_spy_walls_for_today",

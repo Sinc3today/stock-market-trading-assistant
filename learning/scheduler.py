@@ -154,14 +154,24 @@ def job_loop_health(alert_fn=None):
     predictions, KB growth, spy_history.csv, RH session) so a broken component
     surfaces in days, not the ~5 weeks the off-hours learner sat dead."""
     try:
-        from learning.loop_health import gather_and_assess
+        from learning.loop_health import gather_and_assess, classify_issues
         issues = gather_and_assess()
-        if issues:
-            logger.warning("loop_health: " + " | ".join(issues))
+        split = classify_issues(issues)
+        loop, external = split["loop"], split["external"]
+
+        # A third-party API being noisy is not the learning loop needing
+        # attention. Two pages went out on 2026-09-08/09 under that title for
+        # an ETF earnings 404 and a transient FRED timeout, while every
+        # learning artifact was fresh. Log the noise; only page for ours.
+        if external:
+            logger.warning("loop_health (external, not paged): "
+                           + " | ".join(external))
+        if loop:
+            logger.warning("loop_health: " + " | ".join(loop))
             if alert_fn:
                 alert_fn(title="⚠️ Learning loop needs attention",
-                         body="\n".join(f"• {i}" for i in issues))
-        else:
+                         body="\n".join(f"• {i}" for i in loop))
+        elif not external:
             logger.info("loop_health: all learning artifacts fresh")
     except Exception as e:
         logger.exception(f"loop_health failed: {e}")

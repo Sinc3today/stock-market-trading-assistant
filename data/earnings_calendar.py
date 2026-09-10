@@ -56,6 +56,24 @@ CACHE_FILE_NAME = "earnings_calendar.json"
 YFINANCE_DELAY_SEC = 0.5
 
 
+# Instruments that do not report earnings. Asking yfinance anyway returns
+# HTTP 404 "No fundamentals data found for symbol: SPY" — and yfinance logs
+# that ERROR itself, before our code sees the result, so a try/except cannot
+# quiet it. The stdlib logging bridge then forwards it to app.log and
+# loop_health pages the user about the "learning loop".
+#
+# _yfinance_next_earnings_date's docstring already said "ETFs return an empty
+# dict" — the knowledge was there, just unused. Each entry carries its reason
+# so the list does not rot into an unexplained set of tickers.
+NO_EARNINGS_TICKERS = {
+    "SPY": "S&P 500 ETF — a fund, not an issuer",
+    "QQQ": "Nasdaq-100 ETF — a fund, not an issuer",
+    "IWM": "Russell 2000 ETF — a fund, not an issuer",
+    "DIA": "Dow 30 ETF — a fund, not an issuer",
+    "VIX": "volatility index — not a company",
+}
+
+
 class EarningsCalendar:
     """
     Aggregates upcoming earnings dates across the watchlist via yfinance.
@@ -182,6 +200,12 @@ class EarningsCalendar:
         tickers = self._load_watchlist()
         if not tickers:
             return []
+
+        skipped = [t for t in tickers if t.upper() in NO_EARNINGS_TICKERS]
+        tickers = [t for t in tickers if t.upper() not in NO_EARNINGS_TICKERS]
+        if skipped:
+            logger.debug(f"EarningsCalendar: skipping {', '.join(skipped)} "
+                         "— these do not report earnings")
 
         fetcher = self._fetcher or self._yfinance_next_earnings_date
         out: list[dict] = []

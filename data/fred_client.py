@@ -124,6 +124,66 @@ class FREDClient:
     # LATEST OBSERVATION
     # ─────────────────────────────────────────
 
+
+    # Transient: worth another attempt. 429 is FRED's rate limit, 5xx is FRED
+    # having a bad day, and a ReadTimeout on a 10s budget usually clears on the
+    # second try (6 of 16 failures over 2026-09-07..09 were ReadTimeout).
+    _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+    _MAX_ATTEMPTS = 3
+    _BACKOFF_SEC = 1.5
+
+    def _get_with_retry(self, url, params, series_id):
+        """GET with retry on transient failures. Returns parsed JSON, or None.
+
+        Permanent failures (400 bad key, 401, 404 unknown series) are NOT
+        retried: the answer will not change, and burning attempts on them
+        spends the rate budget the 429 path actually needs.
+
+        Every failure is logged with the STATUS and FRED's own message. The old
+        handler logged `type(e).__name__` alone, so "bad key" and "FRED is
+        down" were the same line — and 16 of these went out as pages that could
+        not be acted on.
+        """
+        last = None
+        for attempt in range(1, self._MAX_ATTEMPTS + 1):
+            try:
+                resp = requests.get(url, params=params, timeout=10)
+                if resp.status_code in self._RETRY_STATUSES:
+                    last = f"HTTP {resp.status_code}: {self._reason(resp)}"
+                    if attempt < self._MAX_ATTEMPTS:
+                        time.sleep(self._BACKOFF_SEC * attempt)
+                        continue
+                    break
+                resp.raise_for_status()
+                return resp.json()
+            except requests.HTTPError as e:
+                r = getattr(e, "response", None)
+                code = getattr(r, "status_code", "?")
+                logger.error(f"FRED {series_id}: HTTP {code} — {self._reason(r)} "
+                             "(permanent; not retried)")
+                return None
+            except (requests.Timeout, requests.ConnectionError) as e:
+                last = f"{type(e).__name__}: {e}"
+                if attempt < self._MAX_ATTEMPTS:
+                    time.sleep(self._BACKOFF_SEC * attempt)
+                    continue
+        logger.error(f"FRED {series_id}: giving up after {self._MAX_ATTEMPTS} "
+                     f"attempts — {last}")
+        return None
+
+    @staticmethod
+    def _reason(resp) -> str:
+        """FRED puts a plain-English explanation in the body. Surface it."""
+        if resp is None:
+            return "no response"
+        try:
+            msg = (resp.json() or {}).get("error_message")
+            if msg:
+                return str(msg)
+        except Exception:
+            pass
+        return (getattr(resp, "text", "") or "")[:160] or "no body"
+
     def get_latest_observation(
         self,
         series_id: str,
@@ -149,9 +209,9 @@ class FREDClient:
                 "limit":      num_observations,
                 "sort_order": "desc",
             }
-            resp = requests.get(url, params=params, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
+            data = self._get_with_retry(url, params, series_id)
+            if data is None:
+                return None
             obs  = data.get("observations", [])
 
             if not obs:
@@ -195,7 +255,8 @@ class FREDClient:
             }
 
         except Exception as e:
-            logger.error(f"FRED observation error for {series_id}: {type(e).__name__}")
+            logger.error(f"FRED observation error for {series_id}: "
+                         f"{type(e).__name__}: {e}")
             return None
 
     # ─────────────────────────────────────────

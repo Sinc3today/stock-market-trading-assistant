@@ -264,3 +264,46 @@ def refresh_spy_history(csv_path: str = os.path.join("backtests", "spy_history.c
     logger.info(f"refresh_spy_history: appended {len(new)} rows, now through "
                 f"{combined.index.max().date()}")
     return len(new)
+
+
+# ── is this OUR problem, or a third party's? ─────────────────────────────────
+#
+# scan_recent_log_errors greps app.log for any " | ERROR" / " | WARNING" line,
+# so anything a third-party library logs becomes an issue — and job_loop_health
+# pages it under "Learning loop needs attention". On 2026-09-08/09 the user got
+# two such pages while the loop was entirely healthy:
+#
+#   * yfinance's own 404 for "No fundamentals data found for symbol: SPY" — we
+#     ask an ETF for its earnings date, and earnings_calendar's docstring
+#     already says ETFs return an empty dict.
+#   * transient FRED HTTPError / ReadTimeout.
+#
+# A channel that fires for everything stops meaning anything, and this one has
+# exactly one job worth waking someone for: catching a learning artifact that
+# has gone silently stale (the off-hours learner once sat dead for ~5 weeks).
+#
+# Anything unrecognised is classified as OURS. Silently downgrading an unknown
+# failure to "external noise" is precisely how that 5-week death happened.
+_EXTERNAL_MARKERS = (
+    "yfinance",
+    "quotesummary",
+    "no fundamentals data",
+    "fred observation error",
+    "data.fred_client",
+    "urllib3",
+    "requests.exceptions",
+)
+
+
+def classify_issues(issues: list[str]) -> dict[str, list[str]]:
+    """Split issues into {'loop': [...], 'external': [...]}.
+
+    'loop' means a learning artifact or one of our own jobs is unhealthy —
+    worth a push. 'external' means a third-party API was noisy — worth a log
+    line and nothing more.
+    """
+    loop, external = [], []
+    for i in issues:
+        low = str(i).lower()
+        (external if any(m in low for m in _EXTERNAL_MARKERS) else loop).append(i)
+    return {"loop": loop, "external": external}
