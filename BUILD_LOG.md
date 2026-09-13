@@ -4,6 +4,73 @@
 
 ---
 
+## 2026-09-09 → 09-13 — Gates re-scoped, false alarms quieted, and the sandbox was measuring the wrong thing
+
+**Duration:** several sittings across five days.
+
+**What was worked on (plain language):**
+- **Gate 0 re-scoped (9/9).** Its exit rule counted every validator, including sample-size and
+  regime-coverage checks that only time can close, so it could never pass. Each validator now
+  declares its gate in code. Gate 0 reads 8 PASS / 2 FAIL: the open tail is marked by a model, not
+  quotes (B2), and live position 9C475659 stores an inconsistent entry value (A3). Also fixed: a
+  false "duplicate" (the old $1.00 placeholder erased the field that told two trades apart), ERROR
+  lines for strategy names that can never be classified, and a crashing validator that used to hide
+  as a warning and drop out of its gate (D1 was crashing on an empty journal).
+- **"Learning loop needs attention" pages were false alarms (9/10).** Third-party noise: we asked
+  ETFs for earnings dates (yfinance logs its own 404), and FRED errors were logged as a bare class
+  name with no status and no retry. Pages now fire only for our own failures. Also caught my own
+  regression: the copilot tests had started hitting the live network.
+- **Weekly-preview video review (9/13).** Pipeline strike, FOMC 9/16, triple witching 9/18. The bot
+  already stands aside Tue-Fri, and Monday's play is likely blocked by the concentration guard. The
+  real exposure is live position 9C475659 expiring 9/18, its inner put short sitting at the edge of
+  the options-implied range. I also corrected myself: I had called the FOMC condor study our "best
+  event finding", but a later study downgraded it to a likely small-sample fluke.
+- **"What do we learn from a week like this?" (9/13).** Very little. On event days the prediction
+  is "neutral, confidence 0, skip", and 61 knowledge-base entries grade the skip against itself.
+- **Then the real finding: every same-day trade ever recorded was closed five minutes after entry.**
+  The exit rule `dte <= 0` is true from the first check on expiry day. The sandbox never tested a
+  same-day strategy; it measured five-minute holds at model prices. Replaying the 18 "stop-loss"
+  records against real minute bars showed none was anywhere near 75% down when stopped (the real
+  move was -35% to +40%), and entry prices were model-made (pre-fix sandbox debits recorded a median
+  32% too cheap; 4 of 8 disciplined 1-3DTE entries were more than 25% off).
+
+**Built (three commits):** same-day positions now flatten at 15:45 ET and 1-3DTE positions 30 minutes
+before expiry; event-day shadow trades (four pre-registered directional rules, priced from real
+option bars after the close, scored per event type with ordinary days as a control, no orders);
+one shared real-price engine in data/options_history; and a date leak fixed in 3 of 4 forward
+generators, found because a test passed on 9/10 and failed on 9/13 with no code change.
+
+**Decisions:**
+- Stops triggered by a bad mark are **unmeasured, not losses**. Re-measure by replay; never guess.
+- The 15:45 close is the only exit time ever measured (the intraday backtest's flatten). The deleted
+  15:30/15:00 values were never live and never tested.
+- Shadow trades use the next-day expiry, not same-day: our research says theta eats same-day debits.
+- Shadow results never merge across rule versions, and backfilled days are flagged unregistered.
+
+**What didn't work, honestly:**
+- In Phase 3 I deleted forced_close_* as "phantom features". They described the intended exit, and
+  deleting them instead of wiring them erased the evidence.
+- I told the user 17 sandbox trades were "known losses" and the true win rate was 12/33. Wrong: I
+  hadn't checked what triggered the stops. Corrected the same day.
+- I briefly designed a scorecard change counting those stops as losses. That would have biased the
+  record the other way; dropped once the replay showed the stops were bogus.
+
+**Early shadow data** (unregistered backfill of 9/8-9/11, n far too small to mean anything): friction
+is about $23 a trade. Control days: follow 1 win in 3, fade 0 in 3. CPI: follow +$16.40, fade -$72.60.
+
+**Open questions for next session:**
+- Re-score the 40 historical same-day records by real-price replay: dry-run first, then decide
+  whether anything is written back to the journal.
+- Recorded intraday entry prices still come from a model after the fix (1 of 3 post-fix entries was
+  more than 25% off). That needs a Gate 0 validator comparing recorded entries to real bars.
+- Live and backtest exits still diverge beyond timing: backtest 50% target and 2x stop, live 100%
+  target and 75% stop.
+- Reconcile 9C475659 against Robinhood before 2 pm ET Wednesday.
+
+**Tests:** 1,942 passing.
+
+---
+
 ## 2026-09-08 — Two dashboard bugs, five defects, and a condor that wasn't one
 
 **What was worked on (plain language):**
