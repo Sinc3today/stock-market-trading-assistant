@@ -297,6 +297,36 @@ def job_calm_calibration(polygon_client, vix_client=None):
         logger.warning(f"calm_calibration: log pass failed: {e}")
 
 
+def job_event_shadow_register():
+    """09:20 ET: pre-register today's shadow rules BEFORE the open, so every
+    result can be shown to follow rules fixed in advance."""
+    try:
+        if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
+            return
+        from learning.event_shadow import register_day
+        reg = register_day()
+        logger.info(f"event_shadow: registered {reg['date']} types={reg['event_types']} "
+                    f"rules={reg['rules_version']}")
+    except Exception as e:
+        logger.exception(f"event_shadow register failed: {e}")
+
+
+def job_event_shadow_resolve():
+    """16:50 ET: price today's shadow trades from real option bars. No orders,
+    no journal writes — it scores what a directional rule WOULD have made."""
+    try:
+        now = datetime.now(pytz.timezone("US/Eastern"))
+        if not config.is_trading_day(now):
+            return
+        from learning.event_shadow import resolve_day
+        rows = resolve_day(now.date())
+        logger.info("event_shadow: resolved " + ", ".join(
+            f"{r['rule_id']}={r['status']}({r.get('pnl_net')})" for r in rows) if rows
+            else "event_shadow: nothing new to resolve")
+    except Exception as e:
+        logger.exception(f"event_shadow resolve failed: {e}")
+
+
 def job_exit_manager(polygon_client, vix_client=None, post_fn=None,
                      play_fn=None, dte_buckets=None):
     if not config.is_trading_day(datetime.now(pytz.timezone("US/Eastern"))):
@@ -591,6 +621,22 @@ def register_learning_jobs(
         kwargs={"polygon_client": polygon_client, "vix_client": vix_client},
         id="learning_calm_calibration",
         name="Learning: calm-label calibration",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        job_event_shadow_register,
+        CronTrigger(day_of_week="mon-fri", hour=9, minute=20, timezone=eastern),
+        id="learning_event_shadow_register",
+        name="Learning: event-day shadow — pre-register rules",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        job_event_shadow_resolve,
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=50, timezone=eastern),
+        id="learning_event_shadow_resolve",
+        name="Learning: event-day shadow — resolve with real prices",
         replace_existing=True,
     )
 

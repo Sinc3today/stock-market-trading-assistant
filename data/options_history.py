@@ -55,6 +55,61 @@ def option_ticker(underlying: str, expiry: date, cp: str, strike: float) -> str:
     return f"O:{underlying.upper()}{expiry:%y%m%d}{cp_c}{strike_int:08d}"
 
 
+# ── Eastern time: the ONE conversion for Polygon aggregate bars ──────────
+#
+# get_aggs turns list_aggs epoch-ms into NAIVE UTC. PolygonClient.get_bars, by
+# contrast, uses datetime.fromtimestamp and so yields naive HOST-LOCAL time
+# (Chicago on this host). A "14:05 entry" read against the wrong convention is
+# one to five hours off, silently. Every consumer of these bars converts here.
+_EASTERN = "US/Eastern"
+RTH_OPEN = "09:30"
+RTH_CLOSE = "16:00"
+# A quiet leg's last trade stands in for its price this many minutes, no more.
+# Past that, the structure is unpriced rather than priced from a stale print.
+CARRY_FORWARD_MINUTES = 5
+
+
+def to_eastern(df: pd.DataFrame) -> pd.DataFrame:
+    """Index an aggregate-bar frame in US/Eastern (tz-aware).
+
+    Naive indexes are taken as UTC, which is what get_aggs produces. DST is
+    handled by the zone, not a fixed offset: 13:30 UTC is 09:30 ET in summer,
+    14:30 UTC is 09:30 ET in winter.
+    """
+    if df is None or df.empty:
+        return df
+    idx = pd.DatetimeIndex(df.index)
+    out = df.copy()
+    out.index = (idx.tz_localize("UTC").tz_convert(_EASTERN) if idx.tz is None
+                 else idx.tz_convert(_EASTERN))
+    return out
+
+
+def session_grid(day) -> pd.DatetimeIndex:
+    """Every regular-session minute of `day`, 09:30..16:00 ET inclusive."""
+    start = pd.Timestamp(f"{day.isoformat()} {RTH_OPEN}").tz_localize(_EASTERN)
+    end = pd.Timestamp(f"{day.isoformat()} {RTH_CLOSE}").tz_localize(_EASTERN)
+    return pd.date_range(start, end, freq="1min")
+
+
+def value_at(series: pd.Series, ts) -> float | None:
+    """The structure's value at the minute containing `ts`, or None.
+
+    Never looks forward, and never reaches further back than the carry-forward
+    already applied per leg — a second look-back here would double it.
+    A naive `ts` is read as Eastern.
+    """
+    if series is None or len(series) == 0:
+        return None
+    ts = pd.Timestamp(ts)
+    ts = ts.tz_localize(_EASTERN) if ts.tzinfo is None else ts.tz_convert(_EASTERN)
+    ts = ts.floor("min")
+    if ts not in series.index:
+        return None
+    v = series.loc[ts]
+    return None if pd.isna(v) else float(v)
+
+
 class OptionsHistory:
     """Historical option aggregates via Polygon list_aggs (paid tier)."""
 
@@ -129,3 +184,38 @@ class OptionsHistory:
         if df.empty:
             return None
         return float(df["close"].iloc[-1])
+
+    def structure_minutes(self, underlying: str, day, legs: list[dict],
+                          use_cache: bool = True) -> pd.Series:
+        """Per-share value of a multi-leg structure at every session minute.
+
+        Long legs add, short legs subtract. Each leg's real last trade is carried
+        forward at most CARRY_FORWARD_MINUTES; if ANY leg has no bars at all the
+        whole series is NaN, because a structure priced from some of its legs
+        reports a value that never existed.
+
+        Leg direction is matched case-insensitively (the journal holds both
+        casings) and an unrecognised action raises rather than being guessed.
+        """
+        grid = session_grid(day)
+        total = pd.Series(0.0, index=grid)
+        for leg in legs:
+            leg = leg or {}
+            action = str(leg.get("action") or "").strip().upper()
+            if action not in ("BUY", "SELL"):
+                raise ValueError(f"unrecognised leg action {leg.get('action')!r} in leg {leg!r}")
+            cp = leg.get("option_type") or leg.get("type")
+            if not cp:
+                raise ValueError(f"leg has no option type: {leg!r}")
+            exp = leg.get("expiration") or leg.get("expiry")
+            expiry = exp if isinstance(exp, date) else date.fromisoformat(str(exp)[:10])
+            contract = option_ticker(underlying, expiry, str(cp), float(leg["strike"]))
+            bars = to_eastern(self.get_aggs(contract, 1, "minute", day, day,
+                                            use_cache=use_cache))
+            if bars is None or bars.empty:
+                return pd.Series(float("nan"), index=grid)
+            close = bars["close"].astype(float)
+            close = close[~close.index.duplicated(keep="last")]
+            px = close.reindex(grid).ffill(limit=CARRY_FORWARD_MINUTES)
+            total = total + (px if action == "BUY" else -px)
+        return total

@@ -29,7 +29,7 @@ class FakeScheduler:
 def test_register_learning_jobs_adds_all_jobs():
     s = FakeScheduler()
     sched.register_learning_jobs(s, polygon_client=None, post_fn=None)
-    assert len(s.jobs) == 16
+    assert len(s.jobs) == 18
     job_ids = {j["id"] for j in s.jobs}
     assert job_ids == {
         "learning_paper_broker",
@@ -48,6 +48,8 @@ def test_register_learning_jobs_adds_all_jobs():
         "learning_refresh_csv",               # NEW — weekly CSV refresh
         "learning_calm_calibration",          # scores the daily CALM claim
         "learning_forward_audit",             # validators vs the LIVE journal
+        "learning_event_shadow_register",     # pre-registers directional shadow rules
+        "learning_event_shadow_resolve",      # prices them from real option bars
         # learning_meta_recalibration is registered ONLY when
         # META_LABEL_ENABLED is True; it has been False since the
         # meta-labeler was shelved, yet the job ran a full weekly

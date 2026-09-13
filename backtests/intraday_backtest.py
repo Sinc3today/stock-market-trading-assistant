@@ -30,6 +30,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import pytz
 from loguru import logger
 
+import config
+
 # ── Structure parameters sourced from the shared builder ─────────────
 from signals.intraday_structure_builder import (
     select_legs as _select_legs,
@@ -40,7 +42,10 @@ ET = pytz.timezone("US/Eastern")
 # Intraday exit
 PROFIT_TARGET_PCT  = 0.50   # 0DTE: take profit faster than swing
 STOP_MULT          = 2.0    # stop at this multiple of credit/debit risk
-EOD_FLATTEN_ET     = time(15, 45)   # hard flatten — dodge pin/assignment risk
+# Hard flatten — dodge pin/assignment risk. Sourced from the SAME setting the
+# live ExitManager reads, so live and backtest cannot disagree about when a
+# same-day trade ends (they did: live closed every 0DTE trade at +5 minutes).
+EOD_FLATTEN_ET     = time(*(int(x) for x in config.FORCED_CLOSE_TIME_0DTE.split(":")))
 COMMISSION_PER_LEG = 0.65
 SLIPPAGE           = 0.05
 # Entry confirmation (the blend: opening-range + VWAP)
@@ -132,12 +137,9 @@ def is_credit_structure(structure: str) -> bool:
 
 
 def _to_et(df):
-    """Index a UTC-bar DataFrame in US/Eastern."""
-    idx = df.index
-    df = df.copy()
-    df.index = (idx.tz_localize("UTC").tz_convert(ET) if idx.tz is None
-                else idx.tz_convert(ET))
-    return df
+    """Index a UTC-bar DataFrame in US/Eastern. Delegates to the one owner."""
+    from data.options_history import to_eastern
+    return to_eastern(df)
 
 
 def _spread_value(legs_closes: list[tuple[dict, float]], structure: str) -> float:
