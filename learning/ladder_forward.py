@@ -100,7 +100,7 @@ def maybe_open_ladder(recorder, *, spy_spot, vix, today=None) -> list[dict]:
                for t in open_trades):
             logger.info(f"ladder_forward: {bucket} already open today — skip")
             continue
-        c = build_condor(spy_spot, vix, dte=dte)
+        c = build_condor(spy_spot, vix, dte=dte, today=today)
         if not c or c["credit"] <= 0:
             logger.info(f"ladder_forward: {bucket} no credit at current vol — skip")
             continue

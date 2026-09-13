@@ -55,7 +55,7 @@ def maybe_open_qqq_condor(recorder, *, qqq_spot, vxn, today=None):
             logger.info("qqq_condor_forward: candidate already open today — skip")
             return None
     from signals.condor_calc import build_condor
-    c = build_condor(qqq_spot, vxn, dte=DTE)
+    c = build_condor(qqq_spot, vxn, dte=DTE, today=today)
     if c["credit"] <= 0:
         logger.info("qqq_condor_forward: no credit at current vol — skip")
         return None

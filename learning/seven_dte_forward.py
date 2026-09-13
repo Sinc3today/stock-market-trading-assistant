@@ -76,7 +76,7 @@ def maybe_open_seven_dte(recorder, *, spy_spot, vix, today=None):
             logger.info("seven_dte_forward: candidate already open today — skip")
             return None
     from signals.condor_calc import build_condor
-    c = build_condor(spy_spot, vix, dte=DTE)
+    c = build_condor(spy_spot, vix, dte=DTE, today=today)
     if c["credit"] <= 0:
         logger.info("seven_dte_forward: no credit at current vol — skip")
         return None
