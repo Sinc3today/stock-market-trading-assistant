@@ -176,14 +176,20 @@ def test_manage_open_default_dte_buckets_none_processes_all(tmp_path, monkeypatc
     assert isinstance(closed, list)
 
 
-def test_removed_phantom_keys_stay_removed():
+def test_condor_touch_stays_removed_and_forced_close_is_back_and_read():
     """condor_short_strike_touch / forced_close_* were published here,
     configured True, and asserted by THIS FILE — while _evaluate read none of
-    them. The assertions above were verifying config plumbing, not behaviour,
-    and reported a feature that did not exist. Removed 2026-09-07."""
+    them. All three were removed as phantoms on 2026-09-08.
+
+    That was half right. condor_short_strike_touch is still unimplemented and
+    stays out. forced_close_* described the INTENDED end of a same-day trade;
+    with nothing reading them, `dte <= 0` closed every 0DTE trade at its first
+    five-minute check. They are back, _evaluate reads them (proved by
+    test_no_phantom_features), and tests/test_intraday_forced_close.py covers
+    the behaviour rather than the plumbing."""
     from learning.exit_manager import exit_rule_for
     for bucket in ("0DTE", "1-3DTE", "45DTE"):
         rule = exit_rule_for("iron_condor", bucket)
-        for gone in ("condor_short_strike_touch", "forced_close_time",
-                     "forced_close_minutes_before_expiry"):
-            assert gone not in rule, f"{gone} is back in the {bucket} rule"
+        assert "condor_short_strike_touch" not in rule, bucket
+        assert "forced_close_time" in rule, bucket
+        assert "forced_close_minutes_before_expiry" in rule, bucket

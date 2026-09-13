@@ -119,6 +119,8 @@ def _exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
             "profit_target_pct":   pt_pct,
             "stop_pct":            config.STOP_PCT_45DTE,    # None by default
             "dte_close_threshold": config.DTE_CLOSE_THRESHOLD_45DTE,
+            "forced_close_time":                  None,
+            "forced_close_minutes_before_expiry": None,
             "scratch_time":                        None,
             "scratch_theta":                       0.0,
             "hard_close_time":                     None,
@@ -136,7 +138,9 @@ def _exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
         return {
             "profit_target_pct":   pt_pct,
             "stop_pct":            stop_pct,
-            "dte_close_threshold": 0,    # 1-3DTE managed by forced-close, not DTE threshold
+            "dte_close_threshold": None,  # expiry day is handled by the forced close
+            "forced_close_time":                  None,
+            "forced_close_minutes_before_expiry": config.FORCED_CLOSE_MINUTES_BEFORE_EXPIRY_1_3DTE,
             **_time_exit_params(strategy, bucket),
         }
 
@@ -152,7 +156,9 @@ def _exit_rule_for(strategy: str | None, dte_bucket: str | None) -> dict:
         return {
             "profit_target_pct":   pt_pct,
             "stop_pct":            stop_pct,
-            "dte_close_threshold": 0,
+            "dte_close_threshold": None,  # `dte <= 0` is true from the first check
+            "forced_close_time":                  config.FORCED_CLOSE_TIME_0DTE,
+            "forced_close_minutes_before_expiry": None,
             **_time_exit_params(strategy, bucket),
         }
 
@@ -173,6 +179,15 @@ def _norm_cdf(x: float) -> float:
 
 # Options expire at the 16:00 ET close, not at midnight.
 _EXPIRY_HOUR = 16
+
+
+def _now_eastern(now=None) -> datetime:
+    """Current time in US/Eastern. A naive `now` is READ as Eastern: the host
+    runs in Chicago, and 15:45 on a trading rule means 15:45 in New York."""
+    eastern = pytz.timezone("US/Eastern")
+    if now is None:
+        return datetime.now(eastern)
+    return eastern.localize(now) if now.tzinfo is None else now.astimezone(eastern)
 
 
 def _years_to_expiry(expiry: date, today: date, now=None) -> float:
@@ -389,9 +404,30 @@ class ExitManager:
                     return None
                 return exit_px, f"stop {rule['stop_pct']:.0%} of max loss"
 
-        # 3. Time stop — close N DTE before expiry.
-        if dte <= rule["dte_close_threshold"]:
+        # 3. Time stop — close N DTE before expiry (45DTE and untagged legacy).
+        threshold = rule.get("dte_close_threshold")
+        if threshold is not None and dte <= threshold:
             return exit_px, f"time stop {dte}DTE"
+
+        # 4. Forced close on EXPIRY DAY, by the clock.
+        #
+        # Same-day buckets used `dte <= 0` above, which is true from the very
+        # first five-minute check: all 40 same-day trades in the journal were
+        # closed at +5 minutes, and 1-3DTE positions were closed at 09:00 ET on
+        # expiry day, before the open, at a model mark. The sandbox was measuring
+        # five-minute holds while every study it was meant to test assumed a
+        # full session. See tests/test_intraday_forced_close.py.
+        if dte == 0:
+            now_et = _now_eastern(now)
+            minute_of_day = now_et.hour * 60 + now_et.minute
+            forced = rule.get("forced_close_time")
+            if forced:
+                h, m = (int(x) for x in forced.split(":"))
+                if minute_of_day >= h * 60 + m:
+                    return exit_px, f"forced close {forced} ET"
+            before = rule.get("forced_close_minutes_before_expiry")
+            if before is not None and minute_of_day >= _EXPIRY_HOUR * 60 - int(before):
+                return exit_px, f"forced close {int(before)}m before expiry"
 
         return None
 

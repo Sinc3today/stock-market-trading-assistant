@@ -305,6 +305,17 @@ PROFIT_TARGET_PCT_0DTE_PUT      = 1.00
 PROFIT_TARGET_PCT_0DTE_COND     = 0.30       # smaller + faster for condors
 STOP_PCT_0DTE_CALL              = 0.75
 STOP_PCT_0DTE_PUT               = 0.75
+# When a short-dated position is flattened on its EXPIRY day (ET).
+#   0DTE:   at this clock time. 15:45 is the intraday backtest's measured
+#           flatten (dodges pin/assignment risk into the bell). The earlier
+#           15:30/15:00 values were never live and never backtested.
+#   1-3DTE: this many minutes before the 16:00 expiry. The backtest never
+#           simulated expiry day, so this is the documented intent.
+# Without these, _evaluate's `dte <= 0` closed every 0DTE trade at its first
+# five-minute check (all 40 in the journal) and every 1-3DTE trade before the
+# open on its expiry day. See tests/test_intraday_forced_close.py.
+FORCED_CLOSE_TIME_0DTE                    = "15:45"
+FORCED_CLOSE_MINUTES_BEFORE_EXPIRY_1_3DTE = 30
 
 # ── Intraday time-exit model (2026-06-05) ───────────────────────────────────
 # Global kill-switch: when False the live ExitManager skips ALL scratch/hard-close
