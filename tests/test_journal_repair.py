@@ -42,10 +42,16 @@ def _legacy_zero(**kw):
 
 
 def _phantom_fill(**kw):
-    """A 0DTE record whose exit price is fiction (intrinsic-marking bug)."""
+    """A 0DTE record whose exit price is fiction (intrinsic-marking bug).
+
+    Dated AFTER 2026-09-16 so the repair logic itself stays under test. Intraday
+    records from before that are quarantined as UNMEASURED and are no longer
+    repaired at all — see test_a_quarantined_record_is_set_aside_not_repaired.
+    """
     base = dict(strategy="call_debit_spread", entry_price=0.78, exit_price=0.0,
                 pnl_dollars=0, outcome="breakeven", dte_bucket="0DTE",
-                notes_exit="[AUTO-EXIT 2026-06-02] stop 75% of max loss fill=$0.00")
+                entry_date="2026-09-16 09:45 AM EST",
+                notes_exit="[AUTO-EXIT 2026-09-16] stop 75% of max loss fill=$0.00")
     base.update(kw)
     return _t(**base)
 
@@ -72,6 +78,19 @@ def test_phantom_fill_is_marked_unscored_not_rescored():
     assert plan[0]["action"] == jr.MARK_UNSCORED
     assert plan[0]["after"]["pnl_dollars"] is None
     assert plan[0]["after"]["outcome"] == "unscored"
+
+
+def test_a_quarantined_record_is_set_aside_not_repaired():
+    """Quarantine supersedes repair. An intraday record from before the pricing
+    fix cannot be measured at all — its ENTRY price is fiction too, not just its
+    exit — so marking it unscored would imply the rest of it is sound. It is
+    excluded wholesale instead, and learning.intraday_rescore is how we ask what
+    it did. Costs nothing in practice: journal_repair has no pending actions and
+    the 18 real phantom fills were repaired on 2026-09-06."""
+    from learning import forward_scorecard as fs
+    old = _phantom_fill(entry_date="2026-06-02 09:45 AM EST")
+    assert fs.integrity(old) == fs.UNMEASURED
+    assert jr.plan_repairs([old]) == []
 
 
 def test_healthy_trade_is_left_alone():

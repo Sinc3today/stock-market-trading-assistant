@@ -3781,6 +3781,7 @@ def copilot_page():
 # renderer never hardcodes the strings.
 from learning.forward_scorecard import (            # noqa: E402
     SCORED as SC_SCORED, UNSCORED as SC_UNSCORED,
+    UNMEASURED as SC_UNMEASURED,
     SUSPECT_FILL as SC_SUSPECT, VOID as SC_VOID,
 )
 
@@ -3934,11 +3935,14 @@ def _render_scorecard(card: dict) -> str:
     seg = lambda k, c: (f'<i class="{c}" style="width:{integ.get(k,0)/closed*100:.1f}%"></i>'
                         if integ.get(k) else "")
     bar = (f'<div class="sc-bar">{seg(SC_SCORED,"b-ok")}{seg(SC_UNSCORED,"b-bad")}'
+           f'{seg(SC_UNMEASURED,"b-warn")}'
            f'{seg(SC_SUSPECT,"b-warn")}{seg(SC_VOID,"b-warn")}</div>')
     legend = (
         '<div class="sc-legend">'
         f'<span><i style="background:var(--ok)"></i>{integ.get(SC_SCORED,0)} scored</span>'
         f'<span><i style="background:var(--err)"></i>{integ.get(SC_UNSCORED,0)} unscored</span>'
+        f'<span><i style="background:var(--warn)"></i>'
+        f'{integ.get(SC_UNMEASURED,0)} unmeasured</span>'
         f'<span><i style="background:var(--warn)"></i>'
         f'{integ.get(SC_SUSPECT,0)+integ.get(SC_VOID,0)} suspect / void</span>'
         '</div>'
@@ -3968,21 +3972,41 @@ def _render_scorecard(card: dict) -> str:
     hero = f'<div class="sc-hero">{hero_pnl}{hero_trust}{hero_pred}</div>'
 
     # ── integrity warning (only when the sample is dirty) ───────────
+    # This used to explain every dirty sample with the 2026-09-06 $0-P&L bug.
+    # Since 2026-09-15 the bigger population is the quarantined intraday
+    # records, and attributing the drop to the wrong cause is its own kind of
+    # lie. Name each population separately, or say nothing.
     warn = ""
     if trust < 90:
-        hidden = integ.get("unscored_hidden_pnl")
-        warn = (
-            '<div class="card sc-warn span-12" style="margin-bottom:1.1rem">'
-            '<div class="kicker"><span class="dot" style="background:var(--warn)"></span>'
-            'Sample integrity warning</div>'
-            f'<div class="cp-note" style="margin:0">'
-            f'{integ.get(SC_UNSCORED,0)} closed trades recorded a P&amp;L of exactly $0 because '
-            'their strategy name matched no branch in the P&amp;L engine '
-            '(<code>put_debit_spread</code> / <code>call_debit_spread</code> vs the handled '
-            '<code>debit_spread</code>). They are excluded from every number above. '
-            f'Recomputed from entry/exit they actually carry {_money(hidden)} '
-            'of real, unrecorded P&amp;L.</div></div>'
-        )
+        parts = []
+        n_unmeasured = integ.get(SC_UNMEASURED, 0)
+        if n_unmeasured:
+            parts.append(
+                f'<b>{n_unmeasured} intraday trades cannot be measured.</b> Each leg was '
+                'priced from its last trade, which on this data plan is a median 20 minutes '
+                'stale, so the recorded entry sits a median 32% from the market (worst 175%). '
+                'Until 2026-09-13 they were also closed five minutes after entry by a time '
+                'stop that was true from the first check. They are excluded from every number '
+                'above. <code>python -m learning.intraday_rescore</code> replays them against '
+                'real prices.')
+        n_unscored = integ.get(SC_UNSCORED, 0)
+        if n_unscored:
+            hidden = integ.get("unscored_hidden_pnl")
+            parts.append(
+                f'{n_unscored} closed trades recorded a P&amp;L of exactly $0 because their '
+                'strategy name matched no branch in the P&amp;L engine '
+                '(<code>put_debit_spread</code> / <code>call_debit_spread</code> vs the '
+                f'handled <code>debit_spread</code>). Recomputed from entry/exit they carry '
+                f'{_money(hidden)} of real, unrecorded P&amp;L.')
+        if parts:
+            body = "".join(f'<div class="cp-note" style="margin:0 0 .5rem">{p}</div>'
+                           for p in parts)
+            warn = (
+                '<div class="card sc-warn span-12" style="margin-bottom:1.1rem">'
+                '<div class="kicker"><span class="dot" style="background:var(--warn)"></span>'
+                'Sample integrity warning</div>'
+                f'{body}</div>'
+            )
 
     # ── books table ─────────────────────────────────────────────────
     rows = []

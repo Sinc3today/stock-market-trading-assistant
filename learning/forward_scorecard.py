@@ -37,6 +37,23 @@ SCORED = "scored"
 UNSCORED = "unscored"
 SUSPECT_FILL = "suspect_fill"
 VOID = "void"
+UNMEASURED = "unmeasured"
+
+# Intraday records entered before this date were priced by a pricer that read
+# each leg's last TRADE. On this data plan that print is a median 20 MINUTES
+# stale, so recorded entries sit a median 32% from the market (worst 175%), and
+# until 2026-09-13 every same-day trade was also closed five minutes after entry
+# by a time stop that was true from its first check.
+#
+# They are not correctable in place: a replay is a reconstruction, not a record
+# of what happened. So they are counted, shown, and never scored — the same
+# treatment VOID gets. The cost is real (the disciplined headline falls from
+# n=20 / +$1,187 to n=6 / -$13, because that headline was mostly its intraday
+# sleeve) and is preferable to quoting a number we cannot stand behind.
+#
+# learning.intraday_rescore is how to ask what those trades actually did.
+INTRADAY_PRICE_FIX_DATE = "2026-09-16"
+_INTRADAY_BUCKETS = ("0DTE", "1-3DTE")
 
 # Single source of truth — imported, never mirrored. A local copy of this set
 # is exactly how the two implementations drifted apart in the first place.
@@ -76,6 +93,12 @@ def integrity(trade: dict) -> str:
     outcome = trade.get("outcome")
     if outcome == "void":
         return VOID
+
+    # Priced by the stale-last-trade pricer: the number in this record never
+    # existed in the market. See INTRADAY_PRICE_FIX_DATE.
+    if (trade.get("dte_bucket") in _INTRADAY_BUCKETS
+            and str(trade.get("entry_date", ""))[:10] < INTRADAY_PRICE_FIX_DATE):
+        return UNMEASURED
     # The recorder now marks what it cannot score, instead of writing a $0.
     if outcome == "unscored" or trade.get("pnl_dollars") is None:
         return UNSCORED
@@ -256,13 +279,15 @@ def strategy_stats(trades: list[dict], books: tuple[str, ...] | None = None
 
 def integrity_summary(trades: list[dict]) -> dict:
     """Counts per integrity class + the share of closed records we can trust."""
-    out = {SCORED: 0, UNSCORED: 0, SUSPECT_FILL: 0, VOID: 0, "open": 0}
+    out = {SCORED: 0, UNSCORED: 0, SUSPECT_FILL: 0, VOID: 0, UNMEASURED: 0,
+           "open": 0}
     for t in trades:
         if not is_closed(t):
             out["open"] += 1
             continue
         out[integrity(t)] += 1
-    closed = out[SCORED] + out[UNSCORED] + out[SUSPECT_FILL] + out[VOID]
+    closed = (out[SCORED] + out[UNSCORED] + out[SUSPECT_FILL] + out[VOID]
+              + out[UNMEASURED])
     out["closed"] = closed
     out["trust_pct"] = round(out[SCORED] / closed * 100, 1) if closed else 0.0
     # Value hidden by the unscored records, for the audit banner.

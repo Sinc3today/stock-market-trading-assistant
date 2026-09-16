@@ -681,6 +681,12 @@ def v_a5_entry_price_reality(trades, history=None):
     for t in trades:
         if t.get("dte_bucket") not in ("0DTE", "1-3DTE"):
             continue
+        if fs.integrity(t) in (fs.UNMEASURED, fs.VOID):
+            # Already set aside. A5 exists to catch NEW drift; re-failing on
+            # quarantined records would mean Gate 0 could never clear and the
+            # check would stop meaning "something is wrong now". Void stubs
+            # (strike-0 legs) have no contract to re-price at all.
+            continue
         if not t.get("legs") or t.get("entry_price") in (None, ""):
             continue
         try:

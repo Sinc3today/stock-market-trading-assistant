@@ -31,8 +31,13 @@ from backtests import forward_audit as fa
 ET = pytz.timezone("US/Eastern")
 
 
+# Fixtures are dated ON OR AFTER 2026-09-16 deliberately. Intraday records from
+# before that are quarantined as UNMEASURED (priced by the stale-last-trade
+# pricer), and A5 skips them — its job is to catch drift in NEW entries, not to
+# keep re-failing on records already set aside. A fixture dated earlier would
+# silently never be checked.
 def _trade(tid, entry_price, *, bucket="0DTE", strategy="put_debit_spread",
-           day="2026-09-14", hhmm="09:45 AM"):
+           day="2026-09-16", hhmm="09:45 AM"):
     return {"trade_id": tid, "strategy": strategy, "dte_bucket": bucket,
             "book": "learning", "entry_price": entry_price, "size": 1,
             "outcome": "open", "entry_date": f"{day} {hhmm} EST",
@@ -114,7 +119,7 @@ def test_the_daily_play_is_not_checked_here():
 def test_only_the_most_recent_trades_are_checked():
     """Each check costs two network fetches; the audit must stay runnable."""
     h = _History(1.00)
-    many = [_trade(f"T{i}", 1.00, day="2026-09-14") for i in range(60)]
+    many = [_trade(f"T{i}", 1.00, day="2026-09-16") for i in range(60)]
     fa.v_a5_entry_price_reality(many, history=h)
     assert h.calls <= fa.ENTRY_PRICE_SAMPLE
 
