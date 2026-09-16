@@ -122,7 +122,8 @@ def build_intraday_structure(setup: dict, spot: float, chain, as_of=None):
         return None
     # replaces the router's placeholder legs/pricing with live-priced values
     return {**setup, "legs": built["legs"], "entry_price": built["entry_price"],
-            "max_profit": built["max_profit"], "max_loss": built["max_loss"]}
+            "max_profit": built["max_profit"], "max_loss": built["max_loss"],
+            "price_as_of": built.get("price_as_of")}
 
 
 def _assign_book_for_enriched(enriched: dict) -> str:

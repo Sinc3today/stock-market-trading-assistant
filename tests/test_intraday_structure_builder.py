@@ -106,13 +106,25 @@ class _FakeChain:
         ]
 
 
-def _contract(strike, cp, mid, exp="2026-06-01", mark=None):
+def _contract(strike, cp, mid, exp="2026-06-01", mark=None, as_of=None,
+              mark_source=None):
     # mark defaults to mid (real-quote case); pass mark explicitly with mid=None
     # to simulate this plan's quote-less snapshot.
+    #
+    # as_of/mark_source added 2026-09-15: LiveChainPricer now refuses a
+    # structure whose legs were struck at different moments, so a fixture with
+    # no timestamp is (correctly) unpriceable. These default to a FRESH
+    # last-trade print, which is the case these tests are about. Staleness is
+    # covered in tests/test_entry_price_freshness.py.
+    import pytz
+    from datetime import datetime as _dt, timedelta as _td
+    fresh = _dt.now(pytz.timezone("US/Eastern")) - _td(minutes=1)
     return {"ticker": f"O:SPY..{cp}{strike}", "strike": float(strike),
             "expiration": exp, "dte": 0, "type": cp, "mid": mid,
             "mark": mark if mark is not None else mid,
-            "bid": mid, "ask": mid, "delta": None}
+            "bid": mid, "ask": mid, "delta": None,
+            "mark_source": mark_source or ("quote_mid" if mid is not None else "day_close"),
+            "as_of": fresh if as_of is None else as_of}
 
 
 def test_live_pricer_prices_iron_condor():

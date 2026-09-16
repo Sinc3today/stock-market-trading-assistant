@@ -354,6 +354,21 @@ EXIT_PARITY_MAX_PNL_GAP = 10.0
 # instantly disable the pipeline without untangling code.
 INTRADAY_PAPER_BROKER_ENABLED = True
 
+# ── Entry-price freshness (2026-09-15) ────────────────────────────────────
+# This plan's option snapshot carries no bid/ask, so a leg is priced from
+# `day.close` — the last AGGREGATE print for that contract. Contracts print at
+# different times, so subtracting two legs gives a spread price that never
+# existed. Measured cost: recorded intraday entries were a median 30% away from
+# the real market, worst 62% (5A6E7351 recorded $0.26 against a real $0.68).
+# Staleness is knowable in advance: `day.last_updated` is per contract and
+# tracks liquidity (2026-09-15: busy SPY strikes updated 16:30, the 790 put
+# with 12 contracts traded last updated 14:45).
+# A structure prices only if every leg is fresher than MARK_MAX_AGE_MINUTES and
+# the legs are struck within MARK_MAX_LEG_SKEW_MINUTES of each other; otherwise
+# it is unpriceable and nothing opens. Refusing is the cheap failure.
+MARK_MAX_AGE_MINUTES      = 15   # this plan's own data delay
+MARK_MAX_LEG_SKEW_MINUTES = 5    # legs must describe one moment
+
 # Which conviction tier qualifies as an intraday entry. Configurable so we
 # can widen later to include "standard" (45-67 score) without code change.
 ENTRY_TIER_MINIMUM = "high"   # one of "high" / "standard"

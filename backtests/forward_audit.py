@@ -50,6 +50,7 @@ GATE_OF = {
     "A2": 0,   # do P&L sign conventions agree across implementations?
     "A3": 0,   # is the contract multiplier applied consistently?
     "A4": 0,   # does the edge survive commissions?
+    "A5": 0,   # do recorded entry prices match what the market printed?
     "B1": 0,   # are exit prices physically possible?
     "B2": 0,   # is the open tail marked?
     "B3": 0,   # do marks respect structural bounds?
@@ -650,11 +651,98 @@ def v_b3_structural_bounds(trades):
                    quarantined[:5])
 
 
+# ── A5: do recorded entry prices match the market? ───────────────
+
+ENTRY_PRICE_SAMPLE = 20        # most recent intraday entries to re-price
+ENTRY_PRICE_MAX_MEDIAN = 15.0  # % — drift we tolerate across the sample
+ENTRY_PRICE_MAX_SINGLE = 40.0  # % — one entry this far off is a defect
+
+
+def v_a5_entry_price_reality(trades, history=None):
+    """Re-price each recent intraday entry from real per-contract minute bars.
+
+    Every other integrity check reads the journal against itself. This one
+    reads it against the MARKET, because nothing noticed that intraday entries
+    were a median 30% away from the real price for months (worst: 5A6E7351
+    recorded $0.26 against a real $0.68).
+
+    The cause was structural: with no bid/ask on this data plan, each leg was
+    priced from its last AGGREGATE print, and two legs print at different
+    times. The exit side had B1 and B3 guarding it; the entry side had nothing,
+    so a trade could open at a price that never traded and every downstream
+    number inherited it.
+
+    Scoped to keep it runnable: intraday buckets only (the 45DTE daily play
+    prices through a different path), the most recent ENTRY_PRICE_SAMPLE
+    entries, and a structure with no bars is reported unpriced, never scored.
+    """
+    from datetime import datetime as _dt
+    rows = []
+    for t in trades:
+        if t.get("dte_bucket") not in ("0DTE", "1-3DTE"):
+            continue
+        if not t.get("legs") or t.get("entry_price") in (None, ""):
+            continue
+        try:
+            ts = _dt.strptime(str(t.get("entry_date"))[:19], "%Y-%m-%d %I:%M %p")
+        except (TypeError, ValueError):
+            continue
+        rows.append((ts, t))
+    rows.sort(key=lambda r: r[0], reverse=True)
+    rows = rows[:ENTRY_PRICE_SAMPLE]
+    name = "Recorded entries match the market"
+    if not rows:
+        return _result("A5", name, "P1", WARN,
+                       "No intraday entry carries a usable timestamp to re-price.")
+
+    if history is None:
+        from data.options_history import OptionsHistory
+        history = OptionsHistory()
+    from data.options_history import value_at
+
+    errs, ev, unpriced = [], [], 0
+    for ts, t in rows:
+        try:
+            real = value_at(history.structure_minutes("SPY", ts.date(), t["legs"]), ts)
+        except Exception as e:          # one bad record must not hide the rest
+            logger_msg = f"{t.get('trade_id')}: {e}"
+            ev.append(f"could not re-price {logger_msg}")
+            real = None
+        if real is None or abs(float(real)) < 0.01:
+            unpriced += 1
+            continue
+        # A sold structure prices negative (you receive it); the journal stores
+        # the credit as a positive number. Compare magnitudes.
+        rec, real = abs(float(t["entry_price"])), abs(float(real))
+        err = (rec - real) / real * 100
+        errs.append(abs(err))
+        if abs(err) >= 25:
+            ev.append(f"{t.get('trade_id')} {t.get('strategy')} recorded ${rec:.2f} "
+                      f"vs real ${real:.2f} ({err:+.0f}%)")
+
+    if not errs:
+        return _result("A5", name, "P1", WARN,
+                       f"{unpriced} of {len(rows)} intraday entries are unpriced "
+                       "against real bars — no check was possible.", ev)
+
+    errs.sort()
+    median, worst = errs[len(errs) // 2], errs[-1]
+    ev.insert(0, f"checked {len(errs)} entries; median |error| {median:.0f}%, "
+                 f"worst {worst:.0f}%; {unpriced} unpriced")
+    if median > ENTRY_PRICE_MAX_MEDIAN or worst > ENTRY_PRICE_MAX_SINGLE:
+        return _result("A5", name, "P1", FAIL,
+                       f"Recorded entry prices drift from the market "
+                       f"(median {median:.0f}%, worst {worst:.0f}%).", ev)
+    return _result("A5", name, "P1", PASS,
+                   f"Entries track the market (median {median:.0f}%, "
+                   f"worst {worst:.0f}%).", ev)
+
+
 # ── runner ───────────────────────────────────────────────────────
 
 VALIDATORS = [
     v_a1_unscored, v_a2_sign_conventions, v_a3_entry_value_scaling,
-    v_a4_commissions, v_b1_impossible_fills, v_b2_open_marks,
+    v_a4_commissions, v_a5_entry_price_reality, v_b1_impossible_fills, v_b2_open_marks,
     v_b3_structural_bounds,
     v_c1_survivorship, v_c2_voids, v_c4_duplicates,
     v_d1_regime_coverage, v_d2_confidence, v_e2_rule_change,

@@ -50,7 +50,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 import config
 from loguru import logger
+import pytz
 
+
+_SNAPSHOT_TZ = pytz.timezone("US/Eastern")
 
 DEFAULT_CACHE_TTL = 300   # seconds; 5 min within a single brief-build cycle
 
@@ -438,11 +441,27 @@ class OptionsChain:
         # fall back to the day's close, then vwap. See memory:
         # reference-polygon-snapshot-no-quotes.
         mark = mid
+        mark_source = "quote_mid" if mid is not None else None
         if mark is None and day is not None:
-            for cand in (getattr(day, "close", None), getattr(day, "vwap", None)):
+            for cand, src in ((getattr(day, "close", None), "day_close"),
+                              (getattr(day, "vwap", None), "vwap")):
                 if isinstance(cand, (int, float)) and cand > 0:
-                    mark = round(float(cand), 3)
+                    mark, mark_source = round(float(cand), 3), src
                     break
+
+        # WHEN that price was struck. `day.last_updated` is epoch nanoseconds,
+        # per contract, and tracks liquidity: on 2026-09-15 the busy SPY strikes
+        # updated at 16:30 while the 790 put (12 contracts traded all day) last
+        # updated at 14:45. Without it a spread can be built from two prints
+        # struck hours apart, which is how recorded entries drifted 30% from the
+        # market. See tests/test_entry_price_freshness.py.
+        as_of = None
+        lu = getattr(day, "last_updated", None) if day is not None else None
+        if isinstance(lu, (int, float)) and lu > 0:
+            try:
+                as_of = datetime.fromtimestamp(lu / 1e9, _SNAPSHOT_TZ)
+            except (OverflowError, OSError, ValueError):
+                as_of = None
 
         try:
             exp_str = d.expiration_date
@@ -459,6 +478,8 @@ class OptionsChain:
             "type":          d.contract_type,
             "mid":           mid,
             "mark":          mark,
+            "mark_source":   mark_source,
+            "as_of":         as_of,
             "bid":           bid,
             "ask":           ask,
             "iv":            getattr(snapshot, "implied_volatility", None),

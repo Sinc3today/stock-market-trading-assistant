@@ -96,12 +96,52 @@ def _target_expiry_window(dte_bucket: str, as_of: date) -> tuple[date, date]:
     return as_of, as_of
 
 
+def _now_et(now=None):
+    import pytz
+    from datetime import datetime as _dt
+    et = pytz.timezone("US/Eastern")
+    if now is None:
+        return _dt.now(et)
+    return et.localize(now) if now.tzinfo is None else now.astimezone(et)
+
+
+def _freshness_problem(priced: list[dict], now) -> str | None:
+    """Why this structure cannot be priced honestly, or None if it can.
+
+    A quote midpoint IS the current price, so its age does not matter. A last
+    TRADE is only evidence about the moment it happened, and two legs' last
+    trades happen at different moments — subtract them and you get a spread
+    price that never existed. See tests/test_entry_price_freshness.py.
+    """
+    import config
+    stamps = []
+    for leg in priced:
+        if leg.get("mark_source") == "quote_mid":
+            continue
+        as_of = leg.get("as_of")
+        if as_of is None:
+            return f"{leg.get('type')} {leg.get('strike')} has no price timestamp"
+        as_of = _now_et(as_of)
+        age = (now - as_of).total_seconds() / 60.0
+        if age > config.MARK_MAX_AGE_MINUTES:
+            return (f"{leg.get('type')} {leg.get('strike')} last printed "
+                    f"{age:.0f} min ago (limit {config.MARK_MAX_AGE_MINUTES})")
+        stamps.append(as_of)
+    if len(stamps) > 1:
+        skew = (max(stamps) - min(stamps)).total_seconds() / 60.0
+        if skew > config.MARK_MAX_LEG_SKEW_MINUTES:
+            return (f"legs struck {skew:.0f} min apart "
+                    f"(limit {config.MARK_MAX_LEG_SKEW_MINUTES}) — no single moment")
+    return None
+
+
 class LiveChainPricer:
     """Price known strikes from the live OptionsChain snapshot."""
     def __init__(self, options_chain):
         self.chain = options_chain
 
-    def price(self, legs, structure, dte_bucket, spot, as_of):
+    def price(self, legs, structure, dte_bucket, spot, as_of, now=None):
+        now = _now_et(now)
         min_exp, max_exp = _target_expiry_window(dte_bucket, as_of)
         # Fetch both contract types once each, across the bucket's expiry window.
         calls = self.chain.get_chain("SPY", "call", min_exp, max_exp,
@@ -145,7 +185,14 @@ class LiveChainPricer:
                 logger.info(f"LiveChainPricer: no quote for {ctype} {leg['strike']} — unpriceable")
                 return None
             # store the mark under "mid" for journal/_net_premium compatibility
-            priced.append({**leg, "type": ctype, "mid": c["mark"]})
+            priced.append({**leg, "type": ctype, "mid": c["mark"],
+                           "mark_source": c.get("mark_source"),
+                           "as_of": c.get("as_of")})
+
+        problem = _freshness_problem(priced, now)
+        if problem:
+            logger.info(f"LiveChainPricer: {structure} unpriceable — {problem}")
+            return None
 
         entry = _net_premium(priced, structure)
         if entry <= 0:
@@ -160,9 +207,13 @@ class LiveChainPricer:
             "expiration":  chosen_exp,
             "expiry":      chosen_exp,
             "mid":         leg["mid"],
+            "mark_source": leg.get("mark_source"),
+            "as_of":       (leg["as_of"].isoformat() if leg.get("as_of") else None),
         } for leg in priced]
+        stamps = [l["as_of"] for l in priced if l.get("as_of")]
         return {"legs": journal_legs, "entry_price": round(entry, 2),
-                "max_profit": mp, "max_loss": ml}
+                "max_profit": mp, "max_loss": ml,
+                "price_as_of": (min(stamps).isoformat() if stamps else now.isoformat())}
 
 
 # ---------------------------------------------------------------------------
