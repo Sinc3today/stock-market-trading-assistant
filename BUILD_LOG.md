@@ -4,6 +4,57 @@
 
 ---
 
+## 2026-09-15 (continued) — The re-score, and checking my own negative findings
+
+**What was worked on (plain language):**
+- Built `learning/intraday_rescore` and replayed 50 of the 52 intraday records against real
+  per-contract minute bars, under the exit rules the strategy was meant to follow. It writes nothing.
+- **Then checked whether my own negative result was an artifact — and part of it was.** I compared
+  replayed P&L (which pays a $0.05/leg bid-ask haircut) against recorded P&L (which never paid one).
+  That penalised the replay by ~$20 a spread and ~$40 a condor. Apples-to-apples, the picture is much
+  less dramatic: recorded +$1,770.80 vs replayed +$1,242.80, and 9 of 32 trades flip sign, not 13.
+- **A headline claim of mine was wrong.** I reported same-day condors going from 7 wins in 9 to 3 in
+  9. With the same cost convention on both sides it is 8 in 9 (+$212 vs the recorded +$532). The WIN
+  RATE holds up; the DOLLARS are less than half. Whether the strategy is actually profitable depends
+  entirely on a trading-cost assumption we have never measured, because this data plan has no bid/ask.
+
+**The mechanism behind the bad entry prices (now explained):**
+Recorded leg prices match a real trade a median 20 minutes earlier — 62 of 76 matched legs were 15+
+minutes old, 21 were over an hour, only 2 were fresh. Legs with under 200 contracts traded were off a
+median +88.8%; liquid legs -12.5%. A stale price is an OLD price, so the direction of the error
+depends on which way the option was moving: debit spreads are opened into a move (prices rising) and
+came out understated, condors are opened in quiet decay (prices falling) and came out overstated.
+Both directions flatter the record.
+
+**Knowledge-base corrections appended (the reflection had written claims on the bad record):**
+- FALSIFIED: "VIX>=21 is a confirmed 0DTE condor loss trigger" — the single trade behind it was a
+  winner (+$45.80 replayed vs -$40.20 recorded), and it generalised from n=1.
+- CORRECTED: "the disciplined gate is over-conservative, 5 refused wins netted ~+$374" — really +$102
+  before slippage, -$98 after.
+- CORRECTED: D3DEBFB6's "$1.20 credit" never existed; the real credit was $0.64 and the real gross
+  was +$21 against a recorded +$115. Credit-size thresholds derived from recorded credits are
+  calibrated on inflated numbers.
+
+**New finding:** the commission assumption (0.65/leg, "typical retail; override when the broker is
+known") was never overridden. Every "net of commissions" figure carries $2.60 per 2-leg round trip
+and $5.20 per condor round trip, including the promotion bars. Needs the real broker's schedule.
+
+**Decisions:**
+- Do NOT overwrite the journal with replayed values. The record is what the bot did; the replay is a
+  reconstruction. Quarantine the 52 intraday records from headline stats instead, and cite the replay
+  when we want to know what those trades did.
+- Never compare a cost-modelled number against one that is not. That was my error today.
+
+**Open questions for next session:**
+- Decide the real per-contract trading cost (broker schedule + a realistic bid/ask haircut). Almost
+  every conclusion about the intraday books is sensitive to it.
+- Decide whether the 52 intraday records get quarantined from the scorecard.
+- Gate 0 still shows two P1 failures (B2 model-marked open tail, A5 entry drift).
+
+**Tests:** 1,984 passing.
+
+---
+
 ## 2026-09-15 — Entry prices were never the market's prices
 
 **What was worked on (plain language):**
