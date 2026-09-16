@@ -4,6 +4,50 @@
 
 ---
 
+## 2026-09-15 (later) — Quarantined the 52, and found out what we actually pay
+
+**What was worked on (plain language):**
+- **Quarantined the 52 unmeasurable intraday records**, on the user's decision. A new integrity class
+  UNMEASURED covers every intraday record entered before 2026-09-16; they are counted and shown but
+  never scored, the same treatment VOID already gets.
+- **The cost is big and was accepted deliberately:** the disciplined book's headline falls from
+  n=20 / +$1,187 to **n=6 / -$13**, the learning book has no scored records left at all, and data
+  trust drops from 69.9% to 37.1%. That headline was mostly its intraday sleeve. Quoting a number we
+  cannot stand behind is worse than quoting a small one.
+- **A5 now skips quarantined and void records.** It exists to catch NEW drift; re-failing forever on
+  records already set aside would mean Gate 0 could never clear. It now reads WARN, and Gate 0's only
+  remaining P1 is B2 (open positions marked by a model, not quotes).
+- **Fixed the dashboard's explanation.** The integrity warning blamed every dirty sample on the
+  2026-09-06 $0-P&L bug. At 37% trust it would have pointed at a bug fixed nine days earlier, so it
+  now names each population separately and the trust bar counts the quarantined records instead of
+  leaving 50 of them invisible.
+
+**Broker fees, looked up rather than assumed:**
+- Robinhood is no longer commission-free on options: **$0.50/contract standard, $0.35 with Gold**,
+  plus a combined **$0.04/contract** regulatory pass-through, and TAF $0.00329/contract on sells.
+  So roughly **$0.54/contract/side standard, $0.39 with Gold**.
+- Tradier: **$0.35/contract** on Lite; **$0/contract** for equity and ETF options on Pro ($10/mo) or
+  Pro Plus ($35/mo), plus exchange/regulatory fees.
+- Our config has carried $0.65/leg/side since 2026-09-06, labelled "typical retail rate; override
+  when the broker is known". It is ~20% too high for Robinhood standard and ~67% too high for Gold.
+  Not changed yet — it re-scores every net number and the promotion bars, and it depends on which
+  Robinhood tier the account is on.
+
+**Decisions:**
+- Quarantine supersedes repair: journal_repair no longer targets these records. Costs nothing — it
+  has zero pending actions and the 18 phantom fills were repaired on 2026-09-06.
+- Do not re-date or rewrite the quarantined records. `learning.intraday_rescore` is how we ask what
+  they did.
+
+**Open questions for next session:**
+- Which Robinhood tier is the account on? That sets the commission constant.
+- Gate 0: B2 (P1, open tail marked by a model) and A3 (P2, one live record's stored entry_value).
+- The put spread on 9C475659 is being ridden into Friday's expiry by decision.
+
+**Tests:** 2,005 passing.
+
+---
+
 ## 2026-09-15 (continued) — The re-score, and checking my own negative findings
 
 **What was worked on (plain language):**
