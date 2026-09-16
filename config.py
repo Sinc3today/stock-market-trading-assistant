@@ -369,6 +369,12 @@ INTRADAY_PAPER_BROKER_ENABLED = True
 MARK_MAX_AGE_MINUTES      = 15   # this plan's own data delay
 MARK_MAX_LEG_SKEW_MINUTES = 5    # legs must describe one moment
 
+# Per-leg haircut when REPLAYING a trade against historical last-trade bars.
+# A last trade is not a fill: you pay up to get in and give some back to get
+# out. Same 0.05 the event-day shadow uses; kept here so the replay and any
+# future consumer read one value.
+REPLAY_HAIRCUT_PER_LEG = 0.05
+
 # Which conviction tier qualifies as an intraday entry. Configurable so we
 # can widen later to include "standard" (45-67 score) without code change.
 ENTRY_TIER_MINIMUM = "high"   # one of "high" / "standard"
