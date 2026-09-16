@@ -195,6 +195,43 @@ def test_a_structure_with_no_bars_is_reported_unpriced_not_scored():
     assert r["replayed"].get("pnl_net") is None
 
 
+# ── prices that cannot exist ──────────────────────────────────────
+#
+# A vertical spread is worth between $0 and its width, always. Five of the
+# first 100 replayed prices broke that: a 3-wide debit spread valued at $3.17
+# to $3.30 at exit, all on winning trades, inflating the result.
+#
+# Cause: the same staleness this tool exists to measure, inside the tool. Each
+# leg carries its last trade forward up to five minutes, so on a fast-moving
+# 0DTE contract the two legs can describe moments far enough apart that their
+# difference exceeds the width. The event-day shadow already refuses such
+# values; this did not.
+#
+# A minute that produces an impossible price is treated as unpriced — the walk
+# continues to a minute that can be believed, rather than clamping a number
+# into range and pretending it traded.
+
+def test_a_value_above_the_width_is_not_a_price():
+    """3-wide spread 'worth' 3.30 at 11:00, believable 2.10 at 11:30."""
+    t = _trade(bucket="1-3DTE", day=DAY, legs=_debit_legs(DAY + timedelta(days=2)))
+    r = _replay(t, {DAY: {"09:30": 1.00, "11:00": 3.30, "11:30": 2.10}})
+    assert r["replayed"]["exit"] <= ir.structure_width(t["legs"])
+    assert r["replayed"]["exit_ts"].endswith("11:30:00-04:00")
+
+
+def test_a_negative_value_is_not_a_price():
+    t = _trade(bucket="1-3DTE", day=DAY, legs=_debit_legs(DAY + timedelta(days=2)))
+    r = _replay(t, {DAY: {"09:30": 1.00, "11:00": -0.40, "11:30": 2.10}})
+    assert r["replayed"]["exit"] == pytest.approx(2.10)
+
+
+def test_an_impossible_entry_price_is_refused_outright():
+    """If the entry minute itself cannot be believed, there is nothing to
+    measure against — the record stays unmeasured rather than guessed."""
+    r = _replay(_trade(), {DAY: {"09:30": 4.50}})   # 3-wide spread, 4.50 entry
+    assert r["status"] == ir.UNPRICED
+
+
 # ── money ─────────────────────────────────────────────────────────
 
 def test_pnl_pays_the_haircut_both_ways_and_commissions():

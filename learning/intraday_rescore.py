@@ -119,6 +119,32 @@ def _check_marks(start, end):
         t += timedelta(minutes=CADENCE_MINUTES)
 
 
+BOUND_TOLERANCE = 1.02
+
+
+def _believable(value, width, credit: bool) -> bool:
+    """Is this a price the structure could actually have?
+
+    A vertical is worth between $0 and its width, always, and a sold structure
+    prices negative (you receive it). Each leg carries its last trade forward up
+    to five minutes, so on a fast 0DTE contract two legs can describe moments
+    far enough apart that their difference breaks those bounds: five of the
+    first 100 replayed prices did, a 3-wide spread "worth" $3.30, all of them on
+    winning trades.
+
+    A minute that produces an impossible price is simply not priced — the walk
+    moves on rather than clamping the number into range and calling it a trade.
+    This is the same rule B3 applies to the journal and the event-day shadow
+    applies to itself; the re-score was the one place missing it.
+    """
+    v = float(value)
+    if credit:
+        v = -v                      # cost to close a sold structure
+    if v < 0.01:
+        return False
+    return width is None or v <= width * BOUND_TOLERANCE
+
+
 def replay_trade(trade: dict, history=None, rules=None) -> dict:
     """Replay one recorded trade against real bars. Never writes."""
     legs = trade.get("legs") or []
@@ -150,16 +176,17 @@ def replay_trade(trade: dict, history=None, rules=None) -> dict:
             cache[day] = history.structure_minutes("SPY", day, legs)
         return cache[day]
 
+    width = structure_width(legs)
+    credit = _pnl_convention(strategy) == "credit"
     signed_entry = value_at(series_for(ts0.date()), ts0)
-    if signed_entry is None or abs(float(signed_entry)) < 0.01:
+    if signed_entry is None or not _believable(signed_entry, width, credit):
         row["status"] = UNPRICED
         row["replayed"] = {"entry": None, "pnl_net": None,
-                           "reason": "no real price at the recorded entry minute"}
+                           "reason": "no believable price at the recorded entry minute"}
         return row
 
     entry = abs(float(signed_entry))
     rules = rules or exit_rule_for(strategy, bucket)
-    credit = _pnl_convention(strategy) == "credit"
     max_profit, max_loss = risk_from_entry(strategy, legs, entry)
     max_profit, max_loss = max_profit * size, max_loss * size
     target_pct, stop_pct = rules.get("profit_target_pct"), rules.get("stop_pct")
@@ -176,6 +203,8 @@ def replay_trade(trade: dict, history=None, rules=None) -> dict:
             if v is None:
                 continue                      # no print: skip, never fabricate
             v = float(v)
+            if not _believable(v, width, credit):
+                continue                      # impossible price: not a price
             pnl = ((v - entry) if not credit else (entry + v)) * 100 * size
             if target_pct and max_profit > 0 and pnl / max_profit >= target_pct:
                 exit_signed, exit_ts, reason = v, ts, f"profit target {target_pct:.0%}"
