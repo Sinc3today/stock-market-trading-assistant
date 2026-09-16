@@ -4,6 +4,54 @@
 
 ---
 
+## 2026-09-15 — Entry prices were never the market's prices
+
+**What was worked on (plain language):**
+- **Reviewed a market-commentary video** (whales exiting the AI boom) and used it to check exposure
+  rather than to act on it. Its mechanics are real and its timing claim is unfalsifiable, but its
+  testable core does show up in our data: 8 of the last 25 sessions were down 0.2%+ on rising volume
+  (the classic warning threshold is 4-5) and down-day volume runs 8% above up-day volume. The
+  signature is present, common, and has never been tested as a predictor here. Much of its story is
+  already past: QQQ -3.1% and NVDA -8.3% over five days while SPY held up.
+- **Exposure check.** 30 open positions, nearly all with sold puts, 10 within 1% of spot — a
+  correction is the one scenario that hurts everywhere at once. Real money: 9C475659's short put sits
+  0.6% away and expires Friday; closing all four spreads costs $513-$684 against $1,500-$2,000 if SPY
+  finishes at or below 749. E9AEFEAE (5 lots, short put 727, Oct 16) is what a multi-month decline
+  would actually threaten.
+- **The day's real work: entry prices.** Recorded intraday entries were a median 32% away from the
+  market, worst 175%. Not a model error — the pricer uses real chain data. This plan has no bid/ask,
+  so each leg is priced from its last AGGREGATE print, and contracts print at different times.
+  7A64308A's legs matched prints from 10:38-11:03 while it was entered at 11:20 with SPY a dollar
+  higher. Fixed by keeping each contract's as-of time and price source, and refusing any structure
+  whose legs are stale or struck more than five minutes apart.
+
+**Decisions:**
+- Refusing to open is the cheap failure; booking a fiction is the expensive one. Expect fewer
+  intraday sandbox entries, especially condors whose far-OTM legs print rarely. That is the trade.
+- A quote midpoint is exempt from the freshness rule: it IS the current price. A last trade is only
+  evidence about the moment it happened.
+- Two test fixtures now carry a price source, deliberately: a contract with no provenance is
+  correctly unpriceable.
+
+**Verified from the previous session:**
+- The same-day exit fix works in the wild: Monday's sandbox trades were held 95 and 170 minutes
+  instead of the old five, and the stop that fired was genuine (the spread really was down 84%).
+- Event-day shadow trades ran unattended Monday and Tuesday, auto-tagging today as the day before
+  the Fed. Wednesday is the first real Fed day, when all four rules run.
+
+**Open questions for next session:**
+- Re-score the 40 historical same-day records against real prices (dry run, then decide whether
+  anything is written back).
+- Gate 0 now shows TWO P1 failures: B2 (the open tail is marked by a model) and A5 (entry drift).
+  A5 was invisible before today — the exit side had B1 and B3, the entry side had nothing.
+- Reconcile 9C475659 against Robinhood; the record says 3 lots, its stored cost implies 4.
+- Positioning/flow as a regime input remains untested and has now been suggested by two independent
+  sources (the BoA note on 09-07 and this video).
+
+**Tests:** 1,965 passing.
+
+---
+
 ## 2026-09-09 → 09-13 — Gates re-scoped, false alarms quieted, and the sandbox was measuring the wrong thing
 
 **Duration:** several sittings across five days.
